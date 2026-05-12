@@ -83,7 +83,28 @@ export class BulkProcessProductsAction {
         return { kind: 'conflict', reason: 'Nombre vacío.' };
       }
 
-      const cost = item.cost ?? 0;
+      // Match por name + company (mismo namespace que el UNIQUE parcial).
+      // Buscamos activos (los archivados liberan el name).
+      // HIGH-5 auditoría: incluimos `cost` en el SELECT para poder usarlo
+      // como fallback si el cliente NO envía `item.cost` en el bulk. Antes
+      // se persistía `cost = 0`, lo que recalculaba márgenes erróneos en
+      // los precios recreados.
+      const existing = await manager.findOne(Product, {
+        where: { name: trimmedName, company_id: String(companyId), is_archived: false },
+        select: { id: true, cost: true },
+      });
+
+      // Determinar costo efectivo:
+      //   - existe + item.cost undefined → preservar `existing.cost`.
+      //   - existe + item.cost definido → adoptar el nuevo.
+      //   - no existe + item.cost undefined → 0 (es el primer registro).
+      const cost =
+        item.cost !== undefined && item.cost !== null
+          ? item.cost
+          : existing
+            ? Number(existing.cost)
+            : 0;
+
       const validPrices = (item.prices ?? [])
         .filter((p) => p.sale_price > 0)
         .map((p) => ({
@@ -91,13 +112,6 @@ export class BulkProcessProductsAction {
           profit: calculateProfit(p.sale_price, cost),
           margin: calculateMargin(p.sale_price, cost),
         }));
-
-      // Match por name + company (mismo namespace que el UNIQUE parcial).
-      // Buscamos activos (los archivados liberan el name).
-      const existing = await manager.findOne(Product, {
-        where: { name: trimmedName, company_id: String(companyId), is_archived: false },
-        select: ['id'],
-      });
 
       if (existing) {
         if (!item.sku_code && !item.bar_code) {

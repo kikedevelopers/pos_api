@@ -54,6 +54,10 @@ import { SuppliersService } from './suppliers.service';
 @ApiTags('suppliers')
 @ApiBearerAuth('bearer')
 @Controller('suppliers')
+// HIGH-1 auditoría: declaración explícita de roles permitidos a nivel de
+// clase. Las mutaciones overriden con `@Roles('owner', 'manager')` a nivel
+// de método.
+@Roles('owner', 'manager', 'employee')
 export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
 

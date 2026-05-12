@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import Big from 'big.js';
 import { DataSource } from 'typeorm';
@@ -161,9 +163,10 @@ export class TransferAction {
       await setAccountBalance(manager, dto.sourceType, source.id, companyId, newSourceBalance);
       await setAccountBalance(manager, destinationType, destination.id, companyId, newDestBalance);
 
-      // 3. Reference code común (no UUID porque PlacePos no lo lleva — solo
-      //    enlace lógico para reportes que quieran agrupar el par).
-      const referenceCode = `TRF-${Date.now()}-${source.id}-${destination.id}`;
+      // 3. Reference code común — `randomUUID()` para evitar colisiones si
+      //    dos transferencias del mismo par ocurren en el mismo ms
+      //    (LOW-2 auditoría).
+      const referenceCode = `TRF-${randomUUID()}`;
 
       // 4. Generar los dos FinancialMovement.
       const amount = amountBig.toNumber();

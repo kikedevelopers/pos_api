@@ -1,5 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
+
+import { Bank } from '@/modules/banks/entities/bank.entity';
+import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
 import {
   AccountReference,
@@ -41,6 +44,13 @@ export interface RecordFinancialMovementInput {
  *
  * El service interno no abre transacción propia — espera recibir el
  * `manager` del callback `dataSource.transaction(...)` del caller.
+ *
+ * **Defense in depth (CRIT-2 auditoría)**: si `source_type` o
+ * `destination_type` referencian `bank`/`wallet`, validamos que el id
+ * pertenezca a la misma `companyId`. Los callers actuales (TransferAction,
+ * CreateBankAction, CreateWalletAction) ya hacen esa validación antes,
+ * pero replicarla aquí protege contra futuros callers que olviden el
+ * filtro multi-tenant.
  */
 @Injectable()
 export class RecordFinancialMovementAction {
@@ -48,6 +58,21 @@ export class RecordFinancialMovementAction {
     manager: EntityManager,
     input: RecordFinancialMovementInput,
   ): Promise<FinancialMovement> {
+    await this.assertAccountInCompany(
+      manager,
+      input.source_type,
+      input.source_id,
+      input.companyId,
+      'source',
+    );
+    await this.assertAccountInCompany(
+      manager,
+      input.destination_type,
+      input.destination_id,
+      input.companyId,
+      'destination',
+    );
+
     const repo = manager.getRepository(FinancialMovement);
 
     const movement = repo.create({
@@ -73,5 +98,42 @@ export class RecordFinancialMovementAction {
     });
 
     return repo.save(movement);
+  }
+
+  /**
+   * Verifica que un id de bank/wallet pertenezca a la company. Solo aplica a
+   * tipos `'bank'` y `'wallet'`; `'external'` u otros tipos no son
+   * verificables a nivel de DB y se permiten sin checks (ya que representan
+   * partes no controladas por nuestro sistema).
+   *
+   * Lanza `InternalServerErrorException` si el id no corresponde a la
+   * company — esto es síntoma de un bug del caller, no input de usuario:
+   * el flujo HTTP normal ya valida ownership antes de invocar `record`.
+   */
+  private async assertAccountInCompany(
+    manager: EntityManager,
+    type: AccountReference | null | undefined,
+    id: number | null | undefined,
+    companyId: number,
+    role: 'source' | 'destination',
+  ): Promise<void> {
+    if (id === null || id === undefined) {
+      return;
+    }
+    if (type !== 'bank' && type !== 'wallet') {
+      // 'external' / null / cualquier otro tipo no se verifica.
+      return;
+    }
+
+    const entity = type === 'bank' ? Bank : Wallet;
+    const found = await manager.findOne(entity, {
+      where: { id: String(id), company_id: String(companyId) },
+      select: { id: true },
+    });
+    if (!found) {
+      throw new InternalServerErrorException(
+        `record-financial-movement: ${role} ${type}#${id} no pertenece a company ${companyId}`,
+      );
+    }
   }
 }

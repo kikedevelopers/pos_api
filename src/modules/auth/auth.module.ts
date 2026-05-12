@@ -3,8 +3,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { EmployeesModule } from '@/modules/employees/employees.module';
+import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from '@/modules/users/users.module';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
@@ -45,9 +47,11 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     UsersModule,
     CompaniesModule,
     EmployeesModule,
-    // Para sembrar la wallet "Efectivo" en POST /auth/register dentro de la
-    // misma transacción que crea Company + User.
+    // Seeds esenciales para POST /auth/register — todos invocados dentro de
+    // la transacción que crea Company + User.
     WalletsModule,
+    TicketSettingsModule,
+    AppSettingsModule,
   ],
   controllers: [AuthController],
   providers: [

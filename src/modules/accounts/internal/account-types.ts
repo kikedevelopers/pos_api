@@ -23,6 +23,17 @@ export interface AccountSnapshot {
  * `NotFoundException` si no existe o pertenece a otra company. Activo
  * (`is_archived = false`) requerido — no se puede transferir desde/hacia
  * cuentas archivadas.
+ *
+ * **Lock pessimistic_write (CRIT-1 auditoría)**: el SELECT incluye
+ * `FOR UPDATE`, serializando lecturas concurrentes del mismo row. Sin esto,
+ * dos transferencias concurrentes desde la misma cuenta con balance=100
+ * podrían leer ambas el valor antiguo, validar ambas `100>=60` y dejar el
+ * balance en 40 cuando debería ser -20 (oversell). Postgres bloquea la
+ * segunda transacción hasta que la primera haga COMMIT/ROLLBACK.
+ *
+ * Requiere que el caller esté dentro de `dataSource.transaction(...)` —
+ * de lo contrario TypeORM lanza error. Todos los callers actuales
+ * (TransferAction) ya están dentro de una transacción.
  */
 export async function loadAccountInCompany(
   manager: EntityManager,
@@ -39,6 +50,7 @@ export async function loadAccountInCompany(
         is_archived: false,
       },
       select: { id: true, name: true, balance: true },
+      lock: { mode: 'pessimistic_write' },
     });
     if (!wallet) {
       throw new NotFoundException(
@@ -55,6 +67,7 @@ export async function loadAccountInCompany(
       is_archived: false,
     },
     select: { id: true, name: true, balance: true },
+    lock: { mode: 'pessimistic_write' },
   });
   if (!bank) {
     throw new NotFoundException(

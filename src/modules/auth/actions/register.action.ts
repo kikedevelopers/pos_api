@@ -3,7 +3,9 @@ import * as argon2 from 'argon2';
 import { DataSource, QueryFailedError } from 'typeorm';
 
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
+import { CreateDefaultAppSettingsAction } from '@/modules/app-settings/actions/create-default-app-settings.action';
 import { Company } from '@/modules/companies/entities/company.entity';
+import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
 import { User, UserType } from '@/modules/users/entities/user.entity';
 import { CreateDefaultWalletAction } from '@/modules/wallets/actions/create-default-wallet.action';
 
@@ -36,6 +38,8 @@ export class RegisterAction {
     private readonly dataSource: DataSource,
     private readonly jwtIssuer: JwtIssuerService,
     private readonly createDefaultWalletAction: CreateDefaultWalletAction,
+    private readonly createDefaultTicketSettingsAction: CreateDefaultTicketSettingsAction,
+    private readonly createDefaultAppSettingsAction: CreateDefaultAppSettingsAction,
   ) {}
 
   async execute(dto: RegisterDto): Promise<AuthResponseDto> {
@@ -93,22 +97,28 @@ export class RegisterAction {
         throw error;
       }
 
-      // 4. Seed esencial Fase 5: wallet "Efectivo" con balance 0. Comparte el
-      //    `manager` con la transacción del registro, así que si falla cualquier
-      //    paso posterior (o este mismo) se hace rollback de Company + User +
-      //    Wallet juntos.
-      await this.createDefaultWalletAction.execute(manager, {
-        companyId: Number(savedCompany.id),
-        createdBy: {
-          id: Number(saved.id),
-          fullName: `${saved.name} ${saved.lastname}`.trim(),
-        },
-      });
+      // 4. Seeds esenciales — todos comparten el `manager` con la transacción
+      //    del registro, así que si falla cualquier paso posterior se hace
+      //    rollback de Company + User + todos los seeds juntos.
+      const createdBy = {
+        id: Number(saved.id),
+        fullName: `${saved.name} ${saved.lastname}`.trim(),
+      };
+      const companyId = Number(savedCompany.id);
 
-      // 5. TODO(Fase 10): seeds adicionales — TicketSetting (por cada
-      //    TicketType) y AppSetting defaults (app_color_mode='white',
-      //    pos_margins_enabled='false'). Pendiente hasta que existan las
-      //    entidades.
+      // 4.1. Wallet "Efectivo" balance 0 (Fase 5).
+      await this.createDefaultWalletAction.execute(manager, { companyId, createdBy });
+
+      // 4.2. TicketSettings (Fase 10): 5 rows (ORDER/SALE/CREDIT_NOTE/
+      //      DEBIT_NOTE/PURCHASE) con current_number=0. Pre-requisito para
+      //      que cualquier endpoint que genere folios (ventas, compras,
+      //      notas) pueda incrementar atómicamente sin race condition.
+      await this.createDefaultTicketSettingsAction.execute(manager, { companyId, createdBy });
+
+      // 4.3. AppSettings defaults (Fase 10): app_color_mode='white',
+      //      pos_margins_enabled='false'. El cliente lee estos valores en
+      //      el primer login y aplica la UI correspondiente.
+      await this.createDefaultAppSettingsAction.execute(manager, { companyId, createdBy });
 
       return saved;
     });

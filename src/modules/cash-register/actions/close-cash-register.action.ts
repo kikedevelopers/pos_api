@@ -7,7 +7,7 @@ import { preciseNumber, toBig } from '@/common/utils/precision';
 import type { CloseCashRegisterDto } from '../dto/close-cash-register.dto';
 import { CashRegisterLog, CashRegisterLogDirection } from '../entities/cash-register-log.entity';
 import { CashRegister, CashRegisterStatus } from '../entities/cash-register.entity';
-import { requireOpenCashRegister } from '../internal/cash-register-lookups';
+import { requireOpenCashRegisterForUpdate } from '../internal/cash-register-lookups';
 
 /**
  * Cierra el turno actualmente abierto.
@@ -47,7 +47,10 @@ export class CloseCashRegisterAction {
     const closingBalance = toBig(dto.closing_balance);
 
     return this.dataSource.transaction<CashRegister>(async (manager) => {
-      const register = await requireOpenCashRegister(manager, companyId);
+      // HIGH-6 auditoría: lock pessimistic_write sobre el row del cash_register.
+      // Bloquea inserts concurrentes en cash_register_logs hasta el commit del
+      // cierre — evita logs huérfanos no contados en `expected_balance`.
+      const register = await requireOpenCashRegisterForUpdate(manager, companyId);
 
       const logs = await manager.find(CashRegisterLog, {
         where: {

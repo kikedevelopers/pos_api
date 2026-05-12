@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
@@ -45,6 +45,15 @@ export class UpdateProductAction {
     companyId: number,
     actor: ProductCreator,
   ): Promise<Product> {
+    // CRIT-3 auditoría: si el cliente envía `prices: []`, el algoritmo de sync
+    // calcularía `toDelete = todos los precios existentes` y dejaría el
+    // producto SIN ningún nivel de precio — catálogo inutilizable en POS
+    // (división por cero en cálculos posteriores). PlacePos rechaza este
+    // caso; replicamos la guarda en pre-flight.
+    if (dto.prices !== undefined && dto.prices.length === 0) {
+      throw new BadRequestException('prices debe tener al menos 1 elemento');
+    }
+
     return this.dataSource.transaction<Product>(async (manager) => {
       const existing = await findProductInCompany(manager, id, companyId, {
         withRelations: true,

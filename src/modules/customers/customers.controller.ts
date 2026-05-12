@@ -61,6 +61,10 @@ import { CustomersService } from './customers.service';
 @ApiTags('customers')
 @ApiBearerAuth('bearer')
 @Controller('customers')
+// HIGH-1 auditoría: declaramos los roles permitidos a nivel de clase para
+// que el `RolesGuard` rechace cualquier rol futuro no esperado por defecto.
+// Las mutaciones overriden con `@Roles('owner', 'manager')` a nivel de método.
+@Roles('owner', 'manager', 'employee')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
 

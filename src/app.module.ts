@@ -18,7 +18,11 @@ import { validationSchema } from './config/validation.schema';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
+import { AlertConfigsModule } from './modules/alert-configs/alert-configs.module';
+import { AppAlertsModule } from './modules/app-alerts/app-alerts.module';
+import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BackupModule } from './modules/backup/backup.module';
 import { BanksModule } from './modules/banks/banks.module';
 import { CashRegisterModule } from './modules/cash-register/cash-register.module';
 import { CompaniesModule } from './modules/companies/companies.module';
@@ -27,7 +31,9 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { ProductsModule } from './modules/products/products.module';
+import { PurchasesModule } from './modules/purchases/purchases.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
+import { TicketSettingsModule } from './modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletsModule } from './modules/wallets/wallets.module';
 
@@ -155,7 +161,19 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     WalletsModule,
     CashRegisterModule,
     AccountsModule,
-    // Auth al final (depende de WalletsModule).
+    // Fase 8 — Compras.
+    PurchasesModule,
+    // Fase 10 — Settings y alertas.
+    // TicketSettingsModule y AppSettingsModule se exportan para que el seed
+    // en RegisterAction (vía AuthModule) los pueda inyectar.
+    TicketSettingsModule,
+    AppSettingsModule,
+    AppAlertsModule,
+    AlertConfigsModule,
+    // Fase 12 — Backup stub (paridad de contrato; siempre 503).
+    BackupModule,
+    // Auth al final (depende de Wallets/TicketSettings/AppSettings para
+    // sembrar valores iniciales al crear una company).
     AuthModule,
   ],
   controllers: [AppController],
