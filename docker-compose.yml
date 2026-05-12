@@ -1,0 +1,51 @@
+# =============================================================================
+# Docker Compose - SOLO entorno de desarrollo local.
+# Levanta PostgreSQL (y Adminer) para que el desarrollador corra `pnpm start:dev`
+# contra ellos. NO incluye el servicio de la API a propósito.
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pos_api_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-pos_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pos_password}
+      POSTGRES_DB: ${DB_NAME:-pos_db}
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - pos_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-pos_user} -d ${DB_NAME:-pos_db}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - pos_network
+
+  adminer:
+    image: adminer:latest
+    container_name: pos_api_adminer
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pos_network
+
+volumes:
+  pos_postgres_data:
+    name: pos_api_postgres_data
+
+networks:
+  pos_network:
+    name: pos_api_network
+    driver: bridge
