@@ -9,10 +9,8 @@ import {
   CashRegisterLog,
   CashRegisterLogType,
 } from '@/modules/cash-register/entities/cash-register-log.entity';
-import {
-  CashRegister,
-  CashRegisterStatus,
-} from '@/modules/cash-register/entities/cash-register.entity';
+import type { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
+import { requireOpenCashRegisterForUpdate } from '@/modules/cash-register/internal/cash-register-lookups';
 import {
   MovementConcept,
   MovementType,
@@ -62,19 +60,62 @@ export interface ApplySalePaymentResult {
 }
 
 /**
- * Aplica un cobro a una venta DENTRO de la transacción del caller:
+ * Snapshot de la cuenta receptora — leído ANTES del INSERT del payment para
+ * armar el row (bank_id, bank_name, payment_method). NO lockea ni acredita:
+ * el credit real ocurre después del INSERT.
+ */
+interface AccountResolution {
+  bankId: number | null;
+  bankName: string | null;
+  paymentMethod: SalePaymentMethod;
+  /** Solo para cash_register: el row del turno abierto (para reusarlo en el credit step). */
+  cashRegister: CashRegister | null;
+}
+
+/**
+ * Aplica un cobro a una venta DENTRO de la transacción del caller.
  *
- *   1. Fast-path idempotencia: si `uuid` ya existe en `sale_payments` para
- *      la company, devuelve el row sin reprocesar.
- *   2. Resuelve la cuenta receptora dentro de la company (Bank / Wallet /
- *      CashRegister abierto). Para Bank / Wallet aplica `SELECT FOR UPDATE`
- *      para evitar race conditions y `UPDATE balance += amount`.
- *      Para cash_register inserta `CashRegisterLog(IN, CASH_IN)`.
- *   3. INSERT `SalePayment` con snapshot de bank_id/bank_name si aplica.
- *      Si llega un 23505 sobre el índice del uuid, releemos el ganador
- *      y devolvemos como idempotente.
- *   4. Registra `FinancialMovement(INCOME, SALE)` con source='external'
- *      (cliente) y destination=cuenta receptora.
+ * --------------------------------------------------------------------------
+ * Orden de operaciones (CRIT-1 + HIGH-1 auditoría)
+ * --------------------------------------------------------------------------
+ *
+ *   1. Fast-path idempotencia (lookup por uuid). Si existe y `sale_invoice_id`
+ *      coincide → devolver `idempotent=true` SIN acreditar nada.
+ *      Si existe pero pertenece a OTRA venta → 422 (uuid colisionado).
+ *
+ *   2. **Resolver la cuenta SIN lock ni UPDATE** — solo metadata (name,
+ *      payment_method, snapshot para columnas). Esto valida existencia y
+ *      ownership multi-tenant sin tocar saldo.
+ *
+ *   3. **INSERT optimista del SalePayment**. Este es el "barrera anti-race":
+ *      el UNIQUE parcial `(company_id, uuid) WHERE uuid IS NOT NULL` rechaza
+ *      cualquier duplicate con `23505`. Si dos requests concurrentes con el
+ *      mismo `uuid` llegan al INSERT, solo UNO gana — el otro entra al catch
+ *      y se trata como idempotente. **Crucialmente, hasta este punto nadie
+ *      ha modificado el balance de la cuenta receptora**, así que el loser
+ *      no produce side-effects: su transacción hará rollback al retornar
+ *      con `idempotent=true`, pero como no hizo UPDATE ni INSERT de log, el
+ *      rollback es no-op contable.
+ *
+ *      En el catch del 23505 se valida `winner.sale_invoice_id === saleId`
+ *      (HIGH-1): si el uuid se reutilizó para otra venta, 422.
+ *
+ *   4. **Después del INSERT exitoso**: acreditar la cuenta receptora con
+ *      lock pessimistic_write + UPDATE balance / INSERT CashRegisterLog.
+ *      Esto SIEMPRE se hace solo para el ganador.
+ *
+ *   5. `FinancialMovement(INCOME, SALE)` para auditoría.
+ *
+ * --------------------------------------------------------------------------
+ * Por qué INSERT primero, credit después
+ * --------------------------------------------------------------------------
+ *
+ * El orden inverso (credit primero, INSERT después) era el bug original
+ * (CRIT-1): dos requests concurrentes acreditaban ambas la cuenta, después
+ * una ganaba el INSERT y la otra retornaba "idempotent=true" — el caller
+ * cree que todo está bien, pero el balance de la cuenta receptora subió 2x.
+ * Mover el INSERT al inicio convierte el UNIQUE constraint en un latch
+ * lock-free para la idempotencia.
  *
  * El caller es responsable de:
  *   - Actualizar `SaleCredit` (balance/paid/status) si la venta es a crédito.
@@ -104,26 +145,24 @@ export async function applySalePayment(
     return { payment: existing, idempotent: true };
   }
 
-  // 2. Resolver y acreditar la cuenta receptora.
-  const credited = await creditDestination(
+  // 2. Resolver cuenta SIN lock ni UPDATE. Solo lookup para obtener metadata
+  //    y validar ownership multi-tenant. El balance NO se toca aquí.
+  const resolution = await resolveAccount(
     manager,
     input.account_type,
     input.account_id,
     input.companyId,
-    amountBig,
-    input.ticketReference,
-    input.actor,
   );
 
-  // 3. INSERT SalePayment.
+  // 3. INSERT optimista — el UNIQUE constraint actúa como latch atómico.
   const paymentEntity = manager.create(SalePayment, {
     company_id: String(input.companyId),
     sale_invoice_id: String(input.saleId),
-    payment_method: credited.paymentMethod,
+    payment_method: resolution.paymentMethod,
     amount,
     change_amount: change,
-    bank_id: credited.bankId === null ? null : String(credited.bankId),
-    bank_name: credited.bankName,
+    bank_id: resolution.bankId === null ? null : String(resolution.bankId),
+    bank_name: resolution.bankName,
     account_type: input.account_type,
     account_id: String(input.account_id),
     created_by: input.actor.fullName,
@@ -140,13 +179,32 @@ export async function applySalePayment(
         where: { company_id: String(input.companyId), uuid: idempotencyKey },
       });
       if (winner) {
+        // HIGH-1 auditoría: validar que el ganador pertenece a la MISMA
+        // venta. Sin esto, dos pagos concurrentes con el mismo uuid pero
+        // distinto saleId producirían que el loser retorne "idempotent" con
+        // un payment de otra venta — response inconsistente.
+        if (Number(winner.sale_invoice_id) !== input.saleId) {
+          throw new UnprocessableEntityException('El uuid ya fue utilizado para otra venta');
+        }
         return { payment: winner, idempotent: true };
       }
     }
     throw error;
   }
 
-  // 4. FinancialMovement (INCOME, SALE).
+  // 4. Solo el ganador llega aquí. Acreditar cuenta con lock + UPDATE.
+  await creditDestination(
+    manager,
+    input.account_type,
+    input.account_id,
+    input.companyId,
+    amountBig,
+    input.ticketReference,
+    input.actor,
+    resolution.cashRegister,
+  );
+
+  // 5. FinancialMovement (INCOME, SALE).
   await financialMovementsService.record(manager, {
     companyId: input.companyId,
     amount,
@@ -166,27 +224,20 @@ export async function applySalePayment(
 }
 
 /**
- * Resuelve la cuenta receptora, valida ownership y acredita el monto.
+ * Lookup read-only de la cuenta receptora. Valida ownership multi-tenant
+ * (incluyendo `is_archived = false` para bank/wallet) pero NO bloquea ni
+ * acredita. Devuelve metadata para armar el row de SalePayment.
  *
- * Devuelve metadatos necesarios para serializar el SalePayment:
- *   - `paymentMethod`: TRANSFER si bank, CASH para wallet/cash_register.
- *   - `bankId`/`bankName`: snapshot para frontend.
+ * Para `cash_register`, además del lookup metadata se retorna el row para
+ * reusarlo en `creditDestination` (HIGH-3: usar `requireOpenCashRegisterForUpdate`
+ * en lugar de `findOne` ad-hoc en el credit step).
  */
-async function creditDestination(
+async function resolveAccount(
   manager: EntityManager,
   accountType: SalePaymentAccountType,
   accountId: number,
   companyId: number,
-  amountBig: Big,
-  ticketReference: string,
-  actor: SalePaymentActor,
-): Promise<{
-  bankId: number | null;
-  bankName: string | null;
-  paymentMethod: SalePaymentMethod;
-}> {
-  const amount = preciseNumber(amountBig, 2);
-
+): Promise<AccountResolution> {
   if (accountType === 'bank') {
     const bank = await manager.findOne(Bank, {
       where: {
@@ -194,21 +245,16 @@ async function creditDestination(
         company_id: String(companyId),
         is_archived: false,
       },
-      lock: { mode: 'pessimistic_write' },
+      select: { id: true, name: true },
     });
     if (!bank) {
       throw new NotFoundException('Cuenta bancaria no encontrada');
     }
-    const newBalance = preciseNumber(toBig(bank.balance).plus(amountBig), 2);
-    await manager.update(
-      Bank,
-      { id: bank.id, company_id: String(companyId) },
-      { balance: newBalance },
-    );
     return {
       bankId: Number(bank.id),
       bankName: bank.name,
       paymentMethod: SalePaymentMethod.TRANSFER,
+      cashRegister: null,
     };
   }
 
@@ -219,10 +265,77 @@ async function creditDestination(
         company_id: String(companyId),
         is_archived: false,
       },
-      lock: { mode: 'pessimistic_write' },
+      select: { id: true, name: true },
     });
     if (!wallet) {
       throw new NotFoundException('Billetera no encontrada');
+    }
+    return {
+      bankId: null,
+      bankName: null,
+      paymentMethod: SalePaymentMethod.CASH,
+      cashRegister: null,
+    };
+  }
+
+  // accountType === 'cash_register'
+  // HIGH-3 auditoría: usar el helper canónico que lockea el row del
+  // cash_register. Coherente con purchases y con el patrón de cierre de caja.
+  const open = await requireOpenCashRegisterForUpdate(manager, companyId);
+  return {
+    bankId: null,
+    bankName: null,
+    paymentMethod: SalePaymentMethod.CASH,
+    cashRegister: open,
+  };
+}
+
+/**
+ * Acredita el monto en la cuenta receptora. Llamado SOLO después del INSERT
+ * exitoso del SalePayment — el caller idempotente nunca llega aquí.
+ *
+ * Para Bank/Wallet hace lock pessimistic_write + UPDATE atómico del balance.
+ * Para cash_register reusa el row ya lockeado en `resolveAccount` e inserta
+ * el log IN.
+ */
+async function creditDestination(
+  manager: EntityManager,
+  accountType: SalePaymentAccountType,
+  accountId: number,
+  companyId: number,
+  amountBig: Big,
+  ticketReference: string,
+  actor: SalePaymentActor,
+  cashRegister: CashRegister | null,
+): Promise<void> {
+  const amount = preciseNumber(amountBig, 2);
+
+  if (accountType === 'bank') {
+    const bank = await manager.findOne(Bank, {
+      where: { id: String(accountId), company_id: String(companyId), is_archived: false },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!bank) {
+      // Caso extremo: la cuenta fue archivada entre el resolve (read-only) y
+      // el credit. Lanzamos 422 — el rollback recupera el INSERT del payment.
+      throw new UnprocessableEntityException('La cuenta bancaria dejó de estar disponible');
+    }
+    const newBalance = preciseNumber(toBig(bank.balance).plus(amountBig), 2);
+    await manager.update(
+      Bank,
+      { id: bank.id, company_id: String(companyId) },
+      { balance: newBalance },
+    );
+    return;
+  }
+
+  if (accountType === 'wallet') {
+    const wallet = await manager.findOne(Wallet, {
+      where: { id: String(accountId), company_id: String(companyId), is_archived: false },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!wallet) {
+      throw new UnprocessableEntityException('La billetera dejó de estar disponible');
     }
     const newBalance = preciseNumber(toBig(wallet.balance).plus(amountBig), 2);
     await manager.update(
@@ -230,24 +343,16 @@ async function creditDestination(
       { id: wallet.id, company_id: String(companyId) },
       { balance: newBalance },
     );
-    return {
-      bankId: null,
-      bankName: null,
-      paymentMethod: SalePaymentMethod.CASH,
-    };
+    return;
   }
 
-  // accountType === 'cash_register'
-  const open = await manager.findOne(CashRegister, {
-    where: { company_id: String(companyId), status: CashRegisterStatus.OPEN },
-    lock: { mode: 'pessimistic_write' },
-  });
-  if (!open) {
+  // accountType === 'cash_register' — usa el row ya lockeado en resolveAccount.
+  if (!cashRegister) {
     throw new NotFoundException('No hay caja abierta');
   }
   const log = manager.create(CashRegisterLog, {
     company_id: String(companyId),
-    cash_register_id: open.id,
+    cash_register_id: cashRegister.id,
     type: CashRegisterLogType.CASH_IN,
     direction: 'IN',
     amount,
@@ -257,11 +362,6 @@ async function creditDestination(
     created_by_id: String(actor.id),
   });
   await manager.save(CashRegisterLog, log);
-  return {
-    bankId: null,
-    bankName: null,
-    paymentMethod: SalePaymentMethod.CASH,
-  };
 }
 
 /**

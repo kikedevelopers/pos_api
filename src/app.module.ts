@@ -26,10 +26,14 @@ import { BackupModule } from './modules/backup/backup.module';
 import { BanksModule } from './modules/banks/banks.module';
 import { CashRegisterModule } from './modules/cash-register/cash-register.module';
 import { CompaniesModule } from './modules/companies/companies.module';
+import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
+import { CreditsModule } from './modules/credits/credits.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { EmployeesModule } from './modules/employees/employees.module';
+import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { SalesModule } from './modules/sales/sales.module';
@@ -164,8 +168,14 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     AccountsModule,
     // Fase 6 — Ventas.
     SalesModule,
+    // Fase 7 — Notas crédito/débito (depende de Sales).
+    CreditNotesModule,
     // Fase 8 — Compras.
     PurchasesModule,
+    // Fase 9 — Gastos y agregadores (credits/payments dependen de Sales+Purchases).
+    ExpensesModule,
+    CreditsModule,
+    PaymentsModule,
     // Fase 10 — Settings y alertas.
     // TicketSettingsModule y AppSettingsModule se exportan para que el seed
     // en RegisterAction (vía AuthModule) los pueda inyectar.

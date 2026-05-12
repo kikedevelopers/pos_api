@@ -1,0 +1,189 @@
+import {
+  Check,
+  Column,
+  CreateDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+
+import { NumericTransformer } from '@/common/utils/numeric-transformer';
+import { Company } from '@/modules/companies/entities/company.entity';
+import { Packaging } from '@/modules/packagings/entities/packaging.entity';
+import { Product } from '@/modules/products/entities/product.entity';
+import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
+
+import { CreditNote } from './credit-note.entity';
+
+/**
+ * `credit_note_lines` — Línea de detalle de una nota.
+ *
+ * Espejo de `placepos/src/main/database/entities/CreditNoteLine.ts` con
+ * extensión multi-tenant (`company_id` denormalizado).
+ *
+ * --------------------------------------------------------------------------
+ * Cuándo se generan
+ * --------------------------------------------------------------------------
+ *
+ *   - `FULL_VOID`: típicamente NO se generan líneas — el total se replica
+ *     directo de `sale.total`. Permitimos snapshot opcional de las líneas
+ *     originales si el service decide poblarlas.
+ *
+ *   - `PARTIAL_VOID`: una línea por producto / cantidad anulada.
+ *     `original_line_id` referencia `sale_invoice_lines.id` para
+ *     trazabilidad y validar que la qty anulada no exceda la qty original.
+ *
+ *   - `ADDITION` (nota débito): una línea por cargo agregado.
+ *
+ * --------------------------------------------------------------------------
+ * Cálculo (Big.js en el service)
+ * --------------------------------------------------------------------------
+ *
+ *   subtotal   = unit_price * quantity
+ *   iva_amount = subtotal * iva_percentage / 100
+ *   total      = subtotal + iva_amount
+ *
+ * Multi-tenancy: `company_id` denormalizado coincidente con
+ * `credit_note.company_id` (impuesto por el service al insertar).
+ * Cross-tenant guards: `product_id`, `packaging_id` y `original_line_id`
+ * deben pertenecer a la company.
+ */
+@Entity('credit_note_lines')
+@Check('chk_credit_note_lines_quantity_positive', 'quantity > 0')
+@Check('chk_credit_note_lines_unit_price_non_negative', 'unit_price >= 0')
+@Check('chk_credit_note_lines_unit_cost_non_negative', 'unit_cost >= 0')
+@Check('chk_credit_note_lines_subtotal_non_negative', 'subtotal >= 0')
+@Check(
+  'chk_credit_note_lines_iva_percentage_valid',
+  'iva_percentage >= 0 AND iva_percentage <= 100',
+)
+@Check('chk_credit_note_lines_iva_amount_non_negative', 'iva_amount >= 0')
+@Check('chk_credit_note_lines_total_non_negative', 'total >= 0')
+@Check('chk_credit_note_lines_description_not_empty', 'length(btrim(description)) > 0')
+export class CreditNoteLine {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  id!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  company_id!: string;
+
+  @ManyToOne(() => Company, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+    nullable: false,
+  })
+  @JoinColumn({ name: 'company_id' })
+  company!: Company;
+
+  @Column({ type: 'bigint', nullable: false })
+  credit_note_id!: string;
+
+  @ManyToOne(() => CreditNote, (n) => n.lines, {
+    onDelete: 'CASCADE',
+    onUpdate: 'CASCADE',
+  })
+  @JoinColumn({ name: 'credit_note_id' })
+  credit_note!: CreditNote;
+
+  @Column({ type: 'bigint', nullable: true })
+  original_line_id!: string | null;
+
+  @ManyToOne(() => SaleInvoiceLine, {
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'original_line_id' })
+  original_line!: SaleInvoiceLine | null;
+
+  @Column({ type: 'bigint', nullable: false })
+  product_id!: string;
+
+  @ManyToOne(() => Product, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+  })
+  @JoinColumn({ name: 'product_id' })
+  product!: Product;
+
+  @Column({ type: 'bigint', nullable: true })
+  packaging_id!: string | null;
+
+  @ManyToOne(() => Packaging, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'packaging_id' })
+  packaging!: Packaging | null;
+
+  @Column({ type: 'text', nullable: false })
+  description!: string;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 4,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  quantity!: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  unit_price!: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  unit_cost!: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  subtotal!: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 4,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  iva_percentage!: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  iva_amount!: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  total!: number;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  created_at!: Date;
+}
