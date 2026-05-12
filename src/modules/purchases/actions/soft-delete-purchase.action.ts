@@ -5,6 +5,7 @@ import { DataSource } from 'typeorm';
 import { toBig } from '@/common/utils/precision';
 import { Supplier } from '@/modules/suppliers/entities/supplier.entity';
 
+import { PurchaseCredit } from '../entities/purchase-credit.entity';
 import { Purchase } from '../entities/purchase.entity';
 import { findPurchaseCredit, findPurchaseInCompany } from '../internal/purchase-lookups';
 
@@ -21,19 +22,24 @@ import { findPurchaseCredit, findPurchaseInCompany } from '../internal/purchase-
  *
  *   - La compra debe existir en la company y no estar ya anulada.
  *   - El `PurchaseCredit` asociado debe tener `paid_amount = 0`. Anular una
- *     compra con pagos aplicados es un descuadre contable —se rechaza con
- *     422 (mensaje legible). La reversión correcta de pagos vive en otro
- *     flujo (no en esta fase).
+ *     compra con pagos aplicados es un descuadre contable — se rechaza con
+ *     422. La reversión correcta de pagos vive en otro flujo (no en esta
+ *     fase).
  *
  * --------------------------------------------------------------------------
  * Side effects al anular
  * --------------------------------------------------------------------------
  *
- *   - Decrementa `Supplier.accumulated_debt` por el `purchase.total` (la
- *     deuda dejó de existir).
+ *   - Decrementa `Supplier.accumulated_debt` por el **balance pendiente** del
+ *     credit (no por `purchase.total`). HIGH-1 auditoría: si en el futuro la
+ *     guarda anti-pagos fallara o se relajara, decrementar por el total
+ *     descuadraría el `accumulated_debt`. Usar `credit.balance` es defensivo
+ *     y robusto a inconsistencias.
+ *   - **Hard-delete del `PurchaseCredit`** asociado (CRIT-3 auditoría). Si lo
+ *     dejamos huérfano, queries downstream de cuentas-por-pagar lo seguirán
+ *     mostrando como pendiente. Como la compra ya está anulada y la guarda
+ *     impide pagos previos, el credit no tiene historia útil que preservar.
  *   - Marca `purchase.is_deleted = true`.
- *   - El `PurchaseCredit` queda con balance > 0 pero su compra is_deleted —
- *     los queries de listado lo excluyen.
  */
 @Injectable()
 export class SoftDeletePurchaseAction {
@@ -52,7 +58,11 @@ export class SoftDeletePurchaseAction {
         throw new UnprocessableEntityException('No se puede anular una compra con pagos aplicados');
       }
 
-      const totalBig: Big = toBig(purchase.total);
+      // HIGH-1 auditoría: el monto a revertir es el saldo pendiente, no el
+      // total. La guarda anterior garantiza `paid_amount = 0`, así que en la
+      // práctica `credit.balance = purchase.total`, pero usar el balance nos
+      // blinda contra futuras relajaciones de la guarda.
+      const debtToRevert: Big = credit ? toBig(credit.balance) : toBig(purchase.total);
       const supplierId = purchase.supplier_id;
 
       await manager.update(
@@ -61,13 +71,25 @@ export class SoftDeletePurchaseAction {
         { is_deleted: true },
       );
 
+      // CRIT-3 auditoría: hard-delete del credit huérfano. Sin esto, las
+      // queries de cuentas por pagar seguirían mostrando el credit como
+      // pendiente aunque la compra esté anulada. Como la guarda impide pagos
+      // previos, no hay historia financiera que preservar — solo metadata
+      // que ya está en la propia compra (is_deleted=true).
+      if (credit) {
+        await manager.delete(PurchaseCredit, {
+          id: credit.id,
+          company_id: String(companyId),
+        });
+      }
+
       // Revertir la deuda acumulada (la compra ya no cuenta).
-      if (totalBig.gt(0)) {
+      if (debtToRevert.gt(0)) {
         await manager.decrement(
           Supplier,
           { id: supplierId, company_id: String(companyId) },
           'accumulated_debt',
-          totalBig.toNumber(),
+          debtToRevert.toNumber(),
         );
       }
 
@@ -76,7 +98,8 @@ export class SoftDeletePurchaseAction {
         companyId,
         purchaseId: id,
         actorId,
-        revertedDebt: totalBig.toFixed(2),
+        revertedDebt: debtToRevert.toFixed(2),
+        creditDeleted: credit !== null,
       });
     });
   }

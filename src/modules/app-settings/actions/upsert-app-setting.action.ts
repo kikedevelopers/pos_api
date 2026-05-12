@@ -1,8 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource, QueryFailedError } from 'typeorm';
 
-import { AppSetting } from '../entities/app-setting.entity';
+import { APP_SETTING_KEYS, AppSetting } from '../entities/app-setting.entity';
 import { PG_UNIQUE_VIOLATION } from '../internal/constraint-errors';
+
+/**
+ * Conjunto de claves conocidas que el endpoint acepta. MED-3 auditoría: sin
+ * lista blanca, un cliente buggy o malicioso puede polinizar la tabla con
+ * miles de keys aleatorias (DoS de storage). Se valida en pre-flight del
+ * upsert.
+ */
+const ALLOWED_KEYS = new Set<string>(Object.values(APP_SETTING_KEYS));
 
 /**
  * Upsert (set value) de un `app_setting` per-company.
@@ -26,6 +34,14 @@ export class UpsertAppSettingAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(key: string, value: string, companyId: number): Promise<AppSetting> {
+    // MED-3 auditoría: whitelist de keys conocidas. Si el cliente envía una
+    // key no registrada en `APP_SETTING_KEYS`, rechazamos con 400. Para
+    // añadir una key nueva, primero se actualiza la constante y se reinicia
+    // el API — esto previene pollution de la tabla por bug del cliente.
+    if (!ALLOWED_KEYS.has(key)) {
+      throw new BadRequestException(`Key "${key}" no soportada`);
+    }
+
     return this.dataSource.transaction<AppSetting>(async (manager) => {
       const existing = await manager.findOne(AppSetting, {
         where: { company_id: String(companyId), key },

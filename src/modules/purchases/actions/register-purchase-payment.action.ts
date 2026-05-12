@@ -14,8 +14,8 @@ import {
   CashRegisterLog,
   CashRegisterLogType,
 } from '@/modules/cash-register/entities/cash-register-log.entity';
-import { GetCashRegisterBalanceAction } from '@/modules/cash-register/actions/get-balance.action';
-import { findOpenCashRegister } from '@/modules/cash-register/internal/cash-register-lookups';
+import { requireOpenCashRegisterForUpdate } from '@/modules/cash-register/internal/cash-register-lookups';
+import { computeCashRegisterBalance } from '@/modules/cash-register/internal/compute-balance';
 import {
   MovementConcept,
   MovementType,
@@ -142,7 +142,6 @@ export class RegisterPurchasePaymentAction {
   constructor(
     private readonly dataSource: DataSource,
     private readonly financialMovementsService: FinancialMovementsService,
-    private readonly getCashRegisterBalanceAction: GetCashRegisterBalanceAction,
   ) {}
 
   async execute(
@@ -159,7 +158,15 @@ export class RegisterPurchasePaymentAction {
     const amount = preciseNumber(amountBig, 2);
 
     return this.dataSource.transaction<RegisterPurchasePaymentResult>(async (manager) => {
-      // 1. Fast-path idempotencia.
+      // 1. Pre-validar compra activa ANTES del fast-path (HIGH-5 auditoría).
+      //    Sin esto, un fast-path sobre una compra ya anulada (is_deleted=true)
+      //    devolvería el pago "anterior" con 200, dando la falsa impresión al
+      //    cliente de que se aplicó un nuevo abono a una compra inválida.
+      const purchase = await findPurchaseInCompany(manager, purchaseId, companyId, {
+        requireActive: true,
+      });
+
+      // 2. Fast-path idempotencia.
       const existing = await manager.findOne(PurchasePayment, {
         where: { company_id: String(companyId), uuid: idempotencyKey },
       });
@@ -172,10 +179,7 @@ export class RegisterPurchasePaymentAction {
         return { aggregate, payment: existing, idempotent: true };
       }
 
-      // 2. Cargar compra + credit.
-      const purchase = await findPurchaseInCompany(manager, purchaseId, companyId, {
-        requireActive: true,
-      });
+      // 3. Cargar credit (la compra ya fue validada en paso 1).
       const credit = await findPurchaseCredit(manager, purchaseId, companyId);
       if (!credit) {
         throw new UnprocessableEntityException(
@@ -257,9 +261,14 @@ export class RegisterPurchasePaymentAction {
 
       // 6. Actualizar PurchaseCredit (paid_amount, balance, status).
       const newPaid = preciseNumber(toBig(credit.paid_amount).plus(amountBig), 2);
-      const newBalance = preciseNumber(currentBalance.minus(amountBig), 2);
-      const newStatus =
-        newBalance === 0 ? PurchaseCreditStatus.PAID : PurchaseCreditStatus.PARTIALLY_PAID;
+      const newBalanceBig = currentBalance.minus(amountBig);
+      const newBalance = preciseNumber(newBalanceBig, 2);
+      // HIGH-3 auditoría: `toBig().lte(0)` en lugar de `=== 0` para alinear con
+      // la comparación de línea 186 (`currentBalance.lte(0)`) y tolerar
+      // valores residuales de coerción numérica (-0, 0.00001 por bug futuro).
+      const newStatus = newBalanceBig.lte(0)
+        ? PurchaseCreditStatus.PAID
+        : PurchaseCreditStatus.PARTIALLY_PAID;
       await manager.update(
         PurchaseCredit,
         { id: credit.id, company_id: String(companyId) },
@@ -312,12 +321,17 @@ export class RegisterPurchasePaymentAction {
     const amount = preciseNumber(amountBig, 2);
 
     if (sourceType === 'bank') {
+      // CRIT-2 auditoría: `lock: pessimistic_write` serializa lecturas
+      // concurrentes del mismo row de Bank dentro de transacciones distintas.
+      // Sin lock, dos pagos concurrentes desde el mismo banco con balance=100
+      // podían validar ambos `100>=60` y dejar el balance en 40 (lost update).
       const bank = await manager.findOne(Bank, {
         where: {
           id: String(sourceId),
           company_id: String(companyId),
           is_archived: false,
         },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!bank) {
         throw new NotFoundException('Cuenta bancaria no encontrada');
@@ -343,12 +357,15 @@ export class RegisterPurchasePaymentAction {
     }
 
     if (sourceType === 'wallet') {
+      // CRIT-2 auditoría: idem bank — lock pessimistic_write para evitar
+      // lost-update de balance.
       const wallet = await manager.findOne(Wallet, {
         where: {
           id: String(sourceId),
           company_id: String(companyId),
           is_archived: false,
         },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!wallet) {
         throw new NotFoundException('Billetera no encontrada');
@@ -374,17 +391,16 @@ export class RegisterPurchasePaymentAction {
     }
 
     // sourceType === 'cash_register'
-    // sourceId aquí es ignorado del payload — el "current" turno abierto manda.
-    const open = await findOpenCashRegister(manager, companyId);
-    if (!open) {
-      throw new NotFoundException('No hay caja abierta');
-    }
-    // Verificamos saldo corriente del turno (opening + logs).
-    const balanceResult = await this.getCashRegisterBalanceAction.execute(companyId);
-    const balance = toBig(balanceResult.balance);
-    if (amountBig.gt(balance)) {
+    // CRIT-1 + HIGH-2 auditoría: `requireOpenCashRegisterForUpdate` lockea el
+    // row del cash_register; `computeCashRegisterBalance` lee logs con el
+    // MISMO manager transaccional. Dos pagos concurrentes desde la misma caja
+    // serializan en el lock — el segundo recalcula balance tras el commit del
+    // primero. `sourceId` del payload se ignora (paridad PlacePos).
+    const open = await requireOpenCashRegisterForUpdate(manager, companyId);
+    const balanceBig = await computeCashRegisterBalance(manager, open);
+    if (amountBig.gt(balanceBig)) {
       throw new UnprocessableEntityException(
-        `Saldo insuficiente en caja. Disponible: ${balance.toFixed(2)}`,
+        `Saldo insuficiente en caja. Disponible: ${balanceBig.toFixed(2)}`,
       );
     }
     const log = manager.create(CashRegisterLog, {

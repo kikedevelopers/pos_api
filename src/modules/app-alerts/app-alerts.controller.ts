@@ -82,7 +82,10 @@ export class AppAlertsController {
 
   @Put('read-all')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager', 'employee')
+  // HIGH-4 auditoría: las alertas son administrativas (break_even_reached,
+  // inactive_customer, etc.). El employee no debería marcarlas leídas y
+  // ocultar señales al owner. Restringido a owner|manager.
+  @Roles('owner', 'manager')
   @ApiOperation({
     summary: 'Marca como leídas todas las alertas no leídas de la company',
     description: 'Idempotente. Devuelve marked_count = 0 si no había alertas no leídas.',
@@ -95,7 +98,8 @@ export class AppAlertsController {
 
   @Put(':id/read')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager', 'employee')
+  // HIGH-4 auditoría: idem `read-all`. Restringido a owner|manager.
+  @Roles('owner', 'manager')
   @ApiOperation({
     summary: 'Marca una alerta específica como leída',
     description: 'Idempotente. Si ya estaba leída, no hace nada.',

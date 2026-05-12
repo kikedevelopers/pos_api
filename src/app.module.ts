@@ -32,6 +32,7 @@ import { FinancialMovementsModule } from './modules/financial-movements/financia
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
+import { SalesModule } from './modules/sales/sales.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { TicketSettingsModule } from './modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from './modules/users/users.module';
@@ -161,6 +162,8 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     WalletsModule,
     CashRegisterModule,
     AccountsModule,
+    // Fase 6 — Ventas.
+    SalesModule,
     // Fase 8 — Compras.
     PurchasesModule,
     // Fase 10 — Settings y alertas.
