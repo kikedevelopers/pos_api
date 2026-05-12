@@ -17,10 +17,19 @@ import type { AppConfig } from './config/configuration';
 import { validationSchema } from './config/validation.schema';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
+import { AccountsModule } from './modules/accounts/accounts.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { BanksModule } from './modules/banks/banks.module';
+import { CashRegisterModule } from './modules/cash-register/cash-register.module';
 import { CompaniesModule } from './modules/companies/companies.module';
+import { CustomersModule } from './modules/customers/customers.module';
 import { EmployeesModule } from './modules/employees/employees.module';
+import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
+import { PackagingsModule } from './modules/packagings/packagings.module';
+import { ProductsModule } from './modules/products/products.module';
+import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { UsersModule } from './modules/users/users.module';
+import { WalletsModule } from './modules/wallets/wallets.module';
 
 @Module({
   imports: [
@@ -127,10 +136,26 @@ import { UsersModule } from './modules/users/users.module';
     DatabaseModule,
     HealthModule,
 
-    // Módulos de dominio — Fase 0 + Fase 1 + Fase 2.
+    // Módulos de dominio — Fase 0 a Fase 5.
+    // Orden: dependencias antes que dependientes. `AuthModule` va último
+    // porque importa `WalletsModule` para el seed de la wallet "Efectivo"
+    // dentro del registro.
     CompaniesModule,
     UsersModule,
     EmployeesModule,
+    // Fase 3 — Catálogo.
+    PackagingsModule,
+    ProductsModule,
+    // Fase 4 — Personas externas.
+    CustomersModule,
+    SuppliersModule,
+    // Fase 5 — Cuentas y caja.
+    FinancialMovementsModule,
+    BanksModule,
+    WalletsModule,
+    CashRegisterModule,
+    AccountsModule,
+    // Auth al final (depende de WalletsModule).
     AuthModule,
   ],
   controllers: [AppController],

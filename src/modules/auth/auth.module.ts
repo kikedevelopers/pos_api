@@ -6,17 +6,27 @@ import { PassportModule } from '@nestjs/passport';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { EmployeesModule } from '@/modules/employees/employees.module';
 import { UsersModule } from '@/modules/users/users.module';
+import { WalletsModule } from '@/modules/wallets/wallets.module';
 
+import { GetMeAction } from './actions/get-me.action';
+import { GetProfileAction } from './actions/get-profile.action';
+import { LoginAction } from './actions/login.action';
+import { RegisterAction } from './actions/register.action';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { DummyHashService } from './internal/dummy-hash.service';
+import { JwtIssuerService } from './internal/jwt-issuer.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 /**
  * Módulo `auth`. Cablea:
  *   - `PassportModule`  con estrategia por defecto `jwt`.
  *   - `JwtModule`       con secret de env y sin `expiresIn` por defecto (el
- *                       service lo decide por tipo de usuario al firmar).
+ *                       `JwtIssuerService` lo decide por tipo de usuario al
+ *                       firmar).
  *   - `JwtStrategy`     como provider (se ejecuta al verificar tokens).
+ *   - Internals:        `DummyHashService` (anti-timing) y `JwtIssuerService`.
+ *   - Actions:          `Register`, `Login`, `GetMe`, `GetProfile`.
  *   - `AuthService`     y `AuthController`.
  *
  * Exporta `AuthService` por si un módulo futuro lo necesita (no debería —
@@ -35,9 +45,25 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     UsersModule,
     CompaniesModule,
     EmployeesModule,
+    // Para sembrar la wallet "Efectivo" en POST /auth/register dentro de la
+    // misma transacción que crea Company + User.
+    WalletsModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [
+    // Internals.
+    DummyHashService,
+    JwtIssuerService,
+    // Actions.
+    RegisterAction,
+    LoginAction,
+    GetMeAction,
+    GetProfileAction,
+    // Facade.
+    AuthService,
+    // Passport.
+    JwtStrategy,
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}

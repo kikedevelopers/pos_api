@@ -1,0 +1,123 @@
+import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+
+import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+
+import type { CreateProductDto } from '../dto/create-product.dto';
+import type { ProductPriceInputDto } from '../dto/product-price.dto';
+import { Product, ProductType } from '../entities/product.entity';
+import { ProductPrice } from '../entities/product-price.entity';
+import { translateProductConstraintError } from '../internal/constraint-errors';
+import {
+  assertPackagingBelongsToCompany,
+  assertParentBelongsToCompany,
+} from '../internal/product-lookups';
+
+/**
+ * Datos del actor creador. Evita propagar `AuthUser` completo.
+ */
+export interface ProductCreator {
+  id: number;
+  fullName: string;
+}
+
+/**
+ * Crea un producto + sus precios atómicamente. Endpoint `POST /inventory`.
+ *
+ * Reglas:
+ *   - `parent_id` y `packaging_id`, si presentes, DEBEN pertenecer a la
+ *     misma company (pre-validación). Anti cross-tenant.
+ *   - `profit` y `margin` por cada precio se RECALCULAN con Big.js
+ *     (`calculateProfit` / `calculateMargin`). El cliente puede enviar
+ *     valores hint que se IGNORAN — fuente única de verdad: el servidor.
+ *   - `name` se trimea. SKU/barcode vacíos → null. Espejo PlacePos.
+ *   - Colisiones UNIQUE → 400 con `code` específico
+ *     (PRODUCT_NAME_TAKEN / PRODUCT_SKU_TAKEN / PRODUCT_BARCODE_TAKEN).
+ *
+ * Transacción: INSERT product + INSERT N prices DEBEN ser atómicos. Si
+ * falla la inserción de prices, el product no debe quedarse huérfano.
+ * `dataSource.transaction` garantiza el rollback.
+ */
+@Injectable()
+export class CreateProductAction {
+  constructor(private readonly dataSource: DataSource) {}
+
+  async execute(
+    dto: CreateProductDto,
+    companyId: number,
+    createdBy: ProductCreator,
+  ): Promise<Product> {
+    return this.dataSource.transaction<Product>(async (manager) => {
+      // Anti cross-tenant: parent y packaging deben ser de la misma company.
+      await assertParentBelongsToCompany(manager, dto.parent_id ?? null, companyId);
+      await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
+
+      const trimmedName = dto.name.trim();
+      const trimmedSku = (dto.sku_code ?? '').trim() || null;
+      const trimmedBarcode = (dto.bar_code ?? '').trim() || null;
+      const trimmedDescription = (dto.description ?? '').trim() || null;
+
+      const product = manager.create(Product, {
+        company_id: String(companyId),
+        name: trimmedName,
+        description: trimmedDescription,
+        product_type: dto.product_type ?? ProductType.SIMPLE,
+        parent_id: dto.parent_id ? String(dto.parent_id) : null,
+        sku_code: trimmedSku,
+        bar_code: trimmedBarcode,
+        packaging_id: dto.packaging_id ? String(dto.packaging_id) : null,
+        cost: dto.cost,
+        image: dto.image ?? null,
+        show_in_pos: dto.show_in_pos !== false,
+        is_archived: false,
+        created_by: createdBy.fullName,
+        created_by_id: String(createdBy.id),
+      });
+
+      let saved: Product;
+      try {
+        saved = await manager.save(Product, product);
+      } catch (error) {
+        translateProductConstraintError(error);
+        throw error;
+      }
+
+      // Insertar prices. Cada uno copia `company_id` (denormalizado) y
+      // recalcula profit/margin con Big.js — fuente de verdad servidor.
+      const priceRows = dto.prices.map((p) => buildPriceRow(p, saved, dto.cost, createdBy));
+      await manager.insert(ProductPrice, priceRows);
+
+      // Re-fetch con relations para devolver el product completo.
+      // findOneOrFail aquí en lugar de findOne porque el INSERT confirmó
+      // que existe; si findOne devolviera null sería un bug grave (race
+      // contra DELETE concurrente — improbable dentro de la transacción).
+      return manager.findOneOrFail(Product, {
+        where: { id: saved.id, company_id: String(companyId) },
+        relations: { prices: true, packaging: true },
+      });
+    });
+  }
+}
+
+/**
+ * Helper interno: construye el shape de inserción de un ProductPrice
+ * recalculando profit/margin con Big.js. Exportado para testing.
+ */
+export function buildPriceRow(
+  input: ProductPriceInputDto,
+  product: Product,
+  cost: number,
+  createdBy: ProductCreator,
+): Partial<ProductPrice> {
+  return {
+    company_id: product.company_id,
+    product_id: product.id,
+    name: input.name ?? '',
+    sale_price: input.sale_price,
+    profit: calculateProfit(input.sale_price, cost),
+    margin: calculateMargin(input.sale_price, cost),
+    iva_percentage: input.iva_percentage ?? 0,
+    created_by: createdBy.fullName,
+    created_by_id: String(createdBy.id),
+  };
+}

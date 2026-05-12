@@ -87,6 +87,32 @@ Para que el cliente PlacePos pueda alternar entre los dos modos **sin tocar el f
 - Idioma: código y nombres en inglés. Comentarios en español **solo** cuando el "por qué" no sea obvio.
 - Nada de `any` salvo justificación documentada en línea.
 
+### 3.1 Patrón de actions (orquestador delgado)
+
+Para evitar services monolíticos, **cada operación de negocio vive en su propio
+archivo dentro de `modules/<dominio>/actions/`**:
+
+- Un archivo por acción, nombre `kebab-case`: `create-employee.action.ts`,
+  `update-employee-credentials.action.ts`, `find-all-employees.action.ts`.
+- Cada action es una clase `@Injectable()` con **un único método público
+  `execute(...)`** que recibe el DTO, `companyId` y cualquier dato del actor
+  (nunca el objeto `AuthUser` completo: pasamos solo los campos que la action
+  consume).
+- Las dependencias (repositorios, `DataSource`, otros actions, logger) se
+  inyectan por constructor. **Una action puede depender de otra** (composición
+  intra-módulo, no de otro dominio) y la llama por su método `execute`.
+- El `<dominio>.service.ts` **no contiene lógica**: solo inyecta los actions y
+  reexpone métodos delegando — facade pattern, una sola línea por método. El
+  controller sigue inyectando el service (no los actions directamente) para
+  preservar la firma del contrato HTTP.
+- Constantes compartidas (códigos SQLSTATE, nombres de constraints, helpers
+  privados como traductores de error) viven en `modules/<dominio>/internal/`,
+  nunca exportadas fuera del módulo.
+- Excepciones (`Bad/Conflict/NotFound/UnprocessableEntity`) se lanzan desde el
+  action, no desde el service.
+- Tests unitarios apuntan a la action (no al service) — el service queda
+  trivialmente cubierto por los e2e.
+
 ## 4. Estructura de directorios
 
 ```
@@ -148,10 +174,15 @@ src/
 Cada módulo sigue la forma:
 ```
 modules/<dominio>/
+├── actions/
+│   ├── <verbo>-<dominio>.action.ts          # una lógica por archivo
+│   └── ...
+├── internal/                                # helpers/constantes privadas del módulo
+│   └── <helper>.ts
 ├── dto/
 ├── entities/
 ├── <dominio>.controller.ts
-├── <dominio>.service.ts
+├── <dominio>.service.ts                      # orquestador delgado (solo delega)
 ├── <dominio>.module.ts
 └── __tests__/
 ```
@@ -211,6 +242,7 @@ pnpm migration:show
 5. **Nunca** acepts `@Body() body: any`. Siempre DTO con validación.
 6. **Nunca** expongas `password_hash`, JWT secrets, ni columnas de auditoría sensibles en respuestas.
 7. **Nunca** modifiques el contrato HTTP de un endpoint v1 existente — versiona.
-8. **Siempre** envuelve operaciones multi-paso (venta+pago+stock+caja) en `dataSource.transaction()`.
+8. **Siempre** envuelve TODA mutación (INSERT/UPDATE/DELETE) en `dataSource.transaction(async manager => { ... })`, sin importar si parece "un solo paso". Razón: defensa en profundidad contra futuros side-effects (audit, FK cascade, hooks) que se sumen al action sin que nadie revise si la operación seguía siendo atómica. Los reads puros (SELECT) no requieren transacción.
 9. **Siempre** incrementa contadores de folios atómicamente (`UPDATE ... RETURNING`).
 10. **Siempre** registra eventos críticos en log (login fallido, anulación de venta, transferencia entre cuentas).
+11. **Siempre** organiza la lógica de un módulo en `actions/`: una clase por operación con `execute(...)`. El `<dominio>.service.ts` solo orquesta. Detalle en §3.1.
