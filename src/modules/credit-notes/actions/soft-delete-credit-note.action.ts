@@ -1,7 +1,7 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-import { CreditNote } from '../entities/credit-note.entity';
+import { CreditNote, OperationType } from '../entities/credit-note.entity';
 import { findNoteInCompany } from '../internal/credit-note-lookups';
 
 /**
@@ -38,6 +38,21 @@ export class SoftDeleteCreditNoteAction {
         requireActive: true,
         lock: true,
       });
+
+      // CRIT-2 auditoría: prohibir soft-delete de FULL_VOID. El índice parcial
+      // `idx_credit_notes_one_full_void_per_sale` cuenta solo notas con
+      // is_deleted=false; si permitimos soft-delete, el slot único se libera
+      // y un segundo FULL_VOID sobre la misma venta volvería a ejecutar
+      // `reverseSalePayments` → doble débito de bank/wallet/caja. La regla
+      // contable correcta es crear una nota DEBIT compensatoria, NO borrar
+      // la FULL_VOID original.
+      if (note.operation_type === OperationType.FULL_VOID) {
+        throw new UnprocessableEntityException({
+          message:
+            'No se puede anular una nota FULL_VOID. Crea una nota compensatoria (DEBIT/ADDITION) si necesitas revertirla.',
+          payload: { code: 'FULL_VOID_NOT_DELETABLE' },
+        });
+      }
 
       const ageHours = (Date.now() - note.created_at.getTime()) / (1000 * 60 * 60);
       if (ageHours > SoftDeleteCreditNoteAction.MAX_AGE_HOURS) {

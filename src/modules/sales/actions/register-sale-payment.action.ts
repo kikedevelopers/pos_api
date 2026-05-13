@@ -112,6 +112,10 @@ export class RegisterSalePaymentAction {
         saleId: Number(sale.id),
         companyId,
         ticketReference: sale.sale_number ?? sale.ticket_number,
+        // CRIT-1 auditoría: propagar customer_id para que el FinancialMovement
+        // satisfaga `chk_financial_movements_source_consistency` (source NOT
+        // NULL ⇒ source_id NOT NULL).
+        customerId: sale.customer_id === null ? null : Number(sale.customer_id),
         account_type: dto.account_type,
         account_id: dto.account_id,
         amount: dto.amount,

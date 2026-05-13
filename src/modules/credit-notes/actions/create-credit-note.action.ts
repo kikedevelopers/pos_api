@@ -640,7 +640,15 @@ export class CreateCreditNoteAction {
     } | null = null;
 
     for (const payment of payments) {
-      const amountBig = toBig(payment.amount);
+      // HIGH-2 auditoría: para cash el balance neto de la caja recibió
+      // `amount - change_amount` (cliente entregó X, se le devolvió vuelto).
+      // Si revertimos `amount` completo, sacamos más de lo que entró y la
+      // caja queda descuadrada. Solo aplica a cash: en bank/wallet no hay
+      // vuelto (transferencia es por monto exacto).
+      const changeBig = toBig(payment.change_amount ?? 0);
+      const cashNetBig = toBig(payment.amount).minus(changeBig);
+      const amountBig =
+        payment.account_type === 'cash_register' ? cashNetBig : toBig(payment.amount);
       const amount = preciseNumber(amountBig, 2);
 
       if (payment.account_type === 'bank') {
@@ -734,10 +742,17 @@ export class CreateCreditNoteAction {
         };
       }
 
-      // FinancialMovement de reverso. source = cuenta interna que devuelve,
-      // destination = external (cliente). source_id: el id de la cuenta;
-      // destination_id: null (external no tiene id rastreado, espejo de
-      // `apply-sale-payment` que también persiste null para external).
+      // FinancialMovement de reverso. source = cuenta interna que devuelve.
+      // CRIT-1 auditoría: el CHECK `chk_financial_movements_destination_consistency`
+      // exige destination_type y destination_id ambos NULL o ambos NOT NULL.
+      // Si la venta tiene customer, se usa el customer_id como destination_id
+      // (semántica: el dinero vuelve al cliente). Si NO hay customer (venta
+      // mostrador), omitimos el lado destination — el movement queda solo con
+      // source (el CHECK `chk_financial_movements_has_endpoint` se satisface).
+      const destinationFields =
+        sale.customer_id !== null
+          ? { destination_type: 'external' as const, destination_id: Number(sale.customer_id) }
+          : { destination_type: null, destination_id: null };
       await this.financialMovementsService.record(manager, {
         companyId,
         amount,
@@ -746,8 +761,7 @@ export class CreateCreditNoteAction {
         description: `Reverso de pago por nota ${noteNumber}`,
         source_type: payment.account_type,
         source_id: Number(payment.account_id),
-        destination_type: 'external',
-        destination_id: null,
+        ...destinationFields,
         reference_code: `NOTE-${noteNumber}`,
         created_by: actor.fullName,
         created_by_id: actor.id,

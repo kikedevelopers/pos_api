@@ -42,6 +42,14 @@ export interface ApplySalePaymentInput {
   saleId: number;
   companyId: number;
   ticketReference: string;
+  /**
+   * Customer asociado a la venta (si lo hay). Se persiste como
+   * `source_id` en el FinancialMovement(INCOME, SALE) cuando NO es null.
+   * Si es null (venta mostrador sin cliente), el movement se persiste con
+   * `source_type=null, source_id=null` para satisfacer el CHECK
+   * `chk_financial_movements_source_consistency` (CRIT-1 auditoría Fase 7).
+   */
+  customerId?: number | null;
   account_type: SalePaymentAccountType;
   account_id: number;
   amount: number;
@@ -205,14 +213,24 @@ export async function applySalePayment(
   );
 
   // 5. FinancialMovement (INCOME, SALE).
+  // CRIT-1 auditoría Fase 7: el CHECK `chk_financial_movements_source_consistency`
+  // exige source_type y source_id ambos NULL o ambos NOT NULL. Antes pasábamos
+  // `source_type='external', source_id=null` que rompía el INSERT en DB real.
+  // Si la venta tiene customer, usamos el customer_id como source_id (semántica
+  // clara: el dinero viene del cliente). Si es venta mostrador sin cliente,
+  // omitimos el lado source — el movement queda solo con destination (el
+  // CHECK `chk_financial_movements_has_endpoint` se satisface).
+  const sourceFields =
+    input.customerId !== null && input.customerId !== undefined
+      ? { source_type: 'external' as const, source_id: input.customerId }
+      : { source_type: null, source_id: null };
   await financialMovementsService.record(manager, {
     companyId: input.companyId,
     amount,
     movement_type: MovementType.INCOME,
     concept: MovementConcept.SALE,
     description: `Cobro de venta ${input.ticketReference}`,
-    source_type: 'external',
-    source_id: null,
+    ...sourceFields,
     destination_type: input.account_type,
     destination_id: input.account_id,
     reference_code: `SALE-${input.ticketReference}`,

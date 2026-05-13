@@ -245,6 +245,8 @@ export class CreateSaleAction {
           saleId: Number(savedSale.id),
           companyId,
           ticketReference,
+          // CRIT-1 auditoría: propagar customer_id para el CHECK del FM.
+          customerId: dto.customer_id ?? null,
           account_type: p.account_type,
           account_id: p.account_id,
           amount: p.amount,

@@ -604,8 +604,12 @@ describe('CreateCreditNoteAction', () => {
     expect(fmArgs.movement_type).toBe('EXPENSE');
     expect(fmArgs.concept).toBe('CREDIT_NOTE_REFUND');
     expect(fmArgs.source_type).toBe('bank');
+    // CRIT-1 auditoría: cuando la sale tiene customer_id, el reverso del
+    // FinancialMovement destina al customer (no null). El CHECK
+    // `chk_financial_movements_destination_consistency` exige que
+    // destination_type y destination_id sean ambos NULL o ambos NOT NULL.
     expect(fmArgs.destination_type).toBe('external');
-    expect(fmArgs.destination_id).toBe(null);
+    expect(fmArgs.destination_id).toBe(1);
     expect(fmArgs.amount).toBe(500);
 
     // CorrectionSource = bank.

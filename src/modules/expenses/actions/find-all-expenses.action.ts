@@ -1,6 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, type FindOptionsWhere, ILike, MoreThanOrEqual, Repository } from 'typeorm';
+import {
+  Between,
+  type FindOptionsWhere,
+  ILike,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 
 import type { ListExpensesQueryDto } from '../dto/list-expenses-query.dto';
 import { Expense } from '../entities/expense.entity';
@@ -61,6 +68,10 @@ export class FindAllExpensesAction {
       );
     } else if (query.date_from) {
       where.expense_date = MoreThanOrEqual(new Date(`${query.date_from}T00:00:00.000Z`));
+    } else if (query.date_to) {
+      // MED-1 auditoría: antes se ignoraba silenciosamente `date_to` cuando
+      // venía sin `date_from`.
+      where.expense_date = LessThanOrEqual(new Date(`${query.date_to}T23:59:59.999Z`));
     }
 
     if (query.search) {
