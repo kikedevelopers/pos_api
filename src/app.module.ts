@@ -29,13 +29,17 @@ import { CompaniesModule } from './modules/companies/companies.module';
 import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
 import { CreditsModule } from './modules/credits/credits.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { PosDataModule } from './modules/pos-data/pos-data.module';
+import { PosReportsModule } from './modules/pos-reports/pos-reports.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { TicketSettingsModule } from './modules/ticket-settings/ticket-settings.module';
@@ -183,6 +187,11 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     AppSettingsModule,
     AppAlertsModule,
     AlertConfigsModule,
+    // Fase 11 — Reportes y dashboard. Read-only sobre tablas de fases previas.
+    DashboardModule,
+    ReportsModule,
+    PosReportsModule,
+    PosDataModule,
     // Fase 12 — Backup stub (paridad de contrato; siempre 503).
     BackupModule,
     // Auth al final (depende de Wallets/TicketSettings/AppSettings para
