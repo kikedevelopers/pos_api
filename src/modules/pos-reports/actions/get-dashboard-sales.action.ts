@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
+import { parseUtcRange } from '@/modules/reports/internal/range';
 
 import type { DashboardSalesQueryDto } from '../dto/sales-report-query.dto';
 import {
@@ -68,13 +69,15 @@ export class GetDashboardSalesAction {
       throw new BadRequestException('dateFrom y dateTo son requeridos');
     }
 
-    const dateFrom = new Date(`${filters.dateFrom}T00:00:00.000Z`);
-    const dateTo = new Date(`${filters.dateTo}T23:59:59.999Z`);
+    // HIGH-2 auditoría Fase 11: validar rango (`to >= from` + MAX_RANGE_DAYS).
+    const range = parseUtcRange(filters.dateFrom, filters.dateTo);
+    const dateFrom = range.dateStart;
+    const dateTo = range.dateEnd;
     const cid = String(companyId);
 
     // Build invoice query with multi-tenant filters baked in.
     const params: unknown[] = [cid, dateFrom, dateTo];
-    const noteFilterClause = this.buildNoteFilterClause(filters, params);
+    const noteFilterClause = this.buildNoteFilterClause(filters);
 
     const invoiceSql = `
       SELECT
@@ -318,16 +321,7 @@ export class GetDashboardSalesAction {
    * Construye el predicado adicional según `noteFilter`. Devuelve SQL y los
    * parámetros extra (en el orden en que se appendarán al array compartido).
    */
-  private buildNoteFilterClause(
-    filters: DashboardSalesQueryDto,
-    params: unknown[],
-  ): NoteFilterClause {
-    // Helper to append a param and get its placeholder.
-    const placeholder = (value: unknown): string => {
-      params.push(value);
-      return `$${params.length}`;
-    };
-
+  private buildNoteFilterClause(filters: DashboardSalesQueryDto): NoteFilterClause {
     if (filters.noteFilter === 'ACTIVE_ONLY') {
       return {
         sql: `AND si.is_deleted = false AND NOT EXISTS (
@@ -390,15 +384,16 @@ export class GetDashboardSalesAction {
       };
     }
     if (!filters.showDeleted) {
-      const fromPh = placeholder(params[1]);
-      const toPh = placeholder(params[2]);
+      // MED-4 auditoría Fase 11: reusar $2/$3 (dateFrom/dateTo) directamente —
+      // antes se duplicaban como placeholders adicionales con los mismos
+      // valores, gastando slots sin razón.
       return {
         sql: `AND (si.is_deleted = false OR EXISTS (
           SELECT 1 FROM credit_notes cn
           WHERE cn.sale_invoice_id = si.id
             AND cn.company_id = $1
             AND cn.is_deleted = false
-            AND cn.created_at BETWEEN ${fromPh} AND ${toPh}
+            AND cn.created_at BETWEEN $2 AND $3
         ))`,
         extraParams: [],
       };

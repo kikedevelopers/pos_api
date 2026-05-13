@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
+import { parseUtcRange } from '@/modules/reports/internal/range';
 
 import type { SalesReportQueryDto } from '../dto/sales-report-query.dto';
 import {
@@ -75,8 +76,12 @@ export class GetSalesReportAction {
       throw new BadRequestException('dateFrom y dateTo son requeridos');
     }
 
-    const dateFrom = new Date(`${filters.dateFrom}T00:00:00.000Z`);
-    const dateTo = new Date(`${filters.dateTo}T23:59:59.999Z`);
+    // HIGH-2 auditoría Fase 11: validar rango (`to >= from` + MAX_RANGE_DAYS).
+    // Sin esto, un rango de varios años hace DoS — el endpoint no pagina y el
+    // summary itera todo en memoria.
+    const range = parseUtcRange(filters.dateFrom, filters.dateTo);
+    const dateFrom = range.dateStart;
+    const dateTo = range.dateEnd;
     const cid = String(companyId);
 
     const { sql, params } = this.buildInvoiceQuery(cid, filters, dateFrom, dateTo);
@@ -212,10 +217,12 @@ export class GetSalesReportAction {
     conditions.push(`si.created_at <= ${toPh}`);
 
     if (filters.search?.trim()) {
-      const term = `%${filters.search.trim()}%`;
-      const ph = placeholder(term);
+      // MED-2 auditoría Fase 11: escapar wildcards de ILIKE (`%`, `_`, `\`)
+      // para que el cliente no pueda controlar el patrón de match.
+      const escaped = filters.search.trim().replace(/[\\%_]/g, '\\$&');
+      const ph = placeholder(`%${escaped}%`);
       conditions.push(
-        `(si.customer_name ILIKE ${ph} OR si.ticket_number ILIKE ${ph} OR si.sale_number ILIKE ${ph})`,
+        `(si.customer_name ILIKE ${ph} ESCAPE '\\' OR si.ticket_number ILIKE ${ph} ESCAPE '\\' OR si.sale_number ILIKE ${ph} ESCAPE '\\')`,
       );
     }
 

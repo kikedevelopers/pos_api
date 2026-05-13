@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export const CREDIT_REPORT_STATUSES = ['ALL', 'PENDING', 'PARTIALLY_PAID', 'PAID'] as const;
 export type CreditReportStatus = (typeof CREDIT_REPORT_STATUSES)[number];
@@ -30,6 +30,7 @@ export class CreditsReportQueryDto {
   @ApiPropertyOptional({ example: 'Juan' })
   @IsOptional()
   @IsString()
+  @MaxLength(100, { message: 'search demasiado largo (máx 100 caracteres)' })
   search?: string;
 
   @ApiPropertyOptional({ enum: CREDIT_REPORT_STATUSES, example: 'PENDING' })

@@ -54,8 +54,10 @@ describe('GetCreditsReportAction', () => {
     const { sql, params } = lastCall();
     expect(sql).toMatch(/si\.created_at >= \$\d+/);
     expect(sql).toMatch(/si\.created_at <= \$\d+/);
-    expect(params).toContain('2026-05-01 00:00:00');
-    expect(params).toContain('2026-05-31 23:59:59');
+    // Tras MED-1 auditoría Fase 11, las fechas se pasan como Date (parseUtcRange)
+    // en UTC: [00:00:00.000Z, 23:59:59.999Z]. Antes iban como string.
+    expect(params).toContainEqual(new Date('2026-05-01T00:00:00.000Z'));
+    expect(params).toContainEqual(new Date('2026-05-31T23:59:59.999Z'));
   });
 
   it("status='ALL' NO añade filtro de status", async () => {

@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsBoolean, IsOptional, IsString, Matches } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 
 export const NOTE_FILTERS = [
   'ACTIVE_ONLY',
@@ -13,6 +21,7 @@ export const NOTE_FILTERS = [
 export type NoteFilter = (typeof NOTE_FILTERS)[number];
 
 export const TICKET_TYPE_VALUES = ['ORDER', 'SALE', 'NOTE'] as const;
+export type TicketTypeValue = (typeof TICKET_TYPE_VALUES)[number];
 
 /**
  * Query del endpoint `GET /pos-reports/sales`. Espejo PlacePos.
@@ -41,9 +50,10 @@ export class SalesReportQueryDto {
   @ApiPropertyOptional({ example: 'V-001' })
   @IsOptional()
   @IsString()
+  @MaxLength(100, { message: 'search demasiado largo (máx 100 caracteres)' })
   search?: string;
 
-  @ApiPropertyOptional({ example: 'SALE,ORDER' })
+  @ApiPropertyOptional({ example: 'SALE,ORDER', enum: TICKET_TYPE_VALUES, isArray: true })
   @IsOptional()
   @Transform(({ value }): string[] | undefined => {
     if (typeof value === 'string') {
@@ -58,13 +68,13 @@ export class SalesReportQueryDto {
     return undefined;
   })
   @IsArray()
-  @IsString({ each: true })
-  ticketTypes?: string[];
+  @IsIn([...TICKET_TYPE_VALUES], { each: true, message: 'ticketTypes contiene valores inválidos' })
+  ticketTypes?: TicketTypeValue[];
 
   @ApiPropertyOptional({ enum: NOTE_FILTERS })
   @IsOptional()
-  @IsString()
-  noteFilter?: string;
+  @IsIn([...NOTE_FILTERS], { message: 'noteFilter inválido' })
+  noteFilter?: NoteFilter;
 
   @ApiPropertyOptional({ example: false })
   @IsOptional()
@@ -91,8 +101,8 @@ export class DashboardSalesQueryDto {
 
   @ApiPropertyOptional({ enum: NOTE_FILTERS })
   @IsOptional()
-  @IsString()
-  noteFilter?: string;
+  @IsIn([...NOTE_FILTERS], { message: 'noteFilter inválido' })
+  noteFilter?: NoteFilter;
 
   @ApiPropertyOptional({ example: false })
   @IsOptional()

@@ -3,6 +3,7 @@ import Big from 'big.js';
 import { DataSource } from 'typeorm';
 
 import type { CreditsReportQueryDto } from '../dto/credits-report-query.dto';
+import { parseUtcRange } from '../internal/range';
 
 interface CreditReportRow {
   id: string;
@@ -90,18 +91,24 @@ export class GetCreditsReportAction {
       return `$${params.length}`;
     };
 
+    // MED-1 auditoría Fase 11: validar el rango (`to >= from` + MAX_RANGE_DAYS)
+    // antes de tocar la query. Si solo llega uno de los dos, se ignora (paridad
+    // PlacePos). parseUtcRange ya escapa el formato (BadRequestException 400).
     if (filters.dateFrom && filters.dateTo) {
-      const fromPh = placeholder(`${filters.dateFrom} 00:00:00`);
-      conditions.push(`si.created_at >= ${fromPh}`);
-      const toPh = placeholder(`${filters.dateTo} 23:59:59`);
-      conditions.push(`si.created_at <= ${toPh}`);
+      const range = parseUtcRange(filters.dateFrom, filters.dateTo);
+      conditions.push(`si.created_at >= ${placeholder(range.dateStart)}`);
+      conditions.push(`si.created_at <= ${placeholder(range.dateEnd)}`);
     }
 
     if (filters.search?.trim()) {
-      const term = `%${filters.search.trim()}%`;
-      const ph = placeholder(term);
+      // MED-2 auditoría Fase 11: escapar wildcards de ILIKE. Sin el escape,
+      // un cliente con `search=%_a` interpretaría `%` y `_` como wildcards
+      // y devolvería resultados engañosos. Mantenemos paridad funcional
+      // (substring match) pero solo sobre el texto literal.
+      const escaped = filters.search.trim().replace(/[\\%_]/g, '\\$&');
+      const ph = placeholder(`%${escaped}%`);
       conditions.push(
-        `(si.customer_name ILIKE ${ph} OR si.ticket_number ILIKE ${ph} OR si.sale_number ILIKE ${ph})`,
+        `(si.customer_name ILIKE ${ph} ESCAPE '\\' OR si.ticket_number ILIKE ${ph} ESCAPE '\\' OR si.sale_number ILIKE ${ph} ESCAPE '\\')`,
       );
     }
 
