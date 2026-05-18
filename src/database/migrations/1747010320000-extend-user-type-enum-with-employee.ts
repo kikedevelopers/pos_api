@@ -45,6 +45,10 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
 export class ExtendUserTypeEnumWithEmployee1747010320000 implements MigrationInterface {
   name = 'ExtendUserTypeEnumWithEmployee1747010320000';
 
+  // Postgres prohíbe usar un enum value recién añadido en la misma transacción
+  // (error 55P04 "unsafe use of new value"). Debe correr fuera de TX.
+  public transaction = false as const;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. Añadir el valor 'employee' al enum.
     //    `IF NOT EXISTS` por idempotencia.

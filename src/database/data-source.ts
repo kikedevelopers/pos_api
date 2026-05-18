@@ -27,6 +27,10 @@ export const dataSourceOptions: DataSourceOptions = {
   migrations: [join(__dirname, 'migrations', '*.{ts,js}')],
   migrationsTableName: 'migrations',
   migrationsRun: false,
+  // 'each' permite que cada migración decida si corre en transacción.
+  // Necesario para migraciones que declaran `transaction = false` (ej.
+  // CREATE INDEX CONCURRENTLY, ALTER TYPE ... ADD VALUE — no admiten TX).
+  migrationsTransactionMode: 'each',
 };
 
 const dataSource = new DataSource(dataSourceOptions);

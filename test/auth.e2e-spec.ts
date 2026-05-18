@@ -63,14 +63,17 @@ interface AuthPayload {
     id: number;
     name: string;
     lastname: string;
-    email: string | null;
+    email: string;
     type: string;
   };
 }
 
 interface ProfilePayload {
-  user: AuthPayload['user'];
-  company: { id: number; name: string } | null;
+  company_profile: {
+    primary: { id: number; name: string; is_branch: boolean; balance: number } | null;
+    companies: Array<{ id: number; name: string }>;
+  };
+  user_profile: AuthPayload['user'] & { created_at: string };
 }
 
 /**
@@ -86,17 +89,13 @@ describeIf('Auth (e2e)', () => {
   let httpServer: Server;
 
   // Datos compartidos entre tests para evitar 60 registros por corrida.
-  const validUser = {
+  // Shape PLANO — paridad cliente PlacePos en modo CLOUD.
+  const validRegister = {
     name: 'E2E',
     lastname: 'Tester',
     email: `e2e-${uniqueSuffix()}@pos.test`,
     password: 'PasswordSeguro123!',
-  };
-  const validCompany = {
-    name: `E2E Co ${uniqueSuffix()}`,
-    document_number: 'J-99999999-9',
-    address: 'Test address',
-    phone_number: '+58 412 0000000',
+    company_name: `E2E Co ${uniqueSuffix()}`,
   };
   let issuedToken: string | undefined;
 
@@ -138,16 +137,14 @@ describeIf('Auth (e2e)', () => {
 
   // ---------- 1) register feliz ----------
   it('POST /api/v1/auth/register (201) crea owner+company y retorna access_token', async () => {
-    const response = await request(httpServer)
-      .post('/api/v1/auth/register')
-      .send({ user: validUser, company: validCompany });
+    const response = await request(httpServer).post('/api/v1/auth/register').send(validRegister);
 
     expect(response.status).toBe(HttpStatus.CREATED);
     const body = response.body as SuccessEnvelope<AuthPayload>;
     expect(body.success).toBe(true);
     expect(typeof body.payload.access_token).toBe('string');
     expect(body.payload.access_token.length).toBeGreaterThan(20);
-    expect(body.payload.user.email).toBe(validUser.email);
+    expect(body.payload.user.email).toBe(validRegister.email);
     expect(body.payload.user.type).toBe('owner');
     issuedToken = body.payload.access_token;
   });
@@ -156,7 +153,7 @@ describeIf('Auth (e2e)', () => {
   it('POST /api/v1/auth/register (409) con email ya tomado → payload.code = EMAIL_TAKEN', async () => {
     const response = await request(httpServer)
       .post('/api/v1/auth/register')
-      .send({ user: validUser, company: { name: 'Other Co' } });
+      .send({ ...validRegister, company_name: 'Other Co' });
 
     expect(response.status).toBe(HttpStatus.CONFLICT);
     const body = response.body as ErrorEnvelope;
@@ -170,8 +167,9 @@ describeIf('Auth (e2e)', () => {
     const response = await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
-        user: { ...validUser, email: `short-${uniqueSuffix()}@pos.test`, password: 'abcd' },
-        company: validCompany,
+        ...validRegister,
+        email: `short-${uniqueSuffix()}@pos.test`,
+        password: 'abcd',
       });
 
     expect(response.status).toBe(HttpStatus.BAD_REQUEST);
@@ -183,13 +181,13 @@ describeIf('Auth (e2e)', () => {
   it('POST /api/v1/auth/user (200) con credenciales válidas', async () => {
     const response = await request(httpServer)
       .post('/api/v1/auth/user')
-      .send({ username: validUser.email, password: validUser.password });
+      .send({ username: validRegister.email, password: validRegister.password });
 
     expect(response.status).toBe(HttpStatus.OK);
     const body = response.body as SuccessEnvelope<AuthPayload>;
     expect(body.success).toBe(true);
     expect(typeof body.payload.access_token).toBe('string');
-    expect(body.payload.user.email).toBe(validUser.email);
+    expect(body.payload.user.email).toBe(validRegister.email);
     issuedToken = body.payload.access_token;
   });
 
@@ -197,7 +195,7 @@ describeIf('Auth (e2e)', () => {
   it('POST /api/v1/auth/user (401) password incorrecto', async () => {
     const response = await request(httpServer)
       .post('/api/v1/auth/user')
-      .send({ username: validUser.email, password: 'wrong-password-zzz' });
+      .send({ username: validRegister.email, password: 'wrong-password-zzz' });
 
     expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
     const body = response.body as ErrorEnvelope;
@@ -223,9 +221,11 @@ describeIf('Auth (e2e)', () => {
       .set('Authorization', `Bearer ${issuedToken ?? ''}`);
 
     expect(response.status).toBe(HttpStatus.OK);
-    const body = response.body as SuccessEnvelope<AuthPayload['user']>;
-    expect(body.payload.email).toBe(validUser.email);
-    expect(body.payload.type).toBe('owner');
+    // Paridad PlacePos local (`auth.routes.ts:193`): el payload es
+    // `{ user: { id, name, type, ... } }`, no el snapshot plano.
+    const body = response.body as SuccessEnvelope<{ user: AuthPayload['user'] }>;
+    expect(body.payload.user.email).toBe(validRegister.email);
+    expect(body.payload.user.type).toBe('owner');
   });
 
   // ---------- 8) /me sin Bearer ----------
@@ -245,8 +245,10 @@ describeIf('Auth (e2e)', () => {
 
     expect(response.status).toBe(HttpStatus.OK);
     const body = response.body as SuccessEnvelope<ProfilePayload>;
-    expect(body.payload.user.email).toBe(validUser.email);
-    expect(body.payload.company?.name).toBe(validCompany.name);
+    expect(body.payload.user_profile.email).toBe(validRegister.email);
+    expect(body.payload.company_profile.primary?.name).toBe(validRegister.company_name);
+    expect(body.payload.company_profile.primary?.is_branch).toBe(false);
+    expect(body.payload.company_profile.companies.length).toBe(1);
   });
 
   // ---------- 11) login como employee feliz ----------
@@ -298,10 +300,9 @@ describeIf('Auth (e2e)', () => {
     expect(loginBody.payload.user.type).toBe('employee');
     // lastname es '' (string vacío) por contrato — ver toAuthUserDtoFromEmployee.
     expect(loginBody.payload.user.lastname).toBe('');
-    // email puede ser null (no lo enviamos al crear). Si fuera string, también ok.
-    expect(
-      loginBody.payload.user.email === null || typeof loginBody.payload.user.email === 'string',
-    ).toBe(true);
+    // email SIEMPRE string (mapper proyecta null a '' para alinear con
+    // `LoginResponse.user.email: string` del cliente PlacePos).
+    expect(typeof loginBody.payload.user.email).toBe('string');
   });
 
   // ---------- 12) login employee con password mal — mismo mensaje genérico ----------

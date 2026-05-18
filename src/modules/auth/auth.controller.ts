@@ -7,7 +7,7 @@ import { Public } from '@/common/decorators/public.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { AuthService } from './auth.service';
-import { AuthResponseDto, AuthUserDto, ProfileResponseDto } from './dto/auth-response.dto';
+import { AuthResponseDto, MeResponseDto, ProfileResponseDto } from './dto/auth-response.dto';
 import { CheckEmailDto, CheckEmailResponseDto } from './dto/check-email.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -57,7 +57,8 @@ export class AuthController {
   @ApiOperation({
     summary: 'Verificar si un email ya está registrado',
     description:
-      'Cross-company por diseño: `users.email` es UNIQUE GLOBAL. Devuelve `{ exists: boolean }`.',
+      'Cross-company por diseño: `users.email` es UNIQUE GLOBAL. Devuelve ' +
+      '`{ available: boolean, message: string }` — paridad cliente PlacePos.',
   })
   @ApiBody({ type: CheckEmailDto })
   @ApiResponse({ status: HttpStatus.OK, type: CheckEmailResponseDto })
@@ -85,10 +86,13 @@ export class AuthController {
   @Get('me')
   @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Snapshot del usuario autenticado' })
-  @ApiResponse({ status: HttpStatus.OK, type: AuthUserDto })
+  @ApiResponse({ status: HttpStatus.OK, type: MeResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  me(@CurrentUser() user: AuthUser): Promise<AuthUserDto> {
-    return this.authService.getMe(user);
+  async me(@CurrentUser() user: AuthUser): Promise<MeResponseDto> {
+    // Paridad PlacePos local (`auth.routes.ts:193`): el cliente lee
+    // `data.payload.user`. Envolvemos en el controller para mantener la
+    // action `GetMe` reutilizable como AuthUserDto plano.
+    return { user: await this.authService.getMe(user) };
   }
 
   @Get('profile')

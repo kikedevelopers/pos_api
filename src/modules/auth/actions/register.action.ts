@@ -46,11 +46,11 @@ export class RegisterAction {
     // Hashing FUERA de la transacción: argon2 toma ~50-100ms y mantener una
     // conexión abierta esperándolo bloquea el pool. Si la transacción falla
     // después, el hash se descarta — costo aceptable.
-    const passwordHash = await argon2.hash(dto.user.password, ARGON2_OPTIONS);
+    const passwordHash = await argon2.hash(dto.password, ARGON2_OPTIONS);
 
     const savedUser = await this.dataSource.transaction<User>(async (manager) => {
       // 1. Fast-path: verificar que el email no esté tomado antes de insertar.
-      const existing = await manager.findOne(User, { where: { email: dto.user.email } });
+      const existing = await manager.findOne(User, { where: { email: dto.email } });
       if (existing) {
         throw new ConflictException({
           message: 'Ya existe una cuenta con ese email',
@@ -58,21 +58,23 @@ export class RegisterAction {
         });
       }
 
-      // 2. Crear company.
+      // 2. Crear company. El cliente CLOUD solo envía `company_name`; el
+      // resto de campos opcionales (document_number, address, email,
+      // phone_number) se completan después vía `PUT /companies`.
       const company = manager.create(Company, {
-        name: dto.company.name,
-        document_number: dto.company.document_number ?? null,
-        address: dto.company.address ?? null,
-        email: dto.company.email ?? null,
-        phone_number: dto.company.phone_number ?? null,
+        name: dto.company_name,
+        document_number: null,
+        address: null,
+        email: null,
+        phone_number: null,
       });
       const savedCompany = await manager.save(Company, company);
 
       // 3. Crear user owner.
       const user = manager.create(User, {
-        name: dto.user.name,
-        lastname: dto.user.lastname,
-        email: dto.user.email,
+        name: dto.name,
+        lastname: dto.lastname,
+        email: dto.email,
         password: passwordHash,
         type: UserType.OWNER,
         company_id: savedCompany.id,

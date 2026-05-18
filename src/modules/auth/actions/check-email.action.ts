@@ -34,6 +34,10 @@ export class CheckEmailAction {
         email: Raw((alias) => `LOWER(${alias}) = LOWER(:email)`, { email: dto.email }),
       },
     });
-    return { exists: count > 0 };
+    const available = count === 0;
+    return {
+      available,
+      message: available ? 'Disponible' : 'Este correo ya está registrado',
+    };
   }
 }

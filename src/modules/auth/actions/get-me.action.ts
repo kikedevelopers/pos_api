@@ -21,11 +21,15 @@ export class GetMeAction {
 
   async execute(authUser: AuthUser): Promise<AuthUserDto> {
     if (authUser.type === 'superadmin' || authUser.company_id === null) {
+      // Snapshot derivado del JWT: el superadmin no tiene fila garantizada
+      // en `users` que podamos consultar con multi-tenancy. `email` se
+      // expone como '' (string vacío) porque el contrato del cliente declara
+      // `email: string` no nullable.
       return {
         id: authUser.user_id,
         name: authUser.name,
-        lastname: authUser.lastname,
-        email: null,
+        lastname: authUser.lastname ?? '',
+        email: '',
         type: authUser.type,
       };
     }

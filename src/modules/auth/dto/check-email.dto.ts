@@ -22,10 +22,19 @@ export class CheckEmailDto {
 }
 
 /**
- * Shape de respuesta. El interceptor global envuelve el payload en
- * `{ success: true, payload: { exists } }`.
+ * Shape de respuesta — paridad PlacePos cliente.
+ *
+ * El interceptor global envuelve el payload en
+ * `{ success: true, payload: { available, message } }`.
+ *
+ * - `available`: `true` si el email no está registrado (se puede usar para
+ *   un nuevo registro), `false` si ya existe una cuenta con ese email.
+ * - `message`: texto legible que el frontend puede mostrar al usuario.
  */
 export class CheckEmailResponseDto {
-  @ApiProperty({ example: false })
-  exists!: boolean;
+  @ApiProperty({ example: true })
+  available!: boolean;
+
+  @ApiProperty({ example: 'Disponible' })
+  message!: string;
 }
