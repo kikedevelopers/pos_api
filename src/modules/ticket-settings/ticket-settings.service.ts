@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { FindAllTicketSettingsAction } from './actions/find-all-ticket-settings.action';
 import { UpdateTicketSettingAction } from './actions/update-ticket-setting.action';
 import type { UpdateTicketSettingDto } from './dto/update-ticket-setting.dto';
-import type { TicketSetting, TicketSettingType } from './entities/ticket-setting.entity';
+import type { TicketSetting } from './entities/ticket-setting.entity';
 
 /**
  * Facade delgado del módulo `ticket-settings`. ZERO lógica — solo delega.
@@ -24,11 +24,7 @@ export class TicketSettingsService {
     return this.findAllAction.execute(companyId);
   }
 
-  update(
-    ticketType: TicketSettingType,
-    dto: UpdateTicketSettingDto,
-    companyId: number,
-  ): Promise<TicketSetting> {
-    return this.updateAction.execute(ticketType, dto, companyId);
+  update(id: number, dto: UpdateTicketSettingDto, companyId: number): Promise<TicketSetting> {
+    return this.updateAction.execute(id, dto, companyId);
   }
 }

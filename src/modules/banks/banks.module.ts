@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 
+import { ApplyBankAdjustmentAction } from './actions/apply-bank-adjustment.action';
 import { ArchiveBankAction } from './actions/archive-bank.action';
 import { CreateBankAction } from './actions/create-bank.action';
 import { FindAllBanksAction } from './actions/find-all-banks.action';
@@ -30,6 +31,7 @@ import { Bank } from './entities/bank.entity';
     CreateBankAction,
     UpdateBankAction,
     ArchiveBankAction,
+    ApplyBankAdjustmentAction,
   ],
   exports: [BanksService, TypeOrmModule],
 })

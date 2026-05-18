@@ -1,16 +1,15 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Post,
   Put,
   Query,
-  Res,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -20,41 +19,130 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import type { Response } from 'express';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
-import { CreateSalePaymentDto } from './dto/create-sale-payment.dto';
+import type { LastSaleResult } from './actions/get-last-sale.action';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import {
-  SalePaymentResponseDto,
-  SaleResponseDto,
-  toSalePaymentResponseDto,
-  toSaleResponseDto,
-} from './dto/sale-response.dto';
+  SaleCreditNoteResponseDto,
+  toSaleCreditNoteResponseDto,
+} from './dto/sale-credit-note-response.dto';
+import { SaleResponseDto, toSaleResponseDto } from './dto/sale-response.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
+import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
 import { SalesService } from './sales.service';
 
 /**
  * Endpoints `/sales`. Espejo de PlacePos `sales.routes.ts`.
  *
  * Roles:
- *   - GETs y `POST /sales/:id/payments`, `POST /sales`, `POST /sales/:id/convert`:
- *     cualquier autenticado (owner / manager / employee).
- *   - `PUT /sales/:id`, `DELETE /sales/:id`: owner y manager (no employee).
+ *   - GETs y `POST /sales`: cualquier autenticado (owner / manager / employee).
+ *   - `PUT /sales/:id`, `POST /sales/:id/void`: owner y manager (no employee).
  *
  * Multi-tenancy: el `company_id` se propaga vía `@CurrentCompany()` desde
  * el JWT — nunca del payload o query.
+ *
+ * Nota Fase 1: los endpoints de pagos y conversión ORDER→SALE viven en
+ * `POST /payments` (Fase 4). Aquí solo quedan CRUD + anulación.
  */
 @ApiTags('sales')
 @ApiBearerAuth('bearer')
 @Controller('sales')
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}
+
+  // --------------------------------------------------------------------------
+  // GET /sales/last
+  // --------------------------------------------------------------------------
+
+  @Get('last')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Último ticket de la company. Espejo PlacePos getLastTicketByUser: { id, ticketNumber }.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: '{ id, ticketNumber }' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'No se encontraron tickets' })
+  async findLast(@CurrentCompany() companyId: number): Promise<LastSaleResult> {
+    const row = await this.salesService.findLast(companyId);
+    if (!row) {
+      throw new NotFoundException('No se encontraron tickets');
+    }
+    return row;
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /sales/:id/consolidated-upto/:noteId
+  // --------------------------------------------------------------------------
+
+  @Get(':id/consolidated-upto/:noteId')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Snapshot consolidado del ticket aplicando NC/ND con id <= noteId. Espejo PlacePos.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiParam({ name: 'noteId', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Ticket no encontrado' })
+  async findConsolidatedUpto(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('noteId', ParseIntPipe) noteId: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<ConsolidatedInvoice> {
+    const consolidated = await this.salesService.getConsolidatedUpto(id, noteId, companyId);
+    if (!consolidated) {
+      throw new NotFoundException('Ticket no encontrado');
+    }
+    return consolidated;
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /sales/:id/consolidated
+  // --------------------------------------------------------------------------
+
+  @Get(':id/consolidated')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Snapshot consolidado vivo del ticket (todas las NC/ND aplicadas).',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Ticket no encontrado' })
+  async findConsolidated(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<ConsolidatedInvoice> {
+    const consolidated = await this.salesService.getConsolidated(id, companyId);
+    if (!consolidated) {
+      throw new NotFoundException('Ticket no encontrado');
+    }
+    return consolidated;
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /sales/:id/credit-note
+  // --------------------------------------------------------------------------
+
+  @Get(':id/credit-note')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Última NC/ND asociada al ticket (más reciente). null si no hay. Espejo PlacePos getCreditNoteByInvoiceId.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK, type: SaleCreditNoteResponseDto })
+  async findCreditNote(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<SaleCreditNoteResponseDto | null> {
+    const note = await this.salesService.getCreditNote(id, companyId);
+    return note ? toSaleCreditNoteResponseDto(note) : null;
+  }
 
   // --------------------------------------------------------------------------
   // GET /sales
@@ -74,24 +162,6 @@ export class SalesController {
     const rows = await this.salesService.findAll(companyId, query);
     // Listado liviano: sin líneas/pagos/credit — paridad PlacePos.
     return rows.map((s) => toSaleResponseDto(s, [], [], null));
-  }
-
-  // --------------------------------------------------------------------------
-  // GET /sales/by-customer/:customerId
-  // --------------------------------------------------------------------------
-
-  @Get('by-customer/:customerId')
-  @Roles('owner', 'manager', 'employee')
-  @ApiOperation({ summary: 'Listar ventas de un cliente.' })
-  @ApiParam({ name: 'customerId', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.OK, type: [SaleResponseDto] })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Cliente no encontrado' })
-  async findByCustomer(
-    @Param('customerId', ParseIntPipe) customerId: number,
-    @CurrentCompany() companyId: number,
-  ): Promise<SaleResponseDto[]> {
-    const sales = await this.salesService.findByCustomer(customerId, companyId);
-    return sales.map((s) => toSaleResponseDto(s, [], [], null));
   }
 
   // --------------------------------------------------------------------------
@@ -166,127 +236,41 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<SaleResponseDto> {
-    const { sale, lines, payments, credit } = await this.salesService.update(
-      id,
-      dto,
-      companyId,
-      currentUser.user_id,
-    );
+    const { sale, lines, payments, credit } = await this.salesService.update(id, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      type: currentUser.type,
+    });
     return toSaleResponseDto(sale, lines, payments, credit);
   }
 
   // --------------------------------------------------------------------------
-  // POST /sales/:id/convert
+  // POST /sales/:id/void
   // --------------------------------------------------------------------------
 
-  @Post(':id/convert')
+  @Post(':id/void')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager', 'employee')
-  @ApiOperation({
-    summary: 'Convertir un ORDER en SALE. Genera nuevo folio SALE (sale_number).',
-  })
-  @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.OK, type: SaleResponseDto })
-  @ApiResponse({
-    status: HttpStatus.UNPROCESSABLE_ENTITY,
-    description: 'La venta ya está confirmada como SALE',
-  })
-  async convert(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCompany() companyId: number,
-    @CurrentUser() currentUser: AuthUser,
-  ): Promise<SaleResponseDto> {
-    const { sale, lines, payments, credit } = await this.salesService.convert(
-      id,
-      companyId,
-      currentUser.user_id,
-    );
-    return toSaleResponseDto(sale, lines, payments, credit);
-  }
-
-  // --------------------------------------------------------------------------
-  // DELETE /sales/:id (soft)
-  // --------------------------------------------------------------------------
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
   @Roles('owner', 'manager')
   @ApiOperation({
-    summary: 'Anular (soft-delete) un ORDER sin pagos. Para SALE confirmada usa CreditNote.',
+    summary:
+      'Anular un ORDER sin pagos. Para SALE confirmada usa CreditNote. Paridad PlacePos: usa POST /void, no DELETE.',
   })
   @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.NO_CONTENT })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Payload `{ voided: true }`.' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
     description: 'Venta SALE o con pagos aplicados',
   })
-  async softDelete(
+  async void(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<void> {
-    await this.salesService.softDelete(id, companyId, currentUser.user_id);
-  }
-
-  // --------------------------------------------------------------------------
-  // POST /sales/:id/payments
-  // --------------------------------------------------------------------------
-
-  @Post(':id/payments')
-  @Roles('owner', 'manager', 'employee')
-  @ApiOperation({
-    summary: 'Registrar un cobro adicional a una venta (idempotente vía uuid).',
-    description:
-      'En UNA transacción: lock venta + credit, valida saldo, acredita cuenta receptora, inserta SalePayment, FinancialMovement, actualiza SaleCredit y Customer.balance. Si llega uuid ya procesado, devuelve 200 con el pago existente.',
-  })
-  @ApiParam({ name: 'id', type: 'integer' })
-  @ApiBody({ type: CreateSalePaymentDto })
-  @ApiResponse({
-    status: HttpStatus.CREATED,
-    type: SaleResponseDto,
-    description: 'Pago nuevo registrado.',
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    type: SaleResponseDto,
-    description: 'Pago ya existente (mismo uuid). No se duplicó.',
-  })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta o cuenta no encontrada' })
-  @ApiResponse({
-    status: HttpStatus.UNPROCESSABLE_ENTITY,
-    description: 'Sin saldo pendiente, monto excede balance, etc.',
-  })
-  async registerPayment(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: CreateSalePaymentDto,
-    @CurrentCompany() companyId: number,
-    @CurrentUser() currentUser: AuthUser,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<SaleResponseDto> {
-    const result = await this.salesService.registerPayment(id, dto, companyId, {
+  ): Promise<{ voided: true }> {
+    await this.salesService.void(id, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      type: currentUser.type,
     });
-    res.status(result.idempotent ? HttpStatus.OK : HttpStatus.CREATED);
-    const { sale, lines, payments, credit } = result.aggregate;
-    return toSaleResponseDto(sale, lines, payments, credit);
-  }
-
-  // --------------------------------------------------------------------------
-  // GET /sales/:id/payments
-  // --------------------------------------------------------------------------
-
-  @Get(':id/payments')
-  @Roles('owner', 'manager', 'employee')
-  @ApiOperation({ summary: 'Listar pagos de una venta.' })
-  @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.OK, type: [SalePaymentResponseDto] })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta no encontrada' })
-  async listPayments(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCompany() companyId: number,
-  ): Promise<SalePaymentResponseDto[]> {
-    const payments = await this.salesService.listPayments(id, companyId);
-    return payments.map(toSalePaymentResponseDto);
+    return { voided: true };
   }
 }

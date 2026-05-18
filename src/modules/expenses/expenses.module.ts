@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { BanksModule } from '@/modules/banks/banks.module';
+import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
@@ -11,7 +12,8 @@ import { WalletsModule } from '@/modules/wallets/wallets.module';
 import { CreateExpenseAction } from './actions/create-expense.action';
 import { FindAllExpensesAction } from './actions/find-all-expenses.action';
 import { FindExpenseAction } from './actions/find-expense.action';
-import { SoftDeleteExpenseAction } from './actions/soft-delete-expense.action';
+import { GetExpensePaymentMethodsAction } from './actions/get-expense-payment-methods.action';
+import { VoidExpenseAction } from './actions/void-expense.action';
 import { UpdateExpenseAction } from './actions/update-expense.action';
 import { Expense } from './entities/expense.entity';
 import { ExpensesController } from './expenses.controller';
@@ -33,7 +35,7 @@ import { ExpensesService } from './expenses.service';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Expense, Bank, Wallet]),
+    TypeOrmModule.forFeature([Expense, Bank, Wallet, CashRegister]),
     BanksModule,
     WalletsModule,
     CashRegisterModule,
@@ -46,7 +48,8 @@ import { ExpensesService } from './expenses.service';
     FindExpenseAction,
     CreateExpenseAction,
     UpdateExpenseAction,
-    SoftDeleteExpenseAction,
+    VoidExpenseAction,
+    GetExpensePaymentMethodsAction,
   ],
   exports: [ExpensesService, TypeOrmModule],
 })

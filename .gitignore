@@ -55,3 +55,6 @@ ormconfig.json
 
 # Claude Code (user-specific permissions/state)
 .claude/settings.local.json
+
+# Notas de trabajo de auditoría PlacePos vs pos_api
+.audit-placepos/

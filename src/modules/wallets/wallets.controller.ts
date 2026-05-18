@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -24,8 +23,13 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { CreateWalletAdjustmentDto } from './dto/create-wallet-adjustment.dto';
 import { CreateWalletDto } from './dto/create-wallet.dto';
 import { UpdateWalletDto } from './dto/update-wallet.dto';
+import {
+  WalletAdjustmentResponseDto,
+  toWalletAdjustmentResponseDto,
+} from './dto/wallet-adjustment-response.dto';
 import { WalletResponseDto, toWalletResponseDto } from './dto/wallet-response.dto';
 import { WalletsService } from './wallets.service';
 
@@ -34,7 +38,9 @@ import { WalletsService } from './wallets.service';
  *
  * Roles:
  *   - `GET`: cualquier rol autenticado (POS necesita el listado).
- *   - `POST` / `PUT` / `DELETE`: `owner` y `manager`.
+ *   - `POST` / `PUT` / `PUT /:id/archive`: `owner` y `manager`.
+ *
+ * Paridad PlacePos: NO se usa el verbo DELETE.
  */
 @ApiTags('wallets')
 @ApiBearerAuth('bearer')
@@ -90,18 +96,59 @@ export class WalletsController {
     return toWalletResponseDto(wallet);
   }
 
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @Put(':id/archive')
+  @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
-  @ApiOperation({ summary: 'Archivar wallet (soft-delete). Idempotente.' })
+  @ApiOperation({
+    summary: 'Archivar wallet (soft-delete). Idempotente. Paridad PlacePos.',
+    description: 'Responde 200 con `{ archived: true }`.',
+  })
   @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.NO_CONTENT })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Payload `{ archived: true }` espejando PlacePos.',
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Billetera no encontrada' })
   async archive(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<void> {
+  ): Promise<{ archived: true }> {
     await this.walletsService.archive(id, companyId, currentUser.user_id);
+    return { archived: true };
+  }
+
+  /**
+   * `POST /wallets/:id/adjustments` — Correcciones manuales de saldo.
+   * Solo `owner | superadmin`. Idéntico flujo a `/banks/:id/adjustments`.
+   */
+  @Post(':id/adjustments')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('owner', 'superadmin')
+  @ApiOperation({
+    summary: 'Aplicar corrección manual de saldo (solo owner/superadmin).',
+    description:
+      'Genera un FinancialMovement con concept ADJUSTMENT sobre la wallet. INCOME suma, EXPENSE resta (requiere saldo suficiente). Transacción atómica con lock pesimista.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: CreateWalletAdjustmentDto })
+  @ApiResponse({ status: HttpStatus.CREATED, type: WalletAdjustmentResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Billetera no encontrada' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Billetera archivada o saldo insuficiente',
+  })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner/superadmin' })
+  async applyAdjustment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateWalletAdjustmentDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<WalletAdjustmentResponseDto> {
+    const { wallet, movement } = await this.walletsService.applyAdjustment(id, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
+    return toWalletAdjustmentResponseDto(wallet, movement);
   }
 }

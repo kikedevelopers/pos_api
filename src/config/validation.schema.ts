@@ -18,7 +18,9 @@ export const validationSchema = Joi.object({
     .valid('development', 'test', 'staging', 'production')
     .default('development'),
   PORT: Joi.number().integer().min(1).max(65535).default(3000),
-  API_PREFIX: Joi.string().default('api/v1'),
+  // Por defecto string vacío: el cliente PlacePos consume el API en raíz.
+  // `allow('')` es necesario porque Joi por defecto rechaza strings vacíos.
+  API_PREFIX: Joi.string().allow('').default(''),
   LOG_LEVEL: Joi.string().valid('fatal', 'error', 'warn', 'info', 'debug', 'trace').default('info'),
 
   // Base de datos

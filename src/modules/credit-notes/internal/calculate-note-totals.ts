@@ -5,7 +5,20 @@ import { preciseNumber, toBig } from '@/common/utils/precision';
 import type { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import type { Product } from '@/modules/products/entities/product.entity';
 
-import type { CreateCreditNoteLineDto } from '../dto/create-credit-note.dto';
+/**
+ * Input mínimo de una línea para calcular totales. Compatible con DTOs y con
+ * el formato derivado de `SaleInvoiceLine` cuando voidSale/editSale crean
+ * notas internamente sin pasar por un endpoint REST.
+ */
+export interface CreditNoteLineInput {
+  product_id: number;
+  packaging_id?: number | null;
+  original_line_id?: number | null;
+  description?: string | null;
+  quantity: number;
+  unit_price: number;
+  iva_percentage?: number | null;
+}
 
 /**
  * Estructura de cada línea ya calculada y lista para INSERT batch en
@@ -52,7 +65,7 @@ export interface ComputedNoteTotals {
  *   total_v     = Σ line.total
  */
 export function calculateNoteTotals(
-  lines: CreateCreditNoteLineDto[],
+  lines: CreditNoteLineInput[],
   companyId: number,
   productById: Map<number, Product>,
   packagingById: Map<number, Packaging>,

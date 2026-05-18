@@ -1,7 +1,10 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
+import { DataSource } from 'typeorm';
 
 import { EmployeesService } from '@/modules/employees/employees.service';
+import { ensureMirrorUserForEmployee } from '@/modules/employees/internal/ensure-mirror-user-for-employee.helper';
 import { UsersService } from '@/modules/users/users.service';
 
 import type { AuthResponseDto } from '../dto/auth-response.dto';
@@ -30,13 +33,19 @@ import { looksLikeEmail } from '../internal/looks-like-email';
  *   4. Si matcha User: JWT con `type: user.type` (`owner` | `superadmin`),
  *      `account: 'user'`, `company_id: user.company_id`. TTL según tipo.
  *
- *   5. Si matcha Employee: JWT con `type: 'employee'` LITERAL (paridad
- *      byte-por-byte con el contrato PlacePos local), `account: 'employee'`,
- *      `company_id: employee.company_id`. TTL = 1 día (los employees nunca
- *      obtienen 7 días). El rol real (`manager` | `employee`) queda
- *      persistido en `employees.role`; cuando se necesite gatear features
- *      por rol, se consulta la tabla por `JWT.user_id`, NO por claim del
- *      JWT. Esto preserva el contrato y mantiene `RolesGuard` simple.
+ *   5. Si matcha Employee:
+ *        a. Si `Employee.user_id` es null, se crea el User espejo on-the-fly
+ *           dentro de una transacción (`ensureMirrorUserForEmployee`). Esto
+ *           garantiza que TODO JWT de un Employee con login viable lleve
+ *           `user_id = users.id` (no `employees.id`), porque los modelos
+ *           atados a `users.id` (cash_register, cash_register_log,
+ *           financial_movement.created_by_id) lo requieren.
+ *        b. JWT con `type: 'employee'` LITERAL (paridad byte-por-byte con
+ *           el contrato PlacePos local), `account: 'employee'`, `company_id:
+ *           employee.company_id`, `user_id: User_espejo.id`. TTL = 1 día.
+ *           El rol granular (`manager` | `employee`) queda persistido en
+ *           `employees.role`; cuando se necesite gatear features por rol,
+ *           se consulta la tabla por `JWT.user_id`, NO por claim del JWT.
  *
  * Política de error UNIFORME: TODOS los caminos fallidos devuelven el mismo
  * `UnauthorizedException("Credenciales inválidas")`. Nunca se distingue entre
@@ -50,7 +59,8 @@ import { looksLikeEmail } from '../internal/looks-like-email';
  * primero) lo decide la presencia de `@`, no la existencia del registro, por
  * lo que un atacante no infiere existencia por orden.
  *
- * Read-only path — no requiere transacción (no escribe en DB).
+ * Transacción: SOLO se abre cuando matchea Employee Y hace falta crear el
+ * User espejo (camino mutativo). El path User es read-only.
  */
 @Injectable()
 export class LoginAction {
@@ -61,6 +71,8 @@ export class LoginAction {
     private readonly employeesService: EmployeesService,
     private readonly jwtIssuer: JwtIssuerService,
     private readonly dummyHash: DummyHashService,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async execute(dto: LoginDto): Promise<AuthResponseDto> {
@@ -70,9 +82,21 @@ export class LoginAction {
     // siquiera tocamos `users` — los users autentican por email. Esto reduce
     // el espacio de ataque: un atacante que envía `kike` no puede enumerar
     // emails de users.
+    //
+    // EDGE-CASE multi-tenant: los User espejo de Employee tienen emails
+    // sintéticos `${username}.${companyId}@local.placepos`. Aunque el espejo
+    // viva en `users`, el cliente PlacePos NUNCA envía estos emails como
+    // credencial. Filtramos defensivamente en `findByEmail` para que un
+    // atacante no pueda autenticarse contra un espejo via email.
     const user = isEmailShape ? await this.usersService.findByEmail(dto.username) : null;
 
-    if (user) {
+    // Filtro defensivo: si el User encontrado es un espejo (type='employee'),
+    // NO permitimos login por este path — los espejos solo autentican vía el
+    // path Employee con username. Esto preserva el invariante "JWT.account
+    // refleja la entidad real con la que se autenticó".
+    const isMirrorUser = user?.type === 'employee';
+
+    if (user && !isMirrorUser) {
       const passwordValid = await argon2.verify(user.password, dto.password);
       if (!passwordValid) {
         throw new UnauthorizedException('Credenciales inválidas');
@@ -93,7 +117,7 @@ export class LoginAction {
 
     // Fallback a employees. Aplica tanto si el username NO luce email como si
     // luce email pero no matchea en `users` (edge case raro pero posible —
-    // defensa en profundidad).
+    // defensa en profundidad) o si matchea pero es un espejo (filtrado arriba).
     const employee = await this.employeesService.findByUsername(dto.username);
 
     if (employee && employee.password) {
@@ -101,8 +125,21 @@ export class LoginAction {
       if (!passwordValid) {
         throw new UnauthorizedException('Credenciales inválidas');
       }
+
+      // Garantizar el User espejo. Si ya existe, sincroniza; si no, lo crea.
+      // Transacción dedicada — corta — para que el INSERT del User + UPDATE
+      // del employee.user_id sean atómicos. El JWT se firma DESPUÉS del
+      // commit, con el id final.
+      const mirrorUser = await this.dataSource.transaction((manager) =>
+        ensureMirrorUserForEmployee({
+          manager,
+          employee,
+          companyId: Number(employee.company_id),
+        }),
+      );
+
       const access_token = await this.jwtIssuer.sign({
-        userId: employee.id,
+        userId: mirrorUser.id,
         companyId: employee.company_id,
         name: employee.name,
         lastname: '', // Employees no tienen lastname en el contrato PlacePos.
@@ -113,6 +150,14 @@ export class LoginAction {
         type: 'employee',
         account: 'employee',
       });
+
+      this.logger.log({
+        event: 'auth.employee_login',
+        employeeId: Number(employee.id),
+        mirrorUserId: Number(mirrorUser.id),
+        companyId: Number(employee.company_id),
+      });
+
       return {
         access_token,
         user: employeeToAuthUserDto(employee, this.logger),
@@ -123,6 +168,14 @@ export class LoginAction {
     // el dummyHash para que el atacante no pueda distinguir por timing
     // "username no existe" de "username existe pero password mal".
     await argon2.verify(this.dummyHash.get(), dto.password).catch(() => false);
+
+    // Si llegamos aquí con un `user` que era espejo (rechazado arriba), gastamos
+    // un verify adicional contra su hash real para que el atacante no detecte
+    // por timing que "el email existe pero corresponde a un espejo".
+    if (isMirrorUser && user) {
+      await argon2.verify(user.password, dto.password).catch(() => false);
+    }
+
     throw new UnauthorizedException('Credenciales inválidas');
   }
 }

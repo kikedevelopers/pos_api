@@ -8,6 +8,8 @@ import { FinancialMovementsModule } from '@/modules/financial-movements/financia
 import { Product } from '@/modules/products/entities/product.entity';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
+import { CloseCashAction } from './actions/close-cash.action';
+import { GetCashSummaryAction } from './actions/get-cash-summary.action';
 import { GetCustomersAction } from './actions/get-customers.action';
 import { GetItemsAction } from './actions/get-items.action';
 import { GetPaymentBanksAction } from './actions/get-payment-banks.action';
@@ -18,10 +20,10 @@ import { PosDataService } from './pos-data.service';
 
 /**
  * Módulo `pos-data` (Fase 11.4). Endpoints operativos del POS: listados
- * planos (items/customers/payment-banks) + transfer-cash desde caja
- * abierta. Importa `FinancialMovementsModule` para registrar movimientos y
- * `CashRegisterModule` para reutilizar la entidad del turno abierto (los
- * helpers de internal/cash-register-lookups no requieren provider explícito).
+ * planos (items/customers/payment-banks) + transfer-cash desde la caja
+ * PERMANENTE del actor. Importa `FinancialMovementsModule` para registrar
+ * movimientos y `CashRegisterModule` para reutilizar la entidad y el
+ * helper `getOrCreateCashRegisterForUser`.
  */
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { PosDataService } from './pos-data.service';
     GetPaymentBanksAction,
     GetPosTransferDestinationsAction,
     TransferCashAction,
+    CloseCashAction,
+    GetCashSummaryAction,
   ],
   exports: [PosDataService],
 })

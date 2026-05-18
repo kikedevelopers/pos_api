@@ -1,11 +1,11 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   Put,
 } from '@nestjs/common';
 import {
@@ -25,7 +25,6 @@ import {
   TicketSettingResponseDto,
   toTicketSettingResponseDto,
 } from './dto/ticket-setting-response.dto';
-import { TicketSettingType } from './entities/ticket-setting.entity';
 import { TicketSettingsService } from './ticket-settings.service';
 
 /**
@@ -39,11 +38,8 @@ import { TicketSettingsService } from './ticket-settings.service';
  * Multi-tenancy: `@CurrentCompany()` propaga el `company_id` del JWT al
  * service. El payload nunca incluye `company_id`.
  *
- * Divergencia vs PlacePos local: PlacePos no expone HTTP endpoints para
- * `ticket-settings` (el cliente lee/escribe directo sobre la entidad). Este
- * API los añade para que el frontend cloud pueda personalizar prefix/suffix
- * por tipo de ticket sin un endpoint genérico. Es paridad por extensión
- * (no rompe nada en el cliente local).
+ * Paridad PlacePos: la URL utiliza `:id` (entero del DB), NO el enum
+ * `:ticket_type`. El cliente Electron espera enteros como param.
  */
 @ApiTags('ticket-settings')
 @ApiBearerAuth('bearer')
@@ -62,7 +58,7 @@ export class TicketSettingsController {
     return settings.map(toTicketSettingResponseDto);
   }
 
-  @Put(':ticket_type')
+  @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
   @ApiOperation({
@@ -70,32 +66,26 @@ export class TicketSettingsController {
     description:
       '`current_number` NO se modifica vía este endpoint — cambia exclusivamente al crear ventas/compras/notas.',
   })
-  @ApiParam({ name: 'ticket_type', enum: TicketSettingType })
+  @ApiParam({ name: 'id', type: 'integer' })
   @ApiBody({ type: UpdateTicketSettingDto })
   @ApiResponse({ status: HttpStatus.OK, type: TicketSettingResponseDto })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'ticket_type inválido' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
   @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Configuración de folio no encontrada',
   })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Prefix duplicado dentro de la company',
+  })
   async update(
-    @Param('ticket_type') ticketTypeRaw: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateTicketSettingDto,
     @CurrentCompany() companyId: number,
   ): Promise<TicketSettingResponseDto> {
-    // Validación manual del enum a nivel ruta. `ParseEnumPipe` existe en
-    // Nest 10 pero su shape de error difiere entre versiones — el control
-    // explícito asegura un mensaje en español y status 400 consistente.
-    if (!Object.values(TicketSettingType).includes(ticketTypeRaw as TicketSettingType)) {
-      throw new BadRequestException(
-        `ticket_type debe ser uno de: ${Object.values(TicketSettingType).join(', ')}`,
-      );
-    }
-    const ticketType = ticketTypeRaw as TicketSettingType;
-
-    const setting = await this.ticketSettingsService.update(ticketType, dto, companyId);
+    const setting = await this.ticketSettingsService.update(id, dto, companyId);
     return toTicketSettingResponseDto(setting);
   }
 }

@@ -12,7 +12,10 @@ import {
   GetCustomerSalesHistoryAction,
   type CustomerSalesHistoryResponse,
 } from './actions/get-customer-sales-history.action';
-import { ToggleCustomerArchiveAction } from './actions/toggle-customer-archive.action';
+import {
+  GetCustomersAnalyticsAction,
+  type CustomersAnalyticsResponse,
+} from './actions/get-customers-analytics.action';
 import { UpdateCustomerAction } from './actions/update-customer.action';
 import type { CreateCustomerDto } from './dto/create-customer.dto';
 import type { ListCustomersQueryDto } from './dto/list-customers-query.dto';
@@ -20,6 +23,7 @@ import type { UpdateCustomerDto } from './dto/update-customer.dto';
 import type { Customer } from './entities/customer.entity';
 
 export type { CustomerCreator } from './actions/create-customer.action';
+export type { CustomersAnalyticsResponse } from './actions/get-customers-analytics.action';
 
 /**
  * Facade delgado del dominio `customers`. Sin lógica de negocio — solo
@@ -35,10 +39,14 @@ export class CustomersService {
     private readonly findCustomerAction: FindCustomerAction,
     private readonly createCustomerAction: CreateCustomerAction,
     private readonly updateCustomerAction: UpdateCustomerAction,
-    private readonly toggleCustomerArchiveAction: ToggleCustomerArchiveAction,
     private readonly getCustomerSalesHistoryAction: GetCustomerSalesHistoryAction,
     private readonly getCustomerChartsAction: GetCustomerChartsAction,
+    private readonly getCustomersAnalyticsAction: GetCustomersAnalyticsAction,
   ) {}
+
+  getAnalytics(companyId: number): Promise<CustomersAnalyticsResponse> {
+    return this.getCustomersAnalyticsAction.execute(companyId);
+  }
 
   findAll(companyId: number, query: ListCustomersQueryDto = {}): Promise<Customer[]> {
     return this.findAllCustomersAction.execute(companyId, query);
@@ -54,10 +62,6 @@ export class CustomersService {
 
   update(id: number, dto: UpdateCustomerDto, companyId: number): Promise<Customer> {
     return this.updateCustomerAction.execute(id, dto, companyId);
-  }
-
-  toggleArchive(id: number, companyId: number, actorId: number): Promise<Customer> {
-    return this.toggleCustomerArchiveAction.execute(id, companyId, actorId);
   }
 
   getSalesHistory(id: number, companyId: number): Promise<CustomerSalesHistoryResponse> {

@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
+import {
+  CloseCashAction,
+  type CloseCashActor,
+  type CloseCashResult,
+} from './actions/close-cash.action';
+import { GetCashSummaryAction, type CashSummaryResult } from './actions/get-cash-summary.action';
 import { GetCustomersAction, type PosCustomer } from './actions/get-customers.action';
 import { GetItemsAction, type PosItem } from './actions/get-items.action';
 import { GetPaymentBanksAction, type PosPaymentBank } from './actions/get-payment-banks.action';
@@ -12,9 +18,13 @@ import {
   type TransferCashActor,
   type TransferCashResult,
 } from './actions/transfer-cash.action';
+import type { CloseCashDto } from './dto/close-cash.dto';
 import type { TransferCashDto } from './dto/transfer-cash.dto';
 
 export type {
+  CashSummaryResult,
+  CloseCashActor,
+  CloseCashResult,
   PosCustomer,
   PosDataDestinationsPayload,
   PosItem,
@@ -33,6 +43,8 @@ export class PosDataService {
     private readonly getPaymentBanks: GetPaymentBanksAction,
     private readonly getTransferDestinations: GetPosTransferDestinationsAction,
     private readonly transferCash: TransferCashAction,
+    private readonly closeCash: CloseCashAction,
+    private readonly getCashSummary: GetCashSummaryAction,
   ) {}
 
   items(companyId: number): Promise<PosItem[]> {
@@ -57,5 +69,18 @@ export class PosDataService {
     actor: TransferCashActor,
   ): Promise<TransferCashResult> {
     return this.transferCash.execute(dto, companyId, actor);
+  }
+
+  doCloseCash(
+    dto: CloseCashDto,
+    companyId: number,
+    actor: CloseCashActor,
+    idempotencyKey: string | null = null,
+  ): Promise<CloseCashResult> {
+    return this.closeCash.execute(dto, companyId, actor, idempotencyKey);
+  }
+
+  cashSummary(companyId: number, userId: number): Promise<CashSummaryResult> {
+    return this.getCashSummary.execute(companyId, userId);
   }
 }

@@ -5,12 +5,12 @@ import type { EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
   CashRegisterLogType,
 } from '@/modules/cash-register/entities/cash-register-log.entity';
-import type { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
-import { requireOpenCashRegisterForUpdate } from '@/modules/cash-register/internal/cash-register-lookups';
+import { getOrCreateCashRegisterForUser } from '@/modules/cash-register/internal/get-or-create-cash-register-for-user.helper';
 import {
   MovementConcept,
   MovementType,
@@ -155,11 +155,14 @@ export async function applySalePayment(
 
   // 2. Resolver cuenta SIN lock ni UPDATE. Solo lookup para obtener metadata
   //    y validar ownership multi-tenant. El balance NO se toca aquí.
+  //    NOTA: para cash_register el helper SÍ lockea la caja del actor (paridad
+  //    PlacePos + defensa contra carrera con `creditDestination`).
   const resolution = await resolveAccount(
     manager,
     input.account_type,
     input.account_id,
     input.companyId,
+    input.actor,
   );
 
   // 3. INSERT optimista — el UNIQUE constraint actúa como latch atómico.
@@ -247,14 +250,16 @@ export async function applySalePayment(
  * acredita. Devuelve metadata para armar el row de SalePayment.
  *
  * Para `cash_register`, además del lookup metadata se retorna el row para
- * reusarlo en `creditDestination` (HIGH-3: usar `requireOpenCashRegisterForUpdate`
- * en lugar de `findOne` ad-hoc en el credit step).
+ * reusarlo en `creditDestination`. La resolución usa
+ * `getOrCreateCashRegisterForUser` (modelo PERMANENTE) y SÍ lockea la caja
+ * — el row queda bloqueado para el credit step subsiguiente.
  */
 async function resolveAccount(
   manager: EntityManager,
   accountType: SalePaymentAccountType,
   accountId: number,
   companyId: number,
+  actor: SalePaymentActor,
 ): Promise<AccountResolution> {
   if (accountType === 'bank') {
     const bank = await manager.findOne(Bank, {
@@ -297,14 +302,14 @@ async function resolveAccount(
   }
 
   // accountType === 'cash_register'
-  // HIGH-3 auditoría: usar el helper canónico que lockea el row del
-  // cash_register. Coherente con purchases y con el patrón de cierre de caja.
-  const open = await requireOpenCashRegisterForUpdate(manager, companyId);
+  // Modelo PERMANENTE: la caja del actor (por user_id) se resuelve con lock
+  // pessimistic_write — coherente con purchases y carrier-payments.
+  const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
   return {
     bankId: null,
     bankName: null,
     paymentMethod: SalePaymentMethod.CASH,
-    cashRegister: open,
+    cashRegister: register,
   };
 }
 
@@ -366,12 +371,20 @@ async function creditDestination(
 
   // accountType === 'cash_register' — usa el row ya lockeado en resolveAccount.
   if (!cashRegister) {
-    throw new NotFoundException('No hay caja abierta');
+    throw new NotFoundException('No se pudo resolver la caja del actor');
   }
+  // Modelo PERMANENTE: el balance vive en la columna y se mutea con UPDATE.
+  // El log SOLO documenta — `affects_balance` queda como bandera informativa.
+  const newBalance = preciseNumber(toBig(cashRegister.balance).plus(amountBig), 2);
+  await manager.update(
+    CashRegister,
+    { id: cashRegister.id, company_id: String(companyId) },
+    { balance: newBalance },
+  );
   const log = manager.create(CashRegisterLog, {
     company_id: String(companyId),
     cash_register_id: cashRegister.id,
-    type: CashRegisterLogType.CASH_IN,
+    type: CashRegisterLogType.CASH_RECEIVED,
     direction: 'IN',
     amount,
     affects_balance: true,

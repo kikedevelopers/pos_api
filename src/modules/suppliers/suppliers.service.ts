@@ -4,13 +4,13 @@ import { CreateSupplierAction, type SupplierCreator } from './actions/create-sup
 import { FindAllSuppliersAction } from './actions/find-all-suppliers.action';
 import { FindSupplierAction } from './actions/find-supplier.action';
 import {
-  GetSupplierChartsAction,
-  type SupplierChartsResponse,
-} from './actions/get-supplier-charts.action';
-import {
   GetSupplierPurchasesHistoryAction,
   type SupplierPurchasesHistoryResponse,
 } from './actions/get-supplier-purchases-history.action';
+import {
+  GetSuppliersAnalyticsAction,
+  type SuppliersAnalyticsResponse,
+} from './actions/get-suppliers-analytics.action';
 import { ToggleSupplierArchiveAction } from './actions/toggle-supplier-archive.action';
 import { UpdateSupplierAction } from './actions/update-supplier.action';
 import type { CreateSupplierDto } from './dto/create-supplier.dto';
@@ -19,6 +19,7 @@ import type { UpdateSupplierDto } from './dto/update-supplier.dto';
 import type { Supplier } from './entities/supplier.entity';
 
 export type { SupplierCreator } from './actions/create-supplier.action';
+export type { SuppliersAnalyticsResponse } from './actions/get-suppliers-analytics.action';
 
 /**
  * Facade delgado del dominio `suppliers`. Sin lógica de negocio — solo
@@ -33,8 +34,12 @@ export class SuppliersService {
     private readonly updateSupplierAction: UpdateSupplierAction,
     private readonly toggleSupplierArchiveAction: ToggleSupplierArchiveAction,
     private readonly getSupplierPurchasesHistoryAction: GetSupplierPurchasesHistoryAction,
-    private readonly getSupplierChartsAction: GetSupplierChartsAction,
+    private readonly getSuppliersAnalyticsAction: GetSuppliersAnalyticsAction,
   ) {}
+
+  getAnalytics(companyId: number): Promise<SuppliersAnalyticsResponse> {
+    return this.getSuppliersAnalyticsAction.execute(companyId);
+  }
 
   findAll(companyId: number, query: ListSuppliersQueryDto = {}): Promise<Supplier[]> {
     return this.findAllSuppliersAction.execute(companyId, query);
@@ -58,14 +63,5 @@ export class SuppliersService {
 
   getPurchasesHistory(id: number, companyId: number): Promise<SupplierPurchasesHistoryResponse> {
     return this.getSupplierPurchasesHistoryAction.execute(id, companyId);
-  }
-
-  getCharts(
-    id: number,
-    companyId: number,
-    startDate?: string,
-    endDate?: string,
-  ): Promise<SupplierChartsResponse> {
-    return this.getSupplierChartsAction.execute(id, companyId, startDate, endDate);
   }
 }

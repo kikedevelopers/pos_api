@@ -14,17 +14,28 @@ import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { Company } from '@/modules/companies/entities/company.entity';
 
 /**
- * Enum de tipos de usuario para Fase 0.
+ * Enum de tipos de usuario.
  *
- * Los roles operativos (`manager`, `employee`) NO viven aquí — se modelan
- * en la futura entidad `Employee` con su propio enum `employee_role`.
+ *   - `SUPERADMIN`: usuario global del sistema, NO pertenece a ninguna
+ *     company.
+ *   - `OWNER`: dueño de una company, único creado por `POST /auth/register`.
+ *   - `EMPLOYEE`: **User espejo** de un Employee con `login_enabled=true`
+ *     (patrón Fase 4A). El rol granular del Employee (`manager` |
+ *     `employee`) vive en `employees.role`; el `User` solo expone `type=
+ *     'employee'` literal para satisfacer el contrato PlacePos y para que
+ *     los modelos atados a `users.id` (cash_register, cash_register_log,
+ *     financial_movement.created_by_id) puedan apuntar a una identidad
+ *     concreta.
  *
  * El `enumName: 'user_type'` debe coincidir EXACTAMENTE con el `CREATE TYPE`
- * de la migración. Si difiere, TypeORM crearía un tipo paralelo.
+ * de la migración. Si difiere, TypeORM crearía un tipo paralelo. El valor
+ * `'employee'` se añade vía
+ * `1747010320000-extend-user-type-enum-with-employee.ts`.
  */
 export enum UserType {
   SUPERADMIN = 'superadmin',
   OWNER = 'owner',
+  EMPLOYEE = 'employee',
 }
 
 /**

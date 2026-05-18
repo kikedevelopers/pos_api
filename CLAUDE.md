@@ -246,3 +246,75 @@ pnpm migration:show
 9. **Siempre** incrementa contadores de folios atómicamente (`UPDATE ... RETURNING`).
 10. **Siempre** registra eventos críticos en log (login fallido, anulación de venta, transferencia entre cuentas).
 11. **Siempre** organiza la lógica de un módulo en `actions/`: una clase por operación con `execute(...)`. El `<dominio>.service.ts` solo orquesta. Detalle en §3.1.
+
+## 9. Reglas financieras y de contrato extendidas
+
+### 9.1 Fórmulas financieras canónicas
+
+```
+Venta Neta        = Venta Bruta − ΣNC + ΣND
+Saldo Líquido     = (VN_efectivo + CON_ventas + Abonos_cash + Abonos_consig) − Gastos
+Total Recaudado   = Ventas cash + Consignaciones + Abonos cash + Abonos transfer
+Ganancia del día  = Σ(Total_Consolidado − Costo_Consolidado)
+Excedente         = Total Recaudado − Ganancia del día      (reinversión, NO es ganancia)
+Ganancia Real     = Ganancia del día − Gastos
+Cartera Total     = Σ(sale_credits.balance WHERE status != 'PAID')
+```
+
+Regla dura: los Gastos **NUNCA** se restan de Total Recaudado; se restan de Ganancia. Cualquier reporte que mezcle ambos conceptos está mal.
+
+### 9.2 Trazabilidad financiera mandatoria
+
+Toda operación que cambia el balance de una `Wallet`, `Bank` o `CashRegister` registra un movimiento auditable:
+
+- `cash_register` → `cash_register_log` (con `direction IN|OUT`, `affects_balance`).
+- `wallet` / `bank` → `financial_movements` con `movement_type INCOME|EXPENSE|TRANSFER` y `movement_concept`.
+
+Enum `movement_concept` válido: `INITIAL_BALANCE`, `SALE_PAYMENT`, `CASH_REGISTER_CLOSE`, `TRANSFER`, `PURCHASE_PAYMENT`, `EXPENSE_PAYMENT`, `TAX_PAYMENT`, `PAYROLL`, `REFUND`, `ADJUSTMENT`, `CARRIER_PAYMENT`, `OTHER`. **No usar `OTHER` como cajón de sastre** — si un caso recurrente no encaja, se añade un valor nuevo al enum vía migración.
+
+Reembolsos: SIEMPRE como **nuevo movimiento** (`INCOME` / `REFUND`). Uno por cada pago original. Nunca borrar o modificar el original. `reference_code` apunta al pago original para que la conciliación sea trivial.
+
+### 9.3 Glosario de numeración
+
+- `ticket_number`: consecutivo interno del pedido (ORDER). **No se muestra al usuario** — solo es referencia interna del pedido editable.
+- `sale_number`: consecutivo legal de la venta. Asignado al pasar `ORDER → SALE`. **Siempre** se usa en prints, logs y movimientos.
+- `note_number`: consecutivo de NC / ND.
+- `purchase_number`, `payment_number`: análogos para compras y abonos.
+
+Cada uno tiene su propia fila en `ticket_settings` con su `current_number` independiente.
+
+### 9.4 Aislamiento de transacciones
+
+- **`SERIALIZABLE`** para: cierre de caja, generación de NC / ND, transferencias entre cuentas, recálculo de promedio ponderado de costo.
+- **`READ COMMITTED`** (default) para el resto.
+- **Locks pesimistas** (`setLock('pessimistic_write')`) cuando un flujo lo requiera (purchases, carrier_credit, product cost recalc).
+
+### 9.5 Clasificación patrimonial
+
+- **Activos**: efectivo, depósitos bancarios, cuentas por cobrar (`sale_credits.balance` con `status IN ('PENDING', 'PARTIAL')`).
+- **Pasivos**: cuentas por pagar (`purchase_credits` + `carrier_credits` con `status IN ('PENDING', 'PARTIAL')`).
+- Las ventas a crédito son **pasivos hasta cobrarse** — los abonos entran al recaudo del **día del abono**, NO del día de la venta original. Esto evita reportes erróneos en cierres de mes.
+
+### 9.6 Tickets persisten C/G/M
+
+Todo ticket (venta, nota, compra) guarda **costo, ganancia y margen** propios en columnas dedicadas. **Nunca** se calculan al leer. Los reportes parten de la **venta consolidada**:
+
+```
+Total_Consolidado    = Total_V + ΣTotal_ND − ΣTotal_NC
+Costo_Consolidado    = Costo_V + ΣCosto_ND − ΣCosto_NC
+Ganancia_Consolidada = Total_Consolidado − Costo_Consolidado
+```
+
+Si añades un campo financiero nuevo a un ticket, asegúralo en columna persistida — nunca como derivación on-the-fly.
+
+### 9.7 Patrón `/analytics`
+
+Todo dominio CRUD expuesto al frontend tiene `GET /<dominio>/analytics` declarado **antes** de `:id` (orden de matching). Aplica como mínimo a: `customers`, `suppliers`, `carriers`. Si llega un dominio nuevo que necesita dashboard, sigue este patrón.
+
+### 9.8 Sin prefix global `/api/v1`
+
+El cliente PlacePos consume el API en raíz (`/sales`, `/auth/user`, etc.). El default de `apiPrefix` es **string vacío**. Versionado futuro vive en `/v2/...` solo si se rompe el contrato existente.
+
+### 9.9 Sin verbo DELETE
+
+Soft delete es `PUT /:id/archive` (devuelve `{ archived: true }`) o `POST /:id/void` (devuelve `{ voided: true }` cuando hay reverso de balance/inventario). **Nunca** se usa `DELETE`. Si necesitas borrado físico, justifícalo y discútelo antes de implementarlo.

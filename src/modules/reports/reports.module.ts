@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 
 import { GetCreditsReportAction } from './actions/get-credits-report.action';
+import { GetCustomersRfmAction } from './actions/get-customers-rfm.action';
+import { GetCustomersRfmDayTicketsAction } from './actions/get-customers-rfm-day-tickets.action';
 import { GetDailyClosureAction } from './actions/get-daily-closure.action';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -12,7 +14,13 @@ import { ReportsService } from './reports.service';
  */
 @Module({
   controllers: [ReportsController],
-  providers: [ReportsService, GetDailyClosureAction, GetCreditsReportAction],
+  providers: [
+    ReportsService,
+    GetDailyClosureAction,
+    GetCreditsReportAction,
+    GetCustomersRfmAction,
+    GetCustomersRfmDayTicketsAction,
+  ],
   exports: [ReportsService],
 })
 export class ReportsModule {}

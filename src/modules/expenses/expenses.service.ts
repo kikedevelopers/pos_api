@@ -3,8 +3,12 @@ import { Injectable } from '@nestjs/common';
 import { CreateExpenseAction } from './actions/create-expense.action';
 import { FindAllExpensesAction, type ListExpensesResult } from './actions/find-all-expenses.action';
 import { FindExpenseAction } from './actions/find-expense.action';
-import { SoftDeleteExpenseAction } from './actions/soft-delete-expense.action';
+import {
+  GetExpensePaymentMethodsAction,
+  type ExpensePaymentMethodsResponse,
+} from './actions/get-expense-payment-methods.action';
 import { UpdateExpenseAction } from './actions/update-expense.action';
+import { VoidExpenseAction } from './actions/void-expense.action';
 import type { CreateExpenseDto } from './dto/create-expense.dto';
 import type { ListExpensesQueryDto } from './dto/list-expenses-query.dto';
 import type { UpdateExpenseDto } from './dto/update-expense.dto';
@@ -13,6 +17,7 @@ import type { ExpenseActor } from './internal/debit-expense-source';
 
 export type { ExpenseActor } from './internal/debit-expense-source';
 export type { ListExpensesResult } from './actions/find-all-expenses.action';
+export type { ExpensePaymentMethodsResponse } from './actions/get-expense-payment-methods.action';
 
 /**
  * Facade del módulo `expenses`. ZERO lógica — solo delega a las actions.
@@ -24,11 +29,16 @@ export class ExpensesService {
     private readonly findExpenseAction: FindExpenseAction,
     private readonly createExpenseAction: CreateExpenseAction,
     private readonly updateExpenseAction: UpdateExpenseAction,
-    private readonly softDeleteExpenseAction: SoftDeleteExpenseAction,
+    private readonly voidExpenseAction: VoidExpenseAction,
+    private readonly getExpensePaymentMethodsAction: GetExpensePaymentMethodsAction,
   ) {}
 
   findAll(companyId: number, query: ListExpensesQueryDto): Promise<ListExpensesResult> {
     return this.findAllExpensesAction.execute(companyId, query);
+  }
+
+  getPaymentMethods(companyId: number, userId: number): Promise<ExpensePaymentMethodsResponse> {
+    return this.getExpensePaymentMethodsAction.execute(companyId, userId);
   }
 
   findOne(id: number, companyId: number): Promise<Expense> {
@@ -43,7 +53,7 @@ export class ExpensesService {
     return this.updateExpenseAction.execute(id, dto, companyId);
   }
 
-  softDelete(id: number, companyId: number, actor: ExpenseActor): Promise<void> {
-    return this.softDeleteExpenseAction.execute(id, companyId, actor);
+  void(id: number, companyId: number, actor: ExpenseActor): Promise<void> {
+    return this.voidExpenseAction.execute(id, companyId, actor);
   }
 }

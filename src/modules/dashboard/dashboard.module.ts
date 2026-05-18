@@ -7,6 +7,7 @@ import { GetBreakEvenProgressAction } from './actions/get-break-even-progress.ac
 import { GetExpenseImpactAction } from './actions/get-expense-impact.action';
 import { GetPerformanceAction } from './actions/get-performance.action';
 import { GetTodayAction } from './actions/get-today.action';
+import { GetTodayByCashierAction } from './actions/get-today-by-cashier.action';
 import { GetTopProductsAction } from './actions/get-top-products.action';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
@@ -28,6 +29,7 @@ import { DashboardService } from './dashboard.service';
     GetExpenseImpactAction,
     GetTopProductsAction,
     GetBreakEvenProgressAction,
+    GetTodayByCashierAction,
   ],
   exports: [DashboardService],
 })

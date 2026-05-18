@@ -7,6 +7,7 @@ import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
 import type { CreateEmployeeDto } from '../dto/create-employee.dto';
 import { Employee } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
+import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
 
 /**
  * Datos del owner creador que el controller propaga al action. Evita pasar el
@@ -81,14 +82,31 @@ export class CreateEmployeeAction {
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
         is_archived: false,
+        user_id: null,
       });
 
+      let persisted: Employee;
       try {
-        return await manager.save(Employee, employee);
+        persisted = await manager.save(Employee, employee);
       } catch (error) {
         translateEmployeeConstraintError(error, this.logger);
         throw error;
       }
+
+      // Si el employee se crea con login habilitado, materializamos el User
+      // espejo en la MISMA transacción. Razón: si la creación del espejo
+      // falla (p.ej. EMAIL_TAKEN), debemos abortar el INSERT del employee
+      // para no dejarlo a medias. El helper también setea `user_id` en el
+      // employee recién creado.
+      if (persisted.login_enabled === true) {
+        await ensureMirrorUserForEmployee({
+          manager,
+          employee: persisted,
+          companyId,
+        });
+      }
+
+      return persisted;
     });
 
     // Audit log post-commit. NO incluye username/password/hash — solo IDs y

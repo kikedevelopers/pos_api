@@ -190,7 +190,10 @@ export class ProductMinimalResponseDto {
 }
 
 /**
- * Response de `PUT /inventory/:id/show-in-pos` (versión individual).
+ * @deprecated Fase 3A — el endpoint single `PUT /:id/show-in-pos` fue
+ * reemplazado por el bulk `PUT /inventory/show-in-pos`. Ver
+ * `BulkToggleShowInPosResponseDto`. Se conserva por si algún cliente
+ * externo lo referencia; será removido en una versión posterior.
  */
 export class ToggleShowInPosResponseDto {
   @ApiProperty({ example: 1 })
@@ -201,7 +204,9 @@ export class ToggleShowInPosResponseDto {
 }
 
 /**
- * Response de `PUT /inventory/:id/archive`.
+ * @deprecated Fase 3A — el endpoint single `PUT /:id/archive` fue
+ * reemplazado por el bulk `PUT /inventory/archive`. Ver
+ * `BulkArchiveProductsResponseDto`.
  */
 export class ArchiveProductResponseDto {
   @ApiProperty({ example: true })

@@ -169,6 +169,20 @@ export class Purchase {
   @Column({ type: 'timestamptz', nullable: true })
   received_at!: Date | null;
 
+  /**
+   * Fecha de la factura física del proveedor. Espejo PlacePos. NULL si la
+   * compra se registra sin factura formal (remisión interna).
+   */
+  @Column({ type: 'date', nullable: true })
+  invoice_date!: Date | null;
+
+  /**
+   * Número de la factura del proveedor. PlacePos permite NULL y duplicados
+   * intencionales (devoluciones / cambios). Sin UNIQUE.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  invoice_number!: string | null;
+
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;
 

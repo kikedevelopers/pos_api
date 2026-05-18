@@ -12,7 +12,7 @@ import { findExpenseInCompany } from '../internal/expense-lookups';
  * NO permite cambios en `amount`, `source_type`, `source_id` ni
  * `expense_date` — cambiarlos exige revertir el movimiento financiero y crear
  * uno nuevo. El frontend debe usar:
- *   1. `DELETE /expenses/:id` (soft-delete, revierte balance).
+ *   1. `POST /expenses/:id/void` (anula el gasto y revierte el balance).
  *   2. `POST /expenses` (crea uno nuevo con valores correctos).
  *
  * Si el gasto ya fue anulado (`is_archived = true`), rechaza el cambio con

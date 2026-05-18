@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -28,28 +27,30 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { BulkPurchasePaymentsDto } from './dto/bulk-purchase-payments.dto';
+import {
+  BulkPurchasePaymentsResponseDto,
+  toBulkPurchasePaymentsResponseDto,
+} from './dto/bulk-purchase-payments-response.dto';
 import { CreatePurchasePaymentDto } from './dto/create-purchase-payment.dto';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ListPurchasesQueryDto } from './dto/list-purchases-query.dto';
-import {
-  PurchasePaymentResponseDto,
-  PurchaseResponseDto,
-  toPurchasePaymentResponseDto,
-  toPurchaseResponseDto,
-} from './dto/purchase-response.dto';
+import { PurchaseResponseDto, toPurchaseResponseDto } from './dto/purchase-response.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
+import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { PurchasesService } from './purchases.service';
 
 /**
  * Endpoints `/purchases`. Espejo de PlacePos `purchases.routes.ts`.
  *
  * Roles:
- *   - `GET /purchases`, `GET /purchases/:id`, `GET /purchases/by-supplier/:supplierId`,
- *     `GET /purchases/:id/payments`: cualquier autenticado (los empleados de
- *     POS típicamente solo ven; PlacePos no distingue por rol en GETs).
+ *   - `GET /purchases`, `GET /purchases/:id`, `GET /purchases/by-supplier/:supplierId`:
+ *     cualquier autenticado (los empleados de POS típicamente solo ven;
+ *     PlacePos no distingue por rol en GETs).
  *   - `POST /purchases`, `PUT /purchases/:id/receive`,
- *     `POST /purchases/:id/payments`, `DELETE /purchases/:id`:
+ *     `POST /purchases/:id/payments`, `PUT /purchases/:id/archive`:
  *     solo `owner` y `manager`. El `employee` operativo no toca compras.
+ *     Paridad PlacePos: NO se usa el verbo DELETE.
  *
  * Multi-tenancy: el `company_id` se propaga vía `@CurrentCompany()` desde el
  * JWT — nunca del payload o query.
@@ -188,30 +189,76 @@ export class PurchasesController {
   }
 
   // --------------------------------------------------------------------------
-  // DELETE /purchases/:id (soft-delete)
+  // PUT /purchases/:id/archive
   // --------------------------------------------------------------------------
 
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @Put(':id/archive')
+  @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
   @ApiOperation({
-    summary: 'Anular (soft-delete) una compra sin pagos aplicados.',
+    summary: 'Archivar (anular) una compra sin pagos aplicados. Paridad PlacePos.',
     description:
-      'Marca is_deleted = true y revierte la deuda acumulada del proveedor. Rechaza si hay pagos aplicados.',
+      'Marca is_deleted = true y revierte la deuda acumulada del proveedor. Rechaza si hay pagos aplicados. Paridad PlacePos: NO se usa DELETE.',
   })
   @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.NO_CONTENT })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Payload `{ archived: true }` espejando PlacePos.',
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Compra no encontrada' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
     description: 'Compra tiene pagos aplicados',
   })
-  async softDelete(
+  async archive(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<void> {
-    await this.purchasesService.softDelete(id, companyId, currentUser.user_id);
+  ): Promise<{ archived: true }> {
+    await this.purchasesService.archive(id, companyId, currentUser.user_id);
+    return { archived: true };
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /purchases/bulk-payments
+  // --------------------------------------------------------------------------
+  //
+  // IMPORTANTE: ruta FIJA — debe declararse ANTES de `:id/payments` para que
+  // el matching de Express/Nest no la confunda con `purchase_id = 'bulk-payments'`.
+
+  @Post('bulk-payments')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Aplica múltiples abonos a compras en UNA sola transacción atómica (todo o nada).',
+    description:
+      'Espejo PlacePos: si CUALQUIER abono falla (saldo insuficiente, monto excede balance, fuente archivada, etc.), TODOS revierten. Pre-valida saldos agrupados por purchase_id ANTES de abrir la transacción para devolver mensajes legibles. Idempotencia per-item via uuid (paridad con el flujo single).',
+  })
+  @ApiBody({ type: BulkPurchasePaymentsDto })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    type: BulkPurchasePaymentsResponseDto,
+    description:
+      'Lote procesado. Devuelve por cada compra el payment_id, payment_number y nuevo credit_status.',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Saldo agrupado excede balance, compra inexistente o pagada',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Saldo insuficiente en alguna fuente, race condition de pagos, etc.',
+  })
+  async bulkPayments(
+    @Body() dto: BulkPurchasePaymentsDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<BulkPurchasePaymentsResponseDto> {
+    const result = await this.purchasesService.processBulkPayments(dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
+    return toBulkPurchasePaymentsResponseDto(result.processed, result.payments);
   }
 
   // --------------------------------------------------------------------------
@@ -260,20 +307,50 @@ export class PurchasesController {
   }
 
   // --------------------------------------------------------------------------
-  // GET /purchases/:id/payments
+  // PUT /purchases/:id
   // --------------------------------------------------------------------------
+  //
+  // IMPORTANTE: este endpoint catch-all paramétrico va AL FINAL — debe
+  // declararse DESPUÉS de los segmentos fijos (`:id/receive`, `:id/archive`,
+  // `:id/payments`) para no interceptar sus rutas.
 
-  @Get(':id/payments')
-  @Roles('owner', 'manager', 'employee')
-  @ApiOperation({ summary: 'Listar pagos de una compra.' })
+  @Put(':id')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Editar una compra: reemplaza líneas, recalcula totales y reconcilia el credit.',
+    description:
+      'Espejo PlacePos editPurchase. Replace total de líneas, ajuste diferencial de inventario (cuando la compra está RECEIVED), recálculo de totales con Big.js, reconciliación del PurchaseCredit y supplier.accumulated_debt. Si el nuevo total queda por debajo de lo ya pagado, se reembolsa el excedente a la cuenta indicada en refund_source_*. supplier_id es inmutable.',
+  })
   @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.OK, type: [PurchasePaymentResponseDto] })
+  @ApiBody({ type: UpdatePurchaseDto })
+  @ApiResponse({ status: HttpStatus.OK, type: PurchaseResponseDto })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Compra no encontrada' })
-  async listPayments(
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Payload inválido o productos inexistentes',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description:
+      'Compra archivada, total <= 0, force_stock_adjustment sin rol admin, o falta refund_source cuando hay excedente.',
+  })
+  async update(
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseDto,
     @CurrentCompany() companyId: number,
-  ): Promise<PurchasePaymentResponseDto[]> {
-    const payments = await this.purchasesService.listPayments(id, companyId);
-    return payments.map(toPurchasePaymentResponseDto);
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<PurchaseResponseDto> {
+    const { purchase, lines, credit, payments } = await this.purchasesService.update(
+      id,
+      dto,
+      companyId,
+      {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+        type: currentUser.type ?? null,
+      },
+    );
+    return toPurchaseResponseDto(purchase, lines, credit, payments);
   }
 }

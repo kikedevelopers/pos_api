@@ -8,8 +8,8 @@ import {
 
 /**
  * Espejo del shape que `cash-register.routes.ts` devuelve en `/logs` de
- * PlacePos. Se preserva el nombre `movement_type` para paridad
- * byte-por-byte (PlacePos lo guarda como text; aquí es enum).
+ * PlacePos. El payload mantiene la clave `movement_type` (PlacePos lo guarda
+ * como text libre; aquí es enum).
  */
 export class CashRegisterLogResponseDto {
   @ApiProperty({ example: 1 })
@@ -18,7 +18,7 @@ export class CashRegisterLogResponseDto {
   @ApiProperty({ example: 1 })
   cash_register_id!: number;
 
-  @ApiProperty({ enum: CashRegisterLogType, example: CashRegisterLogType.CASH_IN })
+  @ApiProperty({ enum: CashRegisterLogType, example: CashRegisterLogType.CASH_RECEIVED })
   movement_type!: CashRegisterLogType;
 
   @ApiProperty({ example: 'IN' })
@@ -39,6 +39,18 @@ export class CashRegisterLogResponseDto {
   @ApiPropertyOptional({ example: 1, nullable: true })
   created_by_id!: number | null;
 
+  @ApiPropertyOptional({ example: 100, nullable: true })
+  invoice_id!: number | null;
+
+  @ApiPropertyOptional({ example: 50, nullable: true })
+  payment_id!: number | null;
+
+  @ApiPropertyOptional({ example: 25, nullable: true })
+  credit_note_id!: number | null;
+
+  @ApiProperty({ example: false })
+  is_credit_related!: boolean;
+
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   created_at!: string;
 }
@@ -54,6 +66,10 @@ export function toCashRegisterLogResponseDto(log: CashRegisterLog): CashRegister
     description: log.description,
     created_by: log.created_by,
     created_by_id: log.created_by_id !== null ? Number(log.created_by_id) : null,
+    invoice_id: log.invoice_id !== null ? Number(log.invoice_id) : null,
+    payment_id: log.payment_id !== null ? Number(log.payment_id) : null,
+    credit_note_id: log.credit_note_id !== null ? Number(log.credit_note_id) : null,
+    is_credit_related: log.is_credit_related,
     created_at: log.created_at.toISOString(),
   };
 }

@@ -11,12 +11,12 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
   CashRegisterLogType,
 } from '@/modules/cash-register/entities/cash-register-log.entity';
-import { computeCashRegisterBalance } from '@/modules/cash-register/internal/compute-balance';
-import { requireOpenCashRegisterForUpdate } from '@/modules/cash-register/internal/cash-register-lookups';
+import { getOrCreateCashRegisterForUser } from '@/modules/cash-register/internal/get-or-create-cash-register-for-user.helper';
 import {
   AccountReference,
   MovementConcept,
@@ -44,27 +44,25 @@ export interface TransferCashResult {
 }
 
 /**
- * `POST /pos-data/transfer-cash`. Mueve efectivo desde la caja abierta de
- * la company hacia un bank o wallet.
+ * `POST /pos-data/transfer-cash`. Mueve efectivo desde la caja PERMANENTE
+ * del actor hacia un bank o wallet.
  *
  * Diferencias respecto a `accounts/transfer`:
- *   - El origen es IMPLÍCITO (caja abierta del company, no parametrizable).
+ *   - El origen es IMPLÍCITO (caja del actor, no parametrizable).
  *   - El destino soporta `'wallet'` y `'bank'`. `'user'` se rechaza con
  *     `422 UNSUPPORTED_DESTINATION` — el modelo cloud no tiene caja
- *     personal por usuario.
+ *     personal por usuario distinto del actor.
  *
  * Atomicidad:
- *   1. Lock pessimistic_write sobre el cash_register abierto
- *      (`requireOpenCashRegisterForUpdate`) — serializa cualquier otra
- *      operación que afecte el balance del turno.
+ *   1. `getOrCreateCashRegisterForUser` resuelve y lockea la caja del actor.
  *   2. Lock pessimistic_write sobre el bank/wallet destino — evita oversell
  *      en lecturas concurrentes (defensa en profundidad; aquí es un INCOME,
  *      no un débito, pero preservamos la disciplina).
- *   3. Recalculo del balance de caja con `computeCashRegisterBalance` (lee
- *      logs dentro de la transacción). Si balance < amount → 422.
- *   4. INSERT log OUT (affects_balance=true) en `cash_register_logs`.
- *   5. UPDATE balance del destino (bank|wallet) sumando `amount`.
- *   6. INSERT `FinancialMovement` (TRANSFER) con source=cash_register,
+ *   3. Validar `register.balance >= amount`. Si falla → 422.
+ *   4. UPDATE `cash_registers.balance -= amount`.
+ *   5. INSERT log CASH_TRANSFER_OUT (affects_balance=true).
+ *   6. UPDATE balance del destino (bank|wallet) sumando `amount`.
+ *   7. INSERT `FinancialMovement` (TRANSFER) con source=cash_register,
  *      destination=bank|wallet. Lleva `reference_code` UUID v4.
  */
 @Injectable()
@@ -98,7 +96,7 @@ export class TransferCashAction {
     }
 
     return this.dataSource.transaction<TransferCashResult>(async (manager) => {
-      const register = await requireOpenCashRegisterForUpdate(manager, companyId);
+      const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
       const destination = await this.loadDestination(
         manager,
         destinationType,
@@ -106,11 +104,7 @@ export class TransferCashAction {
         companyId,
       );
 
-      const balanceBig = await computeCashRegisterBalance(manager, {
-        id: register.id,
-        company_id: register.company_id,
-        opening_balance: register.opening_balance,
-      });
+      const balanceBig = toBig(register.balance);
       if (balanceBig.lt(amountBig)) {
         throw new UnprocessableEntityException(
           `Saldo insuficiente en caja. Disponible: ${balanceBig.toFixed(2)}`,
@@ -118,6 +112,14 @@ export class TransferCashAction {
       }
 
       const amount = preciseNumber(amountBig, 2);
+
+      // UPDATE balance origen (modelo PERMANENTE).
+      const newOriginBalance = preciseNumber(balanceBig.minus(amountBig), 2);
+      await manager.update(
+        CashRegister,
+        { id: register.id, company_id: String(companyId) },
+        { balance: newOriginBalance },
+      );
 
       await manager.getRepository(CashRegisterLog).save({
         company_id: register.company_id,

@@ -61,7 +61,7 @@ export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
  *   4. INSERT Expense.
  *   5. INSERT FinancialMovement(EXPENSE, concept=EXPENSE).
  *
- * Side effects al SOFT-DELETE (orquestados por `SoftDeleteExpenseAction`):
+ * Side effects al VOID (orquestados por `VoidExpenseAction`):
  *
  *   1. Lock pessimistic_write sobre la cuenta origen (validar que sigue
  *      activa).

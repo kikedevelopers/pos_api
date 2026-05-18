@@ -30,6 +30,7 @@ import type {
   CustomerSalesChartResponse,
 } from './actions/get-customer-charts.action';
 import type { CustomerSalesHistoryResponse } from './actions/get-customer-sales-history.action';
+import type { CustomersAnalyticsResponse } from './actions/get-customers-analytics.action';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerResponseDto, toCustomerResponseDto } from './dto/customer-response.dto';
 import { ListCustomersQueryDto } from './dto/list-customers-query.dto';
@@ -47,7 +48,6 @@ import { CustomersService } from './customers.service';
  *   GET    /customers/:id/product-history
  *   POST   /customers
  *   PUT    /customers/:id
- *   PUT    /customers/:id/archive       (extensión cloud — no existe en PlacePos local)
  *
  * Autorización:
  *   - Reads (`GET *`): cualquier usuario autenticado de la company.
@@ -80,6 +80,21 @@ export class CustomersController {
     return customers.map(toCustomerResponseDto);
   }
 
+  @Get('analytics')
+  // IMPORTANTE: la ruta estática `/analytics` se declara ANTES de cualquier
+  // `:id/...` para que NestJS no la capture como un id. Aunque NestJS hace
+  // matching por path exacto, mantenemos el orden por claridad y por paridad
+  // con el Express de PlacePos.
+  @ApiOperation({
+    summary: 'Analíticas agregadas del módulo customers',
+    description:
+      'Devuelve customers_count (total no-archivados), new_customers (mes actual), evolution { month_current, month_previous }.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  async getAnalytics(@CurrentCompany() companyId: number): Promise<CustomersAnalyticsResponse> {
+    return this.customersService.getAnalytics(companyId);
+  }
+
   @Get(':id/sales-history')
   // Registramos las rutas de :id/* ANTES de :id puro NO es necesario en Nest
   // (NestJS empareja por path exacto), pero las agrupamos al inicio para
@@ -88,7 +103,7 @@ export class CustomersController {
   @ApiOperation({
     summary: 'Histórico de ventas del cliente',
     description:
-      'Placeholder en Fase 4 (devuelve invoices: [] y summary cero). Reemplazado en Fase 6 con queries reales sobre sale_invoices.',
+      'Invoices consolidados con NC/ND, payment_method agregado, info de crédito (status/balance) y productos concatenados. Espejo PlacePos.',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiResponse({ status: HttpStatus.OK })
@@ -104,7 +119,7 @@ export class CustomersController {
   @ApiOperation({
     summary: 'Serie temporal de ventas del cliente (chart)',
     description:
-      'Placeholder en Fase 4 (devuelve points: []). Reemplazado en Fase 6 con CTE sobre sale_invoices + credit_notes.',
+      'Serie diaria de total/profit/margin consolidada con NC/ND. generate_series garantiza que los días sin venta vengan en 0. Default: últimos 30 días.',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiQuery({ name: 'startDate', required: false, example: '2026-04-01' })
@@ -125,7 +140,7 @@ export class CustomersController {
   @ApiOperation({
     summary: 'Productos consumidos por el cliente',
     description:
-      'Placeholder en Fase 4 (devuelve lines: []). Reemplazado en Fase 6 con join sobre sale_invoice_lines.',
+      'Líneas de las últimas 20 facturas del cliente con producto/cantidad/precio/total.',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiResponse({ status: HttpStatus.OK })
@@ -190,28 +205,6 @@ export class CustomersController {
     @CurrentCompany() companyId: number,
   ): Promise<CustomerResponseDto> {
     const customer = await this.customersService.update(id, dto, companyId);
-    return toCustomerResponseDto(customer);
-  }
-
-  @Put(':id/archive')
-  @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
-  @ApiOperation({
-    summary: 'Alternar archivado del customer (extensión cloud)',
-    description:
-      'Toggle puro: pasa is_archived a su valor opuesto. El frontend Electron en modo local NO usa este endpoint.',
-  })
-  @ApiParam({ name: 'id', type: 'integer', example: 1 })
-  @ApiResponse({ status: HttpStatus.OK, type: CustomerResponseDto })
-  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Cliente no encontrado' })
-  async toggleArchive(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCompany() companyId: number,
-    @CurrentUser() currentUser: AuthUser,
-  ): Promise<CustomerResponseDto> {
-    const customer = await this.customersService.toggleArchive(id, companyId, currentUser.user_id);
     return toCustomerResponseDto(customer);
   }
 }

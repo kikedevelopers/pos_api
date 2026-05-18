@@ -1,14 +1,24 @@
 import { Injectable } from '@nestjs/common';
 
+import {
+  ApplyWalletAdjustmentAction,
+  type WalletAdjustmentActor,
+  type WalletAdjustmentResult,
+} from './actions/apply-wallet-adjustment.action';
 import { ArchiveWalletAction } from './actions/archive-wallet.action';
 import { CreateWalletAction, type WalletCreator } from './actions/create-wallet.action';
 import { FindAllWalletsAction } from './actions/find-all-wallets.action';
 import { UpdateWalletAction } from './actions/update-wallet.action';
+import type { CreateWalletAdjustmentDto } from './dto/create-wallet-adjustment.dto';
 import type { CreateWalletDto } from './dto/create-wallet.dto';
 import type { UpdateWalletDto } from './dto/update-wallet.dto';
 import type { Wallet } from './entities/wallet.entity';
 
 export type { WalletCreator } from './actions/create-wallet.action';
+export type {
+  WalletAdjustmentActor,
+  WalletAdjustmentResult,
+} from './actions/apply-wallet-adjustment.action';
 
 /**
  * Facade del módulo `wallets`. ZERO lógica — solo delega.
@@ -24,6 +34,7 @@ export class WalletsService {
     private readonly createWalletAction: CreateWalletAction,
     private readonly updateWalletAction: UpdateWalletAction,
     private readonly archiveWalletAction: ArchiveWalletAction,
+    private readonly applyWalletAdjustmentAction: ApplyWalletAdjustmentAction,
   ) {}
 
   findAll(companyId: number): Promise<Wallet[]> {
@@ -40,5 +51,14 @@ export class WalletsService {
 
   archive(id: number, companyId: number, actorId: number): Promise<void> {
     return this.archiveWalletAction.execute(id, companyId, actorId);
+  }
+
+  applyAdjustment(
+    walletId: number,
+    dto: CreateWalletAdjustmentDto,
+    companyId: number,
+    actor: WalletAdjustmentActor,
+  ): Promise<WalletAdjustmentResult> {
+    return this.applyWalletAdjustmentAction.execute(walletId, dto, companyId, actor);
   }
 }

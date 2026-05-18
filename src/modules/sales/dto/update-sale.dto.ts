@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -14,15 +15,33 @@ import {
 import { CreateSaleLineDto } from './create-sale.dto';
 
 /**
- * Payload de `PUT /sales/:id`. Solo aplica a ORDER sin pagos.
+ * Payload de `PUT /sales/:id`. Espejo del `editTicket` de PlacePos.
  *
- * Permite reemplazar customer, notas y líneas. NO permite cambiar
- * `ticket_type` (eso se hace vía `POST /sales/:id/convert`).
+ * --------------------------------------------------------------------------
+ * Casos de uso (según el `ticket_type` actual de la venta)
+ * --------------------------------------------------------------------------
+ *
+ *   - `ORDER`: edición libre. Reemplazo total de líneas + cliente + notas.
+ *     NO genera NC/ND. NO toca inventario (las ORDER no consumieron stock).
+ *
+ *   - `SALE`:
+ *     - Solo cambia el cliente (lines ausentes o iguales): UPDATE
+ *       `customer_id`/`customer_name` (bloquea si la venta tiene SaleCredit
+ *       con `paid_amount > 0`).
+ *     - Cambian las líneas: emite NC `PARTIAL_VOID` por las
+ *       `removed/reduced`, ND `ADDITION` por las `added/increased`, ajusta
+ *       inventario diferencial, y recalcula los totales consolidados de la
+ *       cabecera. Si la venta tiene una NC `FULL_VOID` activa la edición
+ *       es rechazada (422).
+ *
+ * El campo `override_margin` lo respeta solo si el actor es owner/superadmin
+ * (enforced por `assertMarginAboveMinimum`).
  */
 export class UpdateSaleDto {
   @ApiPropertyOptional({
     example: 1,
-    description: 'ID del cliente (debe pertenecer a la company). Omitir para venta mostrador.',
+    description:
+      'ID del cliente (debe pertenecer a la company). Para venta mostrador, omitir o enviar null.',
     nullable: true,
   })
   @IsOptional()
@@ -39,7 +58,10 @@ export class UpdateSaleDto {
 
   @ApiPropertyOptional({
     type: [CreateSaleLineDto],
-    description: 'Reemplazo completo de líneas. Si se envía, debe contener al menos una.',
+    description:
+      'Snapshot completo de las líneas tras la edición. Si se envía, debe ' +
+      'contener al menos una. Si la venta es SALE el delta vs líneas vivas ' +
+      'genera NC/ND.',
   })
   @IsOptional()
   @IsArray()
@@ -47,4 +69,15 @@ export class UpdateSaleDto {
   @ValidateNested({ each: true })
   @Type(() => CreateSaleLineDto)
   lines?: CreateSaleLineDto[];
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Solicita saltar la validación de margen mínimo. Solo respetado si el ' +
+      'actor es owner / superadmin (enforced por `assertMarginAboveMinimum`).',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  override_margin?: boolean;
 }

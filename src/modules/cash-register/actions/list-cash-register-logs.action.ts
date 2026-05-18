@@ -3,13 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { CashRegisterLog } from '../entities/cash-register-log.entity';
-import { CashRegister, CashRegisterStatus } from '../entities/cash-register.entity';
+import { CashRegister } from '../entities/cash-register.entity';
 
 /**
- * Lista los logs del turno actualmente abierto, ordenados por
- * `created_at DESC`. Endpoint `GET /cash-register/logs?limit=N`.
+ * Lista los logs de la caja del actor, ordenados por `created_at DESC`.
+ * Endpoint `GET /cash-register/logs?limit=N`.
  *
- * Espejo de PlacePos: cuando no hay turno abierto, devuelve `[]`.
+ * Espejo PlacePos: cuando el actor NO tiene caja, devuelve `[]`.
  *
  * Read puro — no requiere transacción.
  */
@@ -22,9 +22,9 @@ export class ListCashRegisterLogsAction {
     private readonly logRepo: Repository<CashRegisterLog>,
   ) {}
 
-  async execute(companyId: number, limit?: number): Promise<CashRegisterLog[]> {
+  async execute(companyId: number, userId: number, limit?: number): Promise<CashRegisterLog[]> {
     const register = await this.registerRepo.findOne({
-      where: { company_id: String(companyId), status: CashRegisterStatus.OPEN },
+      where: { company_id: String(companyId), user_id: String(userId) },
       select: { id: true },
     });
 

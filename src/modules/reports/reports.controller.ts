@@ -5,22 +5,32 @@ import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { CreditsReportQueryDto } from './dto/credits-report-query.dto';
+import { CustomersRfmDayTicketsQueryDto } from './dto/customers-rfm-day-tickets-query.dto';
+import { CustomersRfmQueryDto } from './dto/customers-rfm-query.dto';
 import { DailyClosureQueryDto } from './dto/daily-closure-query.dto';
 import { ReportsService } from './reports.service';
-import type { CreditsReportResult, DailyClosureResult } from './reports.service';
+import type {
+  CreditsReportResult,
+  CustomersRfmDayTicketsResult,
+  CustomersRfmPaginatedResult,
+  CustomersRfmResult,
+  DailyClosureResult,
+} from './reports.service';
 
 /**
  * Endpoints `/reports` — Fase 11.2. Espejo PlacePos byte-por-byte
- * (`/reports/daily-closure`, `/reports/credits`).
+ * (`/reports/daily-closure`, `/reports/credits`, `/reports/customers-rfm`,
+ * `/reports/customers-rfm/day-tickets`).
  *
  * Roles: `owner` y `manager`. Los `employee` no acceden a reportes
  * consolidados.
  *
  * Divergencia vs lo solicitado en el brief: el contrato REAL de PlacePos
- * `reports.routes.ts` solo expone `daily-closure` y `credits`. Endpoints
- * adicionales (sales/purchases/expenses/profit-margins/etc.) NO existen en
- * PlacePos; agregarlos rompería la regla §2.1 (espejo byte-por-byte). Si se
- * necesitan, se agregan como `/api/v2/reports/*` en una fase futura.
+ * `reports.routes.ts` solo expone `daily-closure`, `credits` y los dos de
+ * RFM. Endpoints adicionales (sales/purchases/expenses/profit-margins/etc.)
+ * NO existen en PlacePos; agregarlos rompería la regla §2.1 (espejo
+ * byte-por-byte). Si se necesitan, se agregan como `/api/v2/reports/*` en
+ * una fase futura.
  */
 @ApiTags('reports')
 @ApiBearerAuth('bearer')
@@ -52,5 +62,47 @@ export class ReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<CreditsReportResult> {
     return this.reportsService.getCreditsReport(companyId, query);
+  }
+
+  /**
+   * IMPORTANTE: `customers-rfm/day-tickets` se declara ANTES que
+   * `customers-rfm` para que el matcher de Nest priorice la ruta más
+   * específica. Si se invierte, `day-tickets` cae al handler de `customers-rfm`
+   * porque ambos comparten el prefijo y Nest evalúa en orden de declaración.
+   */
+  @Get('customers-rfm/day-tickets')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Drill-down RFM: tickets SALE de un cliente en una fecha específica.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  customersRfmDayTickets(
+    @Query() query: CustomersRfmDayTicketsQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<CustomersRfmDayTicketsResult> {
+    return this.reportsService.getCustomersRfmDayTickets(companyId, query.customerId, query.date);
+  }
+
+  @Get('customers-rfm')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary:
+      'Análisis RFM por cliente (Recency / Frequency / Monetary) en rango [from, to] (default 90d).',
+    description:
+      'Sin `limit`/`offset` → array completo `{ from, to, referenceDate, customers[] }` (paridad PlacePos). Con `limit` y/o `offset` → response paginado `{ from, to, referenceDate, items[], total, limit, offset }`.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  customersRfm(
+    @Query() query: CustomersRfmQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<CustomersRfmResult | CustomersRfmPaginatedResult> {
+    // Opt-in a paginación: el cliente activa el nuevo shape pasando CUALQUIERA
+    // de los dos params. Si NINGUNO llega, el response es idéntico al de
+    // PlacePos — preservamos paridad para clientes legacy.
+    const pagination =
+      query.limit !== undefined || query.offset !== undefined
+        ? { limit: query.limit, offset: query.offset }
+        : undefined;
+    return this.reportsService.getCustomersRfm(companyId, query.from, query.to, pagination);
   }
 }

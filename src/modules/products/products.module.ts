@@ -3,13 +3,16 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { PackagingsModule } from '@/modules/packagings/packagings.module';
 
-import { ArchiveProductAction } from './actions/archive-product.action';
+import { BulkArchiveProductsAction } from './actions/bulk-archive-products.action';
 import { BulkProcessProductsAction } from './actions/bulk-process-products.action';
+import { BulkToggleShowInPosAction } from './actions/bulk-toggle-show-in-pos.action';
+import { CompareProductPricesAction } from './actions/compare-product-prices.action';
 import { CreateProductAction } from './actions/create-product.action';
 import { FindAllProductsAction } from './actions/find-all-products.action';
 import { FindProductByIdAction } from './actions/find-product-by-id.action';
+import { FindSupplierHistoryAction } from './actions/find-supplier-history.action';
 import { GetProductSalesHistoryAction } from './actions/get-product-sales-history.action';
-import { ToggleShowInPosAction } from './actions/toggle-show-in-pos.action';
+import { QuickCreateProductAction } from './actions/quick-create-product.action';
 import { UpdateProductAction } from './actions/update-product.action';
 import { Product } from './entities/product.entity';
 import { ProductPrice } from './entities/product-price.entity';
@@ -17,14 +20,19 @@ import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 
 /**
- * Módulo `products` — Fase 3.
+ * Módulo `products` — Fase 3 + Fase 3A.
  *
- * Cablea las 8 actions del dominio (find-all, find-by-id, create, update,
- * archive, toggle-show-in-pos, bulk-process, get-sales-history) + el
- * service facade.
+ * Cablea las actions del dominio + el service facade.
+ *
+ * Fase 3A añadió:
+ *   - `QuickCreateProductAction`
+ *   - `BulkArchiveProductsAction` (reemplaza al single `ArchiveProductAction`)
+ *   - `BulkToggleShowInPosAction` (reemplaza al single `ToggleShowInPosAction`)
+ *   - `FindSupplierHistoryAction`
+ *   - `CompareProductPricesAction`
  *
  * Importa `PackagingsModule` para validar `packaging_id` cross-tenant en
- * las actions de create/update (vía SQL raw — ver `product-lookups.ts`).
+ * las actions de create/update/quick (vía SQL raw — ver `product-lookups.ts`).
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Product, ProductPrice]), PackagingsModule],
@@ -35,10 +43,13 @@ import { ProductsService } from './products.service';
     FindProductByIdAction,
     CreateProductAction,
     UpdateProductAction,
-    ArchiveProductAction,
-    ToggleShowInPosAction,
+    BulkArchiveProductsAction,
+    BulkToggleShowInPosAction,
     BulkProcessProductsAction,
     GetProductSalesHistoryAction,
+    QuickCreateProductAction,
+    FindSupplierHistoryAction,
+    CompareProductPricesAction,
   ],
   exports: [ProductsService, TypeOrmModule],
 })

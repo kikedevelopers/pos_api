@@ -26,18 +26,26 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import {
+  BulkArchiveProductsDto,
+  BulkArchiveProductsResponseDto,
+} from './dto/bulk-archive-products.dto';
 import { BulkProductsDto, BulkProductsResponseDto } from './dto/bulk-products.dto';
+import {
+  BulkToggleShowInPosDto,
+  BulkToggleShowInPosResponseDto,
+} from './dto/bulk-toggle-show-in-pos.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { InventoryQueryDto } from './dto/inventory-query.dto';
+import { PriceComparisonResponseDto } from './dto/price-comparison-response.dto';
 import {
-  ArchiveProductResponseDto,
   ProductMinimalResponseDto,
   ProductResponseDto,
   SalesHistoryResponseDto,
-  ToggleShowInPosResponseDto,
   toProductResponseDto,
 } from './dto/product-response.dto';
-import { ToggleShowInPosDto } from './dto/toggle-show-in-pos.dto';
+import { QuickCreateProductDto } from './dto/quick-create-product.dto';
+import { SupplierHistoryResponseDto } from './dto/supplier-history-response.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductsService } from './products.service';
 
@@ -46,10 +54,12 @@ import { ProductsService } from './products.service';
  * (`inventory.routes.ts`).
  *
  * Autorización:
- *   - GET → owner | manager | employee. Lectura del catálogo es
- *     operacional (cajeros, vendedores).
+ *   - GET → owner | manager | employee. Lectura del catálogo es operacional.
  *   - POST/PUT → owner | manager. El employee no muta el catálogo.
+ *   - POST /quick → owner | manager | employee (PlacePos lo expone para
+ *     que cualquier rol pueda crear durante una compra).
  *   - bulk → owner. Importaciones masivas son operación delicada.
+ *   - PUT /archive, PUT /show-in-pos (bulk) → owner | manager.
  *
  * Multi-tenancy: `@CurrentCompany()` extrae el `company_id` del JWT.
  */
@@ -75,8 +85,7 @@ export class ProductsController {
   }
 
   /**
-   * Bulk debe ir ANTES de `:id` para evitar conflicto de matching del
-   * router (`/bulk` choca con `/:id`). Espejo de PlacePos.
+   * Bulk debe ir ANTES de `:id` para evitar conflicto de matching del router.
    */
   @Post('bulk')
   @Roles('owner')
@@ -102,6 +111,79 @@ export class ProductsController {
     });
   }
 
+  /**
+   * `POST /inventory/quick` — Creación rápida desde compras. Espejo PlacePos.
+   *
+   * Genera Product mínimo (`is_purchasable = true`, `show_in_pos = false`)
+   * con un único ProductPrice cuyo `sale_price = cost` (profit/margin = 0).
+   */
+  @Post('quick')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Crear producto mínimo desde el módulo de compras',
+    description:
+      'Crea Product SIMPLE con un único ProductPrice cuyo sale_price = cost. show_in_pos = false.',
+  })
+  @ApiBody({ type: QuickCreateProductDto })
+  @ApiResponse({ status: HttpStatus.CREATED, type: ProductResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido o duplicado' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'packaging_id inválido' })
+  async quickCreate(
+    @Body() dto: QuickCreateProductDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<ProductResponseDto> {
+    const product = await this.productsService.quickCreate(dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
+    return toProductResponseDto(product);
+  }
+
+  /**
+   * `PUT /inventory/archive` — Bulk archive de productos. Espejo PlacePos.
+   * Reemplaza al endpoint single `PUT /:id/archive` (que no existe en PlacePos).
+   */
+  @Put('archive')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Archivar varios productos en lote',
+    description: 'Espejo PlacePos. Idempotente; ids ya archivados se ignoran.',
+  })
+  @ApiBody({ type: BulkArchiveProductsDto })
+  @ApiResponse({ status: HttpStatus.OK, type: BulkArchiveProductsResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  async bulkArchive(
+    @Body() dto: BulkArchiveProductsDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<BulkArchiveProductsResponseDto> {
+    const result = await this.productsService.bulkArchive(dto.ids, companyId);
+    return result;
+  }
+
+  /**
+   * `PUT /inventory/show-in-pos` — Bulk toggle de visibilidad. Espejo PlacePos.
+   * Reemplaza al endpoint single `PUT /:id/show-in-pos`.
+   */
+  @Put('show-in-pos')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Activar/desactivar varios productos en POS en lote',
+    description: 'Espejo PlacePos.',
+  })
+  @ApiBody({ type: BulkToggleShowInPosDto })
+  @ApiResponse({ status: HttpStatus.OK, type: BulkToggleShowInPosResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  async bulkToggleShowInPos(
+    @Body() dto: BulkToggleShowInPosDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<BulkToggleShowInPosResponseDto> {
+    return this.productsService.bulkToggleShowInPos(dto.ids, dto.show_in_pos, companyId);
+  }
+
   @Get(':id')
   @Roles('owner', 'manager', 'employee')
   @ApiOperation({ summary: 'Obtener detalle de un producto' })
@@ -120,13 +202,6 @@ export class ProductsController {
     return toProductResponseDto(product);
   }
 
-  /**
-   * `sales-history` debe ir antes que `:id` para evitar el matching
-   * `:id = "sales-history"`. Pero como aquí el path es `/:id/sales-history`
-   * y NO `/sales-history`, no hay conflicto — Nest sólo matchea cuando
-   * `:id` es entero (ParseIntPipe). Aún así lo definimos después del
-   * `GET /:id` para mantener orden lógico.
-   */
   @Get(':id/sales-history')
   @Roles('owner', 'manager', 'employee')
   @ApiOperation({
@@ -143,6 +218,52 @@ export class ProductsController {
     @CurrentCompany() companyId: number,
   ): Promise<SalesHistoryResponseDto> {
     return this.productsService.getSalesHistory(id, companyId);
+  }
+
+  /**
+   * `GET /inventory/:productId/supplier-history/:supplierId` — Últimas 10
+   * compras del producto al proveedor. Si es una presentación, resuelve al
+   * producto padre.
+   */
+  @Get(':productId/supplier-history/:supplierId')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Últimas 10 compras del producto a un proveedor específico',
+    description:
+      'Si el producto es una presentación (parent_id != null), se resuelve al producto padre antes de la búsqueda.',
+  })
+  @ApiParam({ name: 'productId', type: 'integer' })
+  @ApiParam({ name: 'supplierId', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK, type: SupplierHistoryResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
+  async supplierHistory(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Param('supplierId', ParseIntPipe) supplierId: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<SupplierHistoryResponseDto> {
+    return this.productsService.findSupplierHistory(productId, supplierId, companyId);
+  }
+
+  /**
+   * `GET /inventory/:id/price-comparison` — Último precio de compra por
+   * proveedor para el producto (DISTINCT ON supplier_id). Resuelve a padre
+   * si es presentación.
+   */
+  @Get(':id/price-comparison')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Último precio de compra por proveedor para el producto',
+    description:
+      'DISTINCT ON supplier_id ordenado por fecha desc. Si es presentación, resuelve al producto padre.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK, type: PriceComparisonResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
+  async priceComparison(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<PriceComparisonResponseDto> {
+    return this.productsService.comparePrices(id, companyId);
   }
 
   @Post()
@@ -202,41 +323,5 @@ export class ProductsController {
       updated_by: product.updated_by ?? null,
       updated_at: product.updated_at.toISOString(),
     };
-  }
-
-  @Put(':id/show-in-pos')
-  @Roles('owner', 'manager')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Toggle visibilidad en POS' })
-  @ApiParam({ name: 'id', type: 'integer', example: 1 })
-  @ApiBody({ type: ToggleShowInPosDto })
-  @ApiResponse({ status: HttpStatus.OK, type: ToggleShowInPosResponseDto })
-  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
-  async toggleShowInPos(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: ToggleShowInPosDto,
-    @CurrentCompany() companyId: number,
-  ): Promise<ToggleShowInPosResponseDto> {
-    await this.productsService.toggleShowInPos(id, dto.show_in_pos, companyId);
-    return { id, show_in_pos: dto.show_in_pos };
-  }
-
-  @Put(':id/archive')
-  @Roles('owner', 'manager')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Archivar producto (soft-delete)' })
-  @ApiParam({ name: 'id', type: 'integer', example: 1 })
-  @ApiResponse({ status: HttpStatus.OK, type: ArchiveProductResponseDto })
-  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
-  async archive(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCompany() companyId: number,
-  ): Promise<ArchiveProductResponseDto> {
-    await this.productsService.archive(id, companyId);
-    return { archived: true };
   }
 }

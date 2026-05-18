@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -33,7 +32,7 @@ import {
   toExpenseResponseDto,
 } from './dto/expense-response.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
-import { ExpensesService } from './expenses.service';
+import { ExpensesService, type ExpensePaymentMethodsResponse } from './expenses.service';
 
 /**
  * Endpoints `/expenses` — Fase 9. Espejo de PlacePos `expenses.routes.ts`
@@ -44,8 +43,9 @@ import { ExpensesService } from './expenses.service';
  *     pero no los crean ni editan (paridad PlacePos donde el panel admin
  *     es exclusivo de owner/manager).
  *   - `POST`, `PUT`: `owner`, `manager` (gestión administrativa).
- *   - `DELETE` (soft-delete / anular gasto): `owner` solamente — revertir
- *     un gasto toca balances financieros y exige la firma del dueño.
+ *   - `POST /:id/void` (anulación con reverso de balance): `owner` solamente —
+ *     revertir un gasto toca balances financieros y exige la firma del dueño.
+ *     Paridad PlacePos: NO se usa el verbo DELETE.
  *
  * Multi-tenancy: `company_id` se propaga vía `@CurrentCompany()` desde el
  * JWT — nunca del payload o query.
@@ -80,6 +80,27 @@ export class ExpensesController {
       limit: result.limit,
       offset: result.offset,
     };
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /expenses/payment-methods
+  // --------------------------------------------------------------------------
+  // IMPORTANTE: esta ruta DEBE declararse antes de `/:id` para que el path
+  // estático no caiga en el matcher con parámetro.
+
+  @Get('payment-methods')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Fuentes de pago disponibles para registrar un gasto',
+    description:
+      'Devuelve wallets/banks activos + el turno de caja abierto de la company. Espejo PlacePos `/cash-sources` aplicado al contexto de expenses.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  async getPaymentMethods(
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<ExpensePaymentMethodsResponse> {
+    return this.expensesService.getPaymentMethods(companyId, currentUser.user_id);
   }
 
   // --------------------------------------------------------------------------
@@ -160,32 +181,33 @@ export class ExpensesController {
   }
 
   // --------------------------------------------------------------------------
-  // DELETE /expenses/:id (soft-delete = anular gasto + revertir balance)
+  // POST /expenses/:id/void (anular gasto + revertir balance)
   // --------------------------------------------------------------------------
 
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @Post(':id/void')
+  @HttpCode(HttpStatus.OK)
   @Roles('owner')
   @ApiOperation({
-    summary: 'Anular un gasto (soft-delete is_archived=true) y revertir el balance de la cuenta.',
+    summary: 'Anular un gasto (is_archived=true) y revertir el balance de la cuenta.',
     description:
-      'En UNA transacción: lockea la cuenta origen, acredita su balance, marca el gasto archived, registra FinancialMovement(INCOME, ADJUSTMENT) (o CashRegisterLog si fuente=caja). Rechaza si la cuenta fue archivada o no hay caja abierta.',
+      'En UNA transacción: lockea la cuenta origen, acredita su balance, marca el gasto archived, registra FinancialMovement(INCOME, ADJUSTMENT) (o CashRegisterLog si fuente=caja). Rechaza si la cuenta fue archivada o no hay caja abierta. Paridad PlacePos: usa POST /void, no DELETE.',
   })
   @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.NO_CONTENT })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Payload `{ voided: true }`.' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Gasto no encontrado' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
     description: 'Gasto ya anulado, cuenta archivada o sin caja abierta',
   })
-  async remove(
+  async void(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<void> {
-    await this.expensesService.softDelete(id, companyId, {
+  ): Promise<{ voided: true }> {
+    await this.expensesService.void(id, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
+    return { voided: true };
   }
 }

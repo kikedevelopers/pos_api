@@ -1,12 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { DataSource, Not } from 'typeorm';
 
 import type { UpdateTicketSettingDto } from '../dto/update-ticket-setting.dto';
-import { TicketSetting, TicketSettingType } from '../entities/ticket-setting.entity';
+import { TicketSetting } from '../entities/ticket-setting.entity';
 
 /**
- * Actualiza `prefix` y/o `suffix` de la configuración de folio de un
- * `(company_id, ticket_type)`. Endpoint `PUT /ticket-settings/:ticket_type`.
+ * Actualiza `prefix` y/o `suffix` de una `ticket_settings` por su id, dentro
+ * de la company autenticada. Endpoint `PUT /ticket-settings/:id` — espejo
+ * PlacePos.
  *
  * Reglas:
  *   - `current_number` NO se modifica vía este endpoint — solo lo cambia
@@ -16,21 +17,24 @@ import { TicketSetting, TicketSettingType } from '../entities/ticket-setting.ent
  *
  *   - `prefix`/`suffix` `null` o vacío se aceptan (sin prefix/suffix).
  *
- *   - 404 si no existe row para (company, ticket_type). En condiciones normales
- *     siempre debería existir (seed del registro). Si falta es un bug.
+ *   - 404 si no existe row con ese `id` dentro de la company (también si
+ *     existe pero pertenece a otra company — anti-IDOR cross-tenant).
+ *
+ *   - 422 si el `prefix` resultante ya está en uso por OTRA fila de la misma
+ *     company (UNIQUE soft a nivel app — PlacePos enforced este invariant).
  */
 @Injectable()
 export class UpdateTicketSettingAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(
-    ticketType: TicketSettingType,
+    id: number,
     dto: UpdateTicketSettingDto,
     companyId: number,
   ): Promise<TicketSetting> {
     return this.dataSource.transaction<TicketSetting>(async (manager) => {
       const existing = await manager.findOne(TicketSetting, {
-        where: { company_id: String(companyId), ticket_type: ticketType },
+        where: { id: String(id), company_id: String(companyId) },
       });
       if (!existing) {
         throw new NotFoundException('Configuración de folio no encontrada');
@@ -52,6 +56,28 @@ export class UpdateTicketSettingAction {
         return existing;
       }
 
+      // Validación de prefix duplicado dentro de la company. Solo aplica si
+      // el patch trae prefix no-nulo y distinto del actual.
+      if (
+        Object.prototype.hasOwnProperty.call(patch, 'prefix') &&
+        patch.prefix !== null &&
+        patch.prefix !== existing.prefix
+      ) {
+        const collision = await manager.findOne(TicketSetting, {
+          where: {
+            company_id: String(companyId),
+            prefix: patch.prefix,
+            id: Not(existing.id),
+          },
+        });
+        if (collision) {
+          throw new UnprocessableEntityException({
+            message: `El prefix "${patch.prefix}" ya está en uso por otra configuración de folio.`,
+            payload: { code: 'TICKET_PREFIX_DUPLICATE' },
+          });
+        }
+      }
+
       await manager.update(
         TicketSetting,
         { id: existing.id, company_id: String(companyId) },
@@ -59,7 +85,7 @@ export class UpdateTicketSettingAction {
       );
 
       return manager.findOneOrFail(TicketSetting, {
-        where: { company_id: String(companyId), ticket_type: ticketType },
+        where: { id: existing.id, company_id: String(companyId) },
       });
     });
   }

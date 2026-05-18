@@ -9,6 +9,7 @@ import type {
   BreakEvenProgressResult,
   ExpenseImpactResult,
   PerformanceResult,
+  TodayByCashierResult,
   TodayResult,
   TopProductItem,
 } from './dashboard.service';
@@ -93,5 +94,21 @@ export class DashboardController {
     @CurrentCompany() companyId: number,
   ): Promise<BreakEvenProgressResult> {
     return this.dashboardService.breakEvenProgress(companyId, query.date);
+  }
+
+  @Get('today-by-cashier')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary:
+      'Resumen del día agrupado por cajero: ventas, recaudo, abonos, ganancia y créditos generados.',
+    description:
+      'Espejo PlacePos: `cashiers` ordenado por `totalCollected` descendente, `totals` consolida. Acceso vetado para `employee` — es una vista global del equipo.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  todayByCashier(
+    @Query() query: DashboardDateQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<TodayByCashierResult> {
+    return this.dashboardService.todayByCashier(companyId, query.date);
   }
 }

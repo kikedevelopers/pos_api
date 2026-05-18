@@ -23,6 +23,11 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import {
+  ProductResponseDto,
+  toProductResponseDto,
+} from '@/modules/products/dto/product-response.dto';
+
 import { CreatePackagingDto } from './dto/create-packaging.dto';
 import {
   ArchivePackagingResponseDto,
@@ -129,5 +134,28 @@ export class PackagingsController {
   ): Promise<ArchivePackagingResponseDto> {
     await this.packagingsService.archive(id, companyId);
     return { archived: true };
+  }
+
+  /**
+   * `GET /packagings/:id/products` — Productos activos asociados al
+   * packaging. Espejo PlacePos § 29. Incluye relations `parent` y `packaging`.
+   * `category` se omite (no existe en pos_api Fase 3).
+   */
+  @Get(':id/products')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Listar productos asociados a un packaging',
+    description:
+      'Devuelve productos activos (`is_archived = false`) con `packaging_id = :id` en la company autenticada. Incluye relations `parent` y `packaging`.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK, type: [ProductResponseDto] })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Packaging no encontrado' })
+  async listProducts(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<ProductResponseDto[]> {
+    const products = await this.packagingsService.listProducts(id, companyId);
+    return products.map(toProductResponseDto);
   }
 }

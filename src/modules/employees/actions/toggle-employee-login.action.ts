@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 
 import { Employee } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
+import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
 import { findEmployeeInCompany } from '../internal/employee-lookups';
 
 /**
@@ -41,9 +42,15 @@ export class ToggleEmployeeLoginAction {
       const employee = await findEmployeeInCompany(manager, id, companyId);
 
       if (enabled === true && (!employee.username || !employee.password)) {
-        throw new UnprocessableEntityException(
-          'Debe configurar username y password antes de habilitar el login',
-        );
+        // 422 (no 400): el estado del employee es inconsistente con la
+        // operación, no la entrada. PlacePos también devuelve este código
+        // para el mismo escenario. El payload incluye `code: MISSING_CREDENTIALS`
+        // para que el cliente UI pueda mostrar el flujo correcto (asignar
+        // credenciales primero).
+        throw new UnprocessableEntityException({
+          message: 'Debe configurar username y password antes de habilitar el login',
+          payload: { code: 'MISSING_CREDENTIALS' },
+        });
       }
 
       try {
@@ -57,7 +64,30 @@ export class ToggleEmployeeLoginAction {
         throw error;
       }
 
-      return findEmployeeInCompany(manager, id, companyId);
+      const refreshed = await findEmployeeInCompany(manager, id, companyId);
+
+      // Side-effect del flujo OFF→ON: si el employee aún no tiene User
+      // espejo, lo materializamos AQUÍ (no esperamos al primer login). Esto
+      // permite que las acciones administrativas que tocan caja
+      // (set-cash-base, adjust-cash) funcionen inmediatamente tras habilitar
+      // el login, sin requerir que el employee haga login primero.
+      //
+      // Si `enabled = false`: NO se borra el user_id. La fila de `users`
+      // queda, y los `cash_register_log` / `financial_movement` históricos
+      // que apuntan a `users.id` permanecen consistentes. El employee no
+      // podrá volver a hacer login hasta que se re-habilite, pero su
+      // historia queda íntegra.
+      if (enabled === true && refreshed.user_id === null) {
+        await ensureMirrorUserForEmployee({
+          manager,
+          employee: refreshed,
+          companyId,
+        });
+        // ensureMirrorUserForEmployee mutó refreshed.user_id; lo devolvemos
+        // como está. Una segunda lectura sería redundante.
+      }
+
+      return refreshed;
     });
 
     // Audit log post-commit. Registra cambio de estado de login del employee.

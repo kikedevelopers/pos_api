@@ -24,8 +24,16 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import type { AdjustEmployeeCashResult, SetEmployeeCashBaseResult } from './employees.service';
+import { AdjustCashDto } from './dto/adjust-cash.dto';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
-import { EmployeeResponseDto, toEmployeeResponseDto } from './dto/employee-response.dto';
+import {
+  EmployeeDetailResponseDto,
+  EmployeeResponseDto,
+  toEmployeeDetailResponseDto,
+  toEmployeeResponseDto,
+} from './dto/employee-response.dto';
+import { SetCashBaseDto } from './dto/set-cash-base.dto';
 import { ToggleLoginDto } from './dto/toggle-login.dto';
 import { UpdateCredentialsDto } from './dto/update-credentials.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
@@ -57,6 +65,25 @@ export class EmployeesController {
   async findAll(@CurrentCompany() companyId: number): Promise<EmployeeResponseDto[]> {
     const employees = await this.employeesService.findAll(companyId);
     return employees.map(toEmployeeResponseDto);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary: 'Detalle de un employee + datos de su caja registradora',
+    description:
+      'Devuelve el employee + `cash_balance` y `base_amount` del turno abierto (0/0 si no tiene turno abierto). Paridad PlacePos `GET /employees/:id`.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.OK, type: EmployeeDetailResponseDto })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<EmployeeDetailResponseDto> {
+    const result = await this.employeesService.findOne(id, companyId);
+    return toEmployeeDetailResponseDto(result);
   }
 
   @Post()
@@ -179,5 +206,61 @@ export class EmployeesController {
       currentUser.user_id,
     );
     return toEmployeeResponseDto(employee);
+  }
+
+  @Put(':id/cash-register/base')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Fijar `base_amount` (fondo fijo) de la caja del empleado',
+    description:
+      'Persiste el base_amount de la caja PERMANENTE del empleado (`cash_registers.base_amount`). NO genera movimiento financiero — es solo configuración. 400 si negativo o si el empleado no tiene login habilitado.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: SetCashBaseDto })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido o sin login' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'El empleado no tiene caja abierta',
+  })
+  async setCashBase(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetCashBaseDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<SetEmployeeCashBaseResult> {
+    return this.employeesService.setCashBase(id, dto.base_amount, companyId);
+  }
+
+  @Post(':id/cash-register/adjust')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Ajuste administrativo del balance de la caja del empleado',
+    description:
+      'Define cuánto DEBE quedar la caja. Calcula diff = target - current, registra CashRegisterLog (IN/OUT, affects_balance=true) y FinancialMovement (INCOME/EXPENSE, concept=ADJUSTMENT). Si diff = 0 es no-op idempotente.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: AdjustCashDto })
+  @ApiResponse({ status: HttpStatus.CREATED })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'El empleado no tiene caja abierta',
+  })
+  async adjustCash(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AdjustCashDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<AdjustEmployeeCashResult> {
+    return this.employeesService.adjustCash(id, companyId, dto.target_balance, dto.reason, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
   }
 }

@@ -1,8 +1,21 @@
 import { Injectable } from '@nestjs/common';
 
+import {
+  AdjustEmployeeCashAction,
+  type AdjustEmployeeCashActor,
+  type AdjustEmployeeCashResult,
+} from './actions/adjust-employee-cash.action';
 import { CreateEmployeeAction, type EmployeeCreator } from './actions/create-employee.action';
 import { FindAllEmployeesAction } from './actions/find-all-employees.action';
+import {
+  FindEmployeeByIdAction,
+  type EmployeeWithCashRegister,
+} from './actions/find-employee-by-id.action';
 import { FindEmployeeByUsernameAction } from './actions/find-employee-by-username.action';
+import {
+  SetEmployeeCashBaseAction,
+  type SetEmployeeCashBaseResult,
+} from './actions/set-employee-cash-base.action';
 import { ToggleEmployeeLoginAction } from './actions/toggle-employee-login.action';
 import { UpdateEmployeeAction } from './actions/update-employee.action';
 import { UpdateEmployeeCredentialsAction } from './actions/update-employee-credentials.action';
@@ -12,6 +25,12 @@ import type { UpdateEmployeeDto } from './dto/update-employee.dto';
 import type { Employee } from './entities/employee.entity';
 
 export type { EmployeeCreator } from './actions/create-employee.action';
+export type { EmployeeWithCashRegister } from './actions/find-employee-by-id.action';
+export type {
+  AdjustEmployeeCashActor,
+  AdjustEmployeeCashResult,
+} from './actions/adjust-employee-cash.action';
+export type { SetEmployeeCashBaseResult } from './actions/set-employee-cash-base.action';
 
 /**
  * Facade delgado del dominio `employees`. ZERO lógica de negocio — solo
@@ -25,15 +44,22 @@ export type { EmployeeCreator } from './actions/create-employee.action';
 export class EmployeesService {
   constructor(
     private readonly findAllEmployeesAction: FindAllEmployeesAction,
+    private readonly findEmployeeByIdAction: FindEmployeeByIdAction,
     private readonly findEmployeeByUsernameAction: FindEmployeeByUsernameAction,
     private readonly createEmployeeAction: CreateEmployeeAction,
     private readonly updateEmployeeAction: UpdateEmployeeAction,
     private readonly updateEmployeeCredentialsAction: UpdateEmployeeCredentialsAction,
     private readonly toggleEmployeeLoginAction: ToggleEmployeeLoginAction,
+    private readonly setEmployeeCashBaseAction: SetEmployeeCashBaseAction,
+    private readonly adjustEmployeeCashAction: AdjustEmployeeCashAction,
   ) {}
 
   findAll(companyId: number): Promise<Employee[]> {
     return this.findAllEmployeesAction.execute(companyId);
+  }
+
+  findOne(id: number, companyId: number): Promise<EmployeeWithCashRegister> {
+    return this.findEmployeeByIdAction.execute(id, companyId);
   }
 
   findByUsername(username: string): Promise<Employee | null> {
@@ -59,5 +85,23 @@ export class EmployeesService {
 
   toggleLogin(id: number, enabled: boolean, companyId: number, actorId: number): Promise<Employee> {
     return this.toggleEmployeeLoginAction.execute(id, enabled, companyId, actorId);
+  }
+
+  setCashBase(
+    id: number,
+    baseAmount: number,
+    companyId: number,
+  ): Promise<SetEmployeeCashBaseResult> {
+    return this.setEmployeeCashBaseAction.execute(id, baseAmount, companyId);
+  }
+
+  adjustCash(
+    id: number,
+    companyId: number,
+    targetBalance: number,
+    reason: string | undefined,
+    actor: AdjustEmployeeCashActor,
+  ): Promise<AdjustEmployeeCashResult> {
+    return this.adjustEmployeeCashAction.execute(id, companyId, targetBalance, reason, actor);
   }
 }

@@ -15,7 +15,6 @@ import {
   ApiBody,
   ApiOperation,
   ApiParam,
-  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -25,8 +24,8 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
-import type { SupplierChartsResponse } from './actions/get-supplier-charts.action';
 import type { SupplierPurchasesHistoryResponse } from './actions/get-supplier-purchases-history.action';
+import type { SuppliersAnalyticsResponse } from './actions/get-suppliers-analytics.action';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { ListSuppliersQueryDto } from './dto/list-suppliers-query.dto';
 import { SupplierResponseDto, toSupplierResponseDto } from './dto/supplier-response.dto';
@@ -39,8 +38,7 @@ import { SuppliersService } from './suppliers.service';
  *
  *   GET    /suppliers
  *   GET    /suppliers/:id
- *   GET    /suppliers/:id/purchases-history    (NUEVO — no existe en PlacePos local todavía)
- *   GET    /suppliers/:id/charts                (NUEVO — no existe en PlacePos local)
+ *   GET    /suppliers/:id/purchases-history    (placeholder — se completa en Fase 8)
  *   POST   /suppliers
  *   PUT    /suppliers/:id
  *   PUT    /suppliers/:id/archive
@@ -73,6 +71,19 @@ export class SuppliersController {
     return suppliers.map(toSupplierResponseDto);
   }
 
+  @Get('analytics')
+  // IMPORTANTE: ruta estática declarada ANTES de cualquier `:id/...` para
+  // que NestJS no la capture como un id.
+  @ApiOperation({
+    summary: 'Analíticas agregadas del módulo suppliers',
+    description:
+      'Devuelve suppliers_count, new_suppliers (mes actual), evolution { month_current, month_previous }, total_debt y total_credit_balance.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  async getAnalytics(@CurrentCompany() companyId: number): Promise<SuppliersAnalyticsResponse> {
+    return this.suppliersService.getAnalytics(companyId);
+  }
+
   @Get(':id/purchases-history')
   @ApiOperation({
     summary: 'Histórico de compras al proveedor',
@@ -87,27 +98,6 @@ export class SuppliersController {
     @CurrentCompany() companyId: number,
   ): Promise<SupplierPurchasesHistoryResponse> {
     return this.suppliersService.getPurchasesHistory(id, companyId);
-  }
-
-  @Get(':id/charts')
-  @ApiOperation({
-    summary: 'Serie temporal de compras al proveedor (chart)',
-    description:
-      'Placeholder en Fase 4 (points: []). Reemplazado en Fase 8 con CTE sobre purchases agrupada por día.',
-  })
-  @ApiParam({ name: 'id', type: 'integer', example: 1 })
-  @ApiQuery({ name: 'startDate', required: false, example: '2026-04-01' })
-  @ApiQuery({ name: 'endDate', required: false, example: '2026-05-01' })
-  @ApiResponse({ status: HttpStatus.OK })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Rango de fechas inválido' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Proveedor no encontrado' })
-  async getCharts(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentCompany() companyId: number,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ): Promise<SupplierChartsResponse> {
-    return this.suppliersService.getCharts(id, companyId, startDate, endDate);
   }
 
   @Get(':id')

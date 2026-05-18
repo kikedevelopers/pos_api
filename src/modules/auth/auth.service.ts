@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { CheckEmailAction } from './actions/check-email.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
 import { LoginAction } from './actions/login.action';
 import { RegisterAction } from './actions/register.action';
 import type { AuthResponseDto, AuthUserDto, ProfileResponseDto } from './dto/auth-response.dto';
+import type { CheckEmailDto, CheckEmailResponseDto } from './dto/check-email.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 
@@ -25,6 +27,7 @@ export class AuthService {
     private readonly loginAction: LoginAction,
     private readonly getMeAction: GetMeAction,
     private readonly getProfileAction: GetProfileAction,
+    private readonly checkEmailAction: CheckEmailAction,
   ) {}
 
   register(dto: RegisterDto): Promise<AuthResponseDto> {
@@ -41,5 +44,9 @@ export class AuthService {
 
   getProfile(authUser: AuthUser): Promise<ProfileResponseDto> {
     return this.getProfileAction.execute(authUser);
+  }
+
+  checkEmail(dto: CheckEmailDto): Promise<CheckEmailResponseDto> {
+    return this.checkEmailAction.execute(dto);
   }
 }

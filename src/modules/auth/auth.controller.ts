@@ -8,6 +8,7 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { AuthService } from './auth.service';
 import { AuthResponseDto, AuthUserDto, ProfileResponseDto } from './dto/auth-response.dto';
+import { CheckEmailDto, CheckEmailResponseDto } from './dto/check-email.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
@@ -43,6 +44,27 @@ export class AuthController {
   })
   register(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
     return this.authService.register(dto);
+  }
+
+  @Post('check/email')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  // Throttle propio: el frontend lo llama mientras el usuario tipea el email
+  // en el formulario. 30/min es generoso para UX y suficiente para frenar un
+  // intento de enumeración masiva (el atacante aún tendría que pasar el
+  // throttler global de 100/min).
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Verificar si un email ya está registrado',
+    description:
+      'Cross-company por diseño: `users.email` es UNIQUE GLOBAL. Devuelve `{ exists: boolean }`.',
+  })
+  @ApiBody({ type: CheckEmailDto })
+  @ApiResponse({ status: HttpStatus.OK, type: CheckEmailResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Email inválido' })
+  @ApiResponse({ status: HttpStatus.TOO_MANY_REQUESTS, description: 'Rate limit' })
+  checkEmail(@Body() dto: CheckEmailDto): Promise<CheckEmailResponseDto> {
+    return this.authService.checkEmail(dto);
   }
 
   @Post('user')

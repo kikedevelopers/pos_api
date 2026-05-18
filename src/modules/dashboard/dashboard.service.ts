@@ -10,12 +10,17 @@ import {
 } from './actions/get-expense-impact.action';
 import { GetPerformanceAction, type PerformanceResult } from './actions/get-performance.action';
 import { GetTodayAction, type TodayResult } from './actions/get-today.action';
+import {
+  GetTodayByCashierAction,
+  type TodayByCashierResult,
+} from './actions/get-today-by-cashier.action';
 import { GetTopProductsAction, type TopProductItem } from './actions/get-top-products.action';
 
 export type {
   BreakEvenProgressResult,
   ExpenseImpactResult,
   PerformanceResult,
+  TodayByCashierResult,
   TodayResult,
   TopProductItem,
 };
@@ -32,6 +37,7 @@ export class DashboardService {
     private readonly getExpenseImpact: GetExpenseImpactAction,
     private readonly getTopProducts: GetTopProductsAction,
     private readonly getBreakEvenProgress: GetBreakEvenProgressAction,
+    private readonly getTodayByCashier: GetTodayByCashierAction,
   ) {}
 
   performance(companyId: number, from?: string, to?: string): Promise<PerformanceResult> {
@@ -52,5 +58,9 @@ export class DashboardService {
 
   breakEvenProgress(companyId: number, date?: string): Promise<BreakEvenProgressResult> {
     return this.getBreakEvenProgress.execute(companyId, date);
+  }
+
+  todayByCashier(companyId: number, date?: string): Promise<TodayByCashierResult> {
+    return this.getTodayByCashier.execute(companyId, date);
   }
 }

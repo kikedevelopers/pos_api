@@ -7,6 +7,7 @@ import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
 import type { UpdateCredentialsDto } from '../dto/update-credentials.dto';
 import { Employee } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
+import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
 import { findEmployeeInCompany } from '../internal/employee-lookups';
 
 /**
@@ -68,7 +69,25 @@ export class UpdateEmployeeCredentialsAction {
         throw error;
       }
 
-      return findEmployeeInCompany(manager, id, companyId);
+      const refreshed = await findEmployeeInCompany(manager, id, companyId);
+
+      // Sincronizar el User espejo si ya existe. Cambios a propagar:
+      //   - username  → email del espejo (`${newUsername}.${companyId}@local.placepos`).
+      //   - password  → hash del espejo (REUSO del hash recién generado).
+      //
+      // Si el employee aún NO tiene espejo (login no se ha activado nunca),
+      // NO lo creamos aquí — solo se crea cuando login_enabled pasa a true
+      // (toggle) o al crear el employee con login. Esto evita crear espejos
+      // huérfanos cuando el owner solo está pre-configurando credenciales.
+      if (refreshed.user_id !== null && refreshed.username && refreshed.password) {
+        await ensureMirrorUserForEmployee({
+          manager,
+          employee: refreshed,
+          companyId,
+        });
+      }
+
+      return refreshed;
     });
 
     // Audit log post-commit. NO incluimos username/password/hash — solo IDs y

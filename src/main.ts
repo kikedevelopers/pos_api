@@ -35,13 +35,17 @@ async function bootstrap(): Promise<void> {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
   });
 
-  // Prefijo global (ej: /api/v1).
-  app.setGlobalPrefix(appConfig.apiPrefix);
+  // Prefijo global. Por defecto vacío — el cliente PlacePos llama al API en
+  // raíz (`/sales`, `/auth/user`, ...). Si `API_PREFIX` se define en env
+  // (escenarios donde un reverse proxy quiere segmentar), lo aplicamos.
+  if (appConfig.apiPrefix !== '') {
+    app.setGlobalPrefix(appConfig.apiPrefix);
+  }
 
-  // Versionado URI (preparado para futuros saltos: v1, v2…).
-  // El prefijo global `api/v1` ya provee la versión por path; no fijamos
-  // `defaultVersion` para que los controllers sin `@Version()` queden sin
-  // segmento adicional.
+  // Versionado URI disponible pero INACTIVO por default. Para introducir un
+  // contrato `/v2/...` futuro sin breaking change basta con poner
+  // `@Version('2')` en los controllers nuevos. Sin `defaultVersion`, los
+  // controllers actuales quedan en raíz.
   app.enableVersioning({
     type: VersioningType.URI,
   });
@@ -98,9 +102,10 @@ async function bootstrap(): Promise<void> {
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    // Decisión: el path es relativo al prefijo global → `${apiPrefix}/docs`.
-    // Para `api/v1` queda `/api/v1/docs`. Coherente con el resto de endpoints.
-    SwaggerModule.setup(`${appConfig.apiPrefix}/docs`, app, document, {
+    // Docs siempre disponibles en `/docs`. Si en el futuro se vuelve a fijar
+    // un prefix por env, prefijamos para mantener coherencia con el resto.
+    const docsPath = appConfig.apiPrefix !== '' ? `${appConfig.apiPrefix}/docs` : 'docs';
+    SwaggerModule.setup(docsPath, app, document, {
       swaggerOptions: {
         persistAuthorization: true,
       },
@@ -110,13 +115,12 @@ async function bootstrap(): Promise<void> {
   await app.listen(appConfig.port);
 
   const logger = app.get(Logger);
-  logger.log(
-    `POS API escuchando en http://localhost:${appConfig.port}/${appConfig.apiPrefix} (env: ${appConfig.nodeEnv})`,
-  );
+  const baseUrl = `http://localhost:${appConfig.port}${
+    appConfig.apiPrefix !== '' ? `/${appConfig.apiPrefix}` : ''
+  }`;
+  logger.log(`POS API escuchando en ${baseUrl} (env: ${appConfig.nodeEnv})`);
   if (appConfig.swaggerEnabled) {
-    logger.log(
-      `Swagger disponible en http://localhost:${appConfig.port}/${appConfig.apiPrefix}/docs`,
-    );
+    logger.log(`Swagger disponible en ${baseUrl}/docs`);
   }
 }
 

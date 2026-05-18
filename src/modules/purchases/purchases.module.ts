@@ -12,14 +12,15 @@ import { SuppliersModule } from '@/modules/suppliers/suppliers.module';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
+import { ArchivePurchaseAction } from './actions/archive-purchase.action';
 import { CreatePurchaseAction } from './actions/create-purchase.action';
 import { FindAllPurchasesAction } from './actions/find-all-purchases.action';
 import { FindPurchaseAction } from './actions/find-purchase.action';
 import { FindPurchasesBySupplierAction } from './actions/find-purchases-by-supplier.action';
-import { ListPurchasePaymentsAction } from './actions/list-purchase-payments.action';
 import { MarkPurchaseReceivedAction } from './actions/mark-purchase-received.action';
+import { ProcessBulkPurchasePaymentsAction } from './actions/process-bulk-purchase-payments.action';
 import { RegisterPurchasePaymentAction } from './actions/register-purchase-payment.action';
-import { SoftDeletePurchaseAction } from './actions/soft-delete-purchase.action';
+import { UpdatePurchaseAction } from './actions/update-purchase.action';
 import { PurchaseCredit } from './entities/purchase-credit.entity';
 import { PurchaseLine } from './entities/purchase-line.entity';
 import { PurchasePayment } from './entities/purchase-payment.entity';
@@ -71,10 +72,11 @@ import { PurchasesService } from './purchases.service';
     FindPurchaseAction,
     FindPurchasesBySupplierAction,
     CreatePurchaseAction,
+    UpdatePurchaseAction,
     MarkPurchaseReceivedAction,
-    SoftDeletePurchaseAction,
+    ArchivePurchaseAction,
     RegisterPurchasePaymentAction,
-    ListPurchasePaymentsAction,
+    ProcessBulkPurchasePaymentsAction,
   ],
   exports: [PurchasesService, TypeOrmModule],
 })

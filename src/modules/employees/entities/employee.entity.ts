@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 
 import { Company } from '@/modules/companies/entities/company.entity';
+import { User } from '@/modules/users/entities/user.entity';
 
 /**
  * Roles operativos de un empleado dentro de una company.
@@ -166,6 +167,29 @@ export class Employee {
    */
   @Column({ type: 'bigint', nullable: true })
   created_by_id!: string | null;
+
+  /**
+   * FK al `User` espejo (`users.type='employee'`) que representa a este
+   * Employee para los modelos atados a `users.id` (cash_register,
+   * cash_register_log, financial_movement.created_by_id).
+   *
+   * Se crea on-demand en login/create/toggle-login. NULL hasta el primer
+   * login (o hasta que el owner habilite el login del Employee).
+   *
+   * UNIQUE parcial `(user_id) WHERE user_id IS NOT NULL`: un User es
+   * espejo de a lo más un Employee. Ver migración
+   * `1747010340000-add-user-id-to-employees.ts`.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  user_id!: string | null;
+
+  @ManyToOne(() => User, {
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'user_id' })
+  user!: User | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

@@ -4,8 +4,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateSupplierAction } from './actions/create-supplier.action';
 import { FindAllSuppliersAction } from './actions/find-all-suppliers.action';
 import { FindSupplierAction } from './actions/find-supplier.action';
-import { GetSupplierChartsAction } from './actions/get-supplier-charts.action';
 import { GetSupplierPurchasesHistoryAction } from './actions/get-supplier-purchases-history.action';
+import { GetSuppliersAnalyticsAction } from './actions/get-suppliers-analytics.action';
 import { ToggleSupplierArchiveAction } from './actions/toggle-supplier-archive.action';
 import { UpdateSupplierAction } from './actions/update-supplier.action';
 import { Supplier } from './entities/supplier.entity';
@@ -30,7 +30,7 @@ import { SuppliersService } from './suppliers.service';
     UpdateSupplierAction,
     ToggleSupplierArchiveAction,
     GetSupplierPurchasesHistoryAction,
-    GetSupplierChartsAction,
+    GetSuppliersAnalyticsAction,
   ],
   exports: [SuppliersService, TypeOrmModule],
 })

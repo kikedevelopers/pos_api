@@ -1,20 +1,26 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { GetCurrentCompanyAction } from './actions/get-current-company.action';
+import { UpdateCompanyAction } from './actions/update-company.action';
+import { CompaniesController } from './companies.controller';
+import { CompaniesService } from './companies.service';
 import { Company } from './entities/company.entity';
 
 /**
- * Módulo `companies` — esqueleto.
+ * Módulo `companies`.
  *
- * TODO(Fase futura del dominio `companies`): añadir `CompaniesService`,
- * `CompaniesController` y los endpoints `GET /companies` y `PUT /companies`
- * espejados del PlacePos cuando llegue el módulo en su fase.
+ * Expone:
+ *   - `GET /companies`         → company autenticada (del JWT).
+ *   - `PUT /companies/:id`     → update de la company autenticada.
  *
- * Por ahora exporta solo el repo de `Company` para que `AuthModule` pueda
- * inyectarlo y crear la company durante `POST /auth/register`.
+ * Exporta `TypeOrmModule` para que `AuthModule` siga pudiendo inyectar el
+ * repo de `Company` durante `POST /auth/register`.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Company])],
+  controllers: [CompaniesController],
+  providers: [CompaniesService, GetCurrentCompanyAction, UpdateCompanyAction],
   exports: [TypeOrmModule],
 })
 export class CompaniesModule {}

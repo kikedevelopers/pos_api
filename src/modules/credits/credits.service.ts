@@ -1,19 +1,28 @@
 import { Injectable } from '@nestjs/common';
 
-import { ListAllCreditsAction, type ListAllCreditsResult } from './actions/list-all-credits.action';
-import type { ListCreditsQueryDto } from './dto/list-credits-query.dto';
-
-export type { ListAllCreditsResult } from './actions/list-all-credits.action';
+import type { ProcessCreditPaymentDto } from './dto/process-credit-payment.dto';
+import {
+  ProcessCreditPaymentAction,
+  type CreditPaymentActor,
+  type ProcessCreditPaymentResult,
+} from './actions/process-credit-payment.action';
 
 /**
- * Facade del módulo `credits` (agregador). Sin estado — solo delega a la
- * action que ejecuta el UNION ALL.
+ * Facade del módulo `credits`. Sin lógica — solo delega en `actions/`.
+ *
+ * Único método público:
+ *   - `processCreditPayment` → `POST /credits` (paridad PlacePos
+ *     `processCreditPayment`).
  */
 @Injectable()
 export class CreditsService {
-  constructor(private readonly listAllCreditsAction: ListAllCreditsAction) {}
+  constructor(private readonly processCreditPaymentAction: ProcessCreditPaymentAction) {}
 
-  listAll(companyId: number, query: ListCreditsQueryDto): Promise<ListAllCreditsResult> {
-    return this.listAllCreditsAction.execute(companyId, query);
+  processCreditPayment(
+    dto: ProcessCreditPaymentDto,
+    companyId: number,
+    actor: CreditPaymentActor,
+  ): Promise<ProcessCreditPaymentResult> {
+    return this.processCreditPaymentAction.execute(dto, companyId, actor);
   }
 }

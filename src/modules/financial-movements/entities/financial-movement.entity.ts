@@ -32,6 +32,12 @@ export enum MovementType {
  * agrega `ADJUSTMENT`, `CREDIT_PAYMENT`, `CREDIT_NOTE_REFUND` para
  * cubrir flujos del cloud (los frontends futuros pueden ignorarlos sin
  * romper paridad).
+ *
+ * `REFUND` y `SALE_PAYMENT` se añaden vía migración
+ * `1747010460000-extend-movement-concept-enum` para mantener paridad
+ * con PlacePos. Los callers actuales que usan `ADJUSTMENT`/`CREDIT_PAYMENT`
+ * NO se migran automáticamente — la semántica de cada caso (sobrante de
+ * caja vs devolución vs abono a cartera) se decide caller por caller.
  */
 export enum MovementConcept {
   SALE = 'SALE',
@@ -42,6 +48,8 @@ export enum MovementConcept {
   ADJUSTMENT = 'ADJUSTMENT',
   CREDIT_PAYMENT = 'CREDIT_PAYMENT',
   CREDIT_NOTE_REFUND = 'CREDIT_NOTE_REFUND',
+  REFUND = 'REFUND',
+  SALE_PAYMENT = 'SALE_PAYMENT',
 }
 
 /**

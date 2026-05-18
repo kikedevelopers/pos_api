@@ -3,10 +3,12 @@ import { Injectable } from '@nestjs/common';
 import { ArchivePackagingAction } from './actions/archive-packaging.action';
 import { CreatePackagingAction, type PackagingCreator } from './actions/create-packaging.action';
 import { FindAllPackagingsAction } from './actions/find-all-packagings.action';
+import { ListProductsByPackagingAction } from './actions/list-products-by-packaging.action';
 import { UpdatePackagingAction } from './actions/update-packaging.action';
 import type { CreatePackagingDto } from './dto/create-packaging.dto';
 import type { UpdatePackagingDto } from './dto/update-packaging.dto';
 import type { Packaging } from './entities/packaging.entity';
+import type { Product } from '@/modules/products/entities/product.entity';
 
 export type { PackagingCreator } from './actions/create-packaging.action';
 
@@ -24,6 +26,7 @@ export class PackagingsService {
     private readonly createPackagingAction: CreatePackagingAction,
     private readonly updatePackagingAction: UpdatePackagingAction,
     private readonly archivePackagingAction: ArchivePackagingAction,
+    private readonly listProductsByPackagingAction: ListProductsByPackagingAction,
   ) {}
 
   findAll(companyId: number): Promise<Packaging[]> {
@@ -44,5 +47,9 @@ export class PackagingsService {
 
   archive(id: number, companyId: number): Promise<void> {
     return this.archivePackagingAction.execute(id, companyId);
+  }
+
+  listProducts(packagingId: number, companyId: number): Promise<Product[]> {
+    return this.listProductsByPackagingAction.execute(packagingId, companyId);
   }
 }

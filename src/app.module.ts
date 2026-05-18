@@ -24,7 +24,11 @@ import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { BanksModule } from './modules/banks/banks.module';
+import { CarrierPaymentsModule } from './modules/carrier-payments/carrier-payments.module';
+import { CarriersModule } from './modules/carriers/carriers.module';
 import { CashRegisterModule } from './modules/cash-register/cash-register.module';
+import { CashSourcesModule } from './modules/cash-sources/cash-sources.module';
+import { CategoriesModule } from './modules/categories/categories.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
 import { CreditsModule } from './modules/credits/credits.module';
@@ -37,6 +41,7 @@ import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PosDataModule } from './modules/pos-data/pos-data.module';
 import { PosReportsModule } from './modules/pos-reports/pos-reports.module';
+import { ProductHistoryModule } from './modules/product-history/product-history.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -160,15 +165,26 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     EmployeesModule,
     // Fase 3 — Catálogo.
     PackagingsModule,
+    // Fase 2A — Categorías (debe declararse antes de ProductsModule para que
+    // la FK products.category_id apunte a una tabla ya migrada; en runtime
+    // Nest no impone orden, pero conservamos coherencia conceptual).
+    CategoriesModule,
     ProductsModule,
+    // Fase 2A — Historial de costo/precio de productos (rutas absolutas
+    // /products/:id/cost-history y /product-prices/:id/price-history).
+    ProductHistoryModule,
     // Fase 4 — Personas externas.
     CustomersModule,
     SuppliersModule,
+    // Fase 2A — Transportistas (carriers + carrier-credits + analytics).
+    CarriersModule,
     // Fase 5 — Cuentas y caja.
     FinancialMovementsModule,
     BanksModule,
     WalletsModule,
     CashRegisterModule,
+    // Fase 2A — Fuentes de efectivo (wallets + banks + caja del usuario).
+    CashSourcesModule,
     AccountsModule,
     // Fase 6 — Ventas.
     SalesModule,
@@ -176,6 +192,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CreditNotesModule,
     // Fase 8 — Compras.
     PurchasesModule,
+    // Fase 2A — Pagos a transportistas (depende de Carriers + Purchases +
+    // Banks/Wallets/CashRegister/FinancialMovements).
+    CarrierPaymentsModule,
     // Fase 9 — Gastos y agregadores (credits/payments dependen de Sales+Purchases).
     ExpensesModule,
     CreditsModule,

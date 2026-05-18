@@ -19,7 +19,10 @@ export interface AppConfig {
 export default registerAs<AppConfig>('app', () => ({
   nodeEnv: (process.env.NODE_ENV ?? 'development') as AppConfig['nodeEnv'],
   port: parseInt(process.env.PORT ?? '3000', 10),
-  apiPrefix: process.env.API_PREFIX ?? 'api/v1',
+  // Por defecto SIN prefix global. El cliente PlacePos llama a `/sales`,
+  // `/auth/user`, etc. en raíz. Mantenemos `API_PREFIX` env por compatibilidad
+  // operativa: si alguien necesita servir el API en un sub-path lo activa.
+  apiPrefix: process.env.API_PREFIX ?? '',
   logLevel: process.env.LOG_LEVEL ?? 'info',
   corsOrigins: (process.env.CORS_ORIGINS ?? '')
     .split(',')

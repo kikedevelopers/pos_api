@@ -8,17 +8,18 @@ import { CreateExpenseAction } from '../actions/create-expense.action';
 import type { CreateExpenseDto } from '../dto/create-expense.dto';
 
 /**
- * Tests unitarios de `CreateExpenseAction`. Cubrimos:
+ * Tests unitarios de `CreateExpenseAction` adaptados al modelo PERMANENTE de
+ * `cash_registers`. La caja se resuelve por `(company_id, user_id)` con
+ * UPDATE de balance + INSERT log `EXPENSE`.
  *
- *   1. Camino feliz pagado desde un banco: debita balance, inserta Expense,
- *      registra FinancialMovement(EXPENSE, EXPENSE).
- *   2. Camino feliz pagado desde caja: NO inserta FinancialMovement (el
- *      CashRegisterLog cumple la función — paridad PlacePos).
+ * Escenarios cubiertos:
+ *   1. Camino feliz desde banco.
+ *   2. Camino feliz desde caja: UPDATE balance + INSERT log EXPENSE; sin FM.
  *   3. Saldo insuficiente → 422.
- *   4. Cuenta de otra company → 404 (multi-tenant aislamiento).
+ *   4. Cuenta de otra company → 404.
  *   5. amount <= 0 → 422.
- *   6. Toda la operación ocurre dentro de UNA transacción.
- *   7. Big.js: 0.1 + 0.2 sin error IEEE 754.
+ *   6. UNA transacción.
+ *   7. Big.js precision.
  */
 describe('CreateExpenseAction', () => {
   let action: CreateExpenseAction;
@@ -50,7 +51,7 @@ describe('CreateExpenseAction', () => {
   >;
   let cashRegisters: Map<
     string,
-    { id: string; company_id: string; status: string; opening_balance: number }
+    { id: string; company_id: string; user_id: string; balance: number; base_amount: number }
   >;
 
   beforeEach(async () => {
@@ -88,13 +89,10 @@ describe('CreateExpenseAction', () => {
             return Promise.resolve(wallet);
           }
           if (entityName === 'CashRegister') {
-            // requireOpenCashRegisterForUpdate filtra por company_id + status='OPEN'.
-            for (const cr of cashRegisters.values()) {
-              if (cr.company_id === String(where.company_id) && cr.status === 'OPEN') {
-                return Promise.resolve(cr);
-              }
-            }
-            return Promise.resolve(null);
+            // Modelo PERMANENTE: lookup por (company_id, user_id).
+            const key = `${String(where.company_id)}|${String(where.user_id)}`;
+            const cr = cashRegisters.get(key);
+            return Promise.resolve(cr ?? null);
           }
           return Promise.resolve(null);
         },
@@ -141,6 +139,20 @@ describe('CreateExpenseAction', () => {
               wallets.set(key, { ...wallet, balance: patch.balance });
             }
           }
+          if (entityName === 'CashRegister') {
+            for (const [key, cr] of cashRegisters.entries()) {
+              if (cr.id === String(where.id) && cr.company_id === String(where.company_id)) {
+                cashRegisters.set(key, {
+                  ...cr,
+                  ...(typeof patch.balance === 'number' ? { balance: patch.balance } : {}),
+                  ...(typeof patch.base_amount === 'number'
+                    ? { base_amount: patch.base_amount }
+                    : {}),
+                });
+                break;
+              }
+            }
+          }
           return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
         },
       ),
@@ -184,12 +196,18 @@ describe('CreateExpenseAction', () => {
       is_archived: false,
     });
   }
-  function seedOpenCashRegister(id: number, companyId: number, openingBalance: number): void {
-    cashRegisters.set(String(id), {
+  function seedCashRegisterForUser(
+    id: number,
+    companyId: number,
+    userId: number,
+    balance: number,
+  ): void {
+    cashRegisters.set(`${companyId}|${userId}`, {
       id: String(id),
       company_id: String(companyId),
-      status: 'OPEN',
-      opening_balance: openingBalance,
+      user_id: String(userId),
+      balance,
+      base_amount: 0,
     });
   }
 
@@ -206,11 +224,9 @@ describe('CreateExpenseAction', () => {
 
     const expense = await action.execute(baseDto(), 42, { id: 7, fullName: 'Kike Pacheco' });
 
-    // 1. Bank balance: 1000 - 150 = 850.
     const bankUpdate = updates.find((u) => u.entity === 'Bank');
     expect(bankUpdate?.patch.balance).toBe(850);
 
-    // 2. Expense creado con company_id, source_name snapshot, amount preciso.
     const expenseCreate = creates.find((c) => c.entity === 'Expense');
     expect(expenseCreate?.input.company_id).toBe('42');
     expect(expenseCreate?.input.amount).toBe(150);
@@ -221,7 +237,6 @@ describe('CreateExpenseAction', () => {
     expect(expenseCreate?.input.is_archived).toBe(false);
     expect(Number(expense.id)).toBe(300);
 
-    // 3. FinancialMovement (EXPENSE, EXPENSE) con source bank.
     expect(recordSpy).toHaveBeenCalledTimes(1);
     const calls = recordSpy.mock.calls as Array<[unknown, Record<string, unknown>]>;
     const fmArgs = calls[0]?.[1];
@@ -236,28 +251,33 @@ describe('CreateExpenseAction', () => {
     expect(fmArgs.destination_type).toBeUndefined();
   });
 
-  it('desde caja: inserta CashRegisterLog y NO FinancialMovement (paridad PlacePos)', async () => {
-    seedOpenCashRegister(10, 42, 1000);
+  it('desde caja: UPDATE balance + INSERT log EXPENSE; NO FinancialMovement (paridad PlacePos)', async () => {
+    // user_id 7 → caja id=10 con balance 1000.
+    seedCashRegisterForUser(10, 42, 7, 1000);
 
-    await action.execute(
-      baseDto({ source_type: 'cash_register', source_id: 10, amount: 200 }),
-      42,
-      { id: 7, fullName: 'O' },
-    );
+    await action.execute(baseDto({ source_type: 'cash_register', source_id: 0, amount: 200 }), 42, {
+      id: 7,
+      fullName: 'O',
+    });
 
+    // 1. UPDATE balance → 800.
+    const crUpdate = updates.find((u) => u.entity === 'CashRegister');
+    expect(crUpdate?.patch.balance).toBe(800);
+
+    // 2. Log EXPENSE OUT.
     const logSave = saves.find((s) => s.entity === 'CashRegisterLog');
     expect(logSave).toBeDefined();
-    expect(logSave?.payload.type).toBe('CASH_OUT');
+    expect(logSave?.payload.type).toBe('EXPENSE');
     expect(logSave?.payload.direction).toBe('OUT');
     expect(logSave?.payload.amount).toBe(200);
     expect(logSave?.payload.affects_balance).toBe(true);
     expect(logSave?.payload.company_id).toBe('42');
     expect(logSave?.payload.cash_register_id).toBe('10');
 
-    // El cash_register no genera FinancialMovement (paridad PlacePos).
+    // 3. NO se crea FinancialMovement (paridad PlacePos).
     expect(recordSpy).not.toHaveBeenCalled();
 
-    // Expense queda con source_name='Caja' y source_id resuelto al turno abierto.
+    // 4. Expense queda con source resuelto al id de la caja del actor.
     const expenseCreate = creates.find((c) => c.entity === 'Expense');
     expect(expenseCreate?.input.source_type).toBe('cash_register');
     expect(expenseCreate?.input.source_id).toBe('10');
@@ -271,13 +291,12 @@ describe('CreateExpenseAction', () => {
       action.execute(baseDto({ amount: 500 }), 42, { id: 7, fullName: 'O' }),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
 
-    // No debe haberse insertado Expense ni movimiento.
     expect(saves.find((s) => s.entity === 'Expense')).toBeUndefined();
     expect(recordSpy).not.toHaveBeenCalled();
   });
 
   it('cuenta de otra company → 404 (aislamiento multi-tenant)', async () => {
-    seedBank(1, 99, 1000); // banco existe pero en company 99
+    seedBank(1, 99, 1000);
 
     await expect(
       action.execute(baseDto({ source_id: 1 }), 42, { id: 7, fullName: 'O' }),
@@ -308,7 +327,6 @@ describe('CreateExpenseAction', () => {
     });
 
     const walletUpdate = updates.find((u) => u.entity === 'Wallet');
-    // 0.3 - 0.1 = 0.2 exacto (sin IEEE 754).
     expect(walletUpdate?.patch.balance).toBe(0.2);
   });
 });

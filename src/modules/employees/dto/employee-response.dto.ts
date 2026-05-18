@@ -2,6 +2,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import { Employee, EmployeeRole } from '@/modules/employees/entities/employee.entity';
 
+import type { EmployeeWithCashRegister } from '../actions/find-employee-by-id.action';
+
 /**
  * Shape de respuesta del módulo employees. Espejo byte-a-byte del payload
  * que sirve `employees.routes.ts` en PlacePos, con los siguientes detalles:
@@ -93,5 +95,38 @@ export function toEmployeeResponseDto(employee: Employee): EmployeeResponseDto {
     is_archived: employee.is_archived,
     created_by: employee.created_by,
     created_at: employee.created_at.toISOString(),
+  };
+}
+
+/**
+ * Shape de `GET /employees/:id` — extiende `EmployeeResponseDto` con los
+ * datos de la caja del empleado. Espejo PlacePos: `cash_balance` y
+ * `base_amount` como campos top-level.
+ *
+ * Si el empleado no tiene caja, ambos valores son 0.
+ */
+export class EmployeeDetailResponseDto extends EmployeeResponseDto {
+  @ApiProperty({
+    example: 75000,
+    description:
+      'Balance corriente de la caja PERMANENTE (`cash_registers.balance`). 0 si el empleado no tiene caja.',
+  })
+  cash_balance!: number;
+
+  @ApiProperty({
+    example: 50000,
+    description:
+      'Fondo fijo (`base_amount`) de la caja PERMANENTE del empleado. 0 si no tiene caja.',
+  })
+  base_amount!: number;
+}
+
+export function toEmployeeDetailResponseDto(
+  result: EmployeeWithCashRegister,
+): EmployeeDetailResponseDto {
+  return {
+    ...toEmployeeResponseDto(result.employee),
+    cash_balance: result.cash_balance,
+    base_amount: result.base_amount,
   };
 }

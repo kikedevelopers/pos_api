@@ -1,28 +1,32 @@
-import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { ProcessCreditPaymentDto } from './dto/process-credit-payment.dto';
 import { CreditsService } from './credits.service';
-import { ListCreditsResponseDto } from './dto/credit-response.dto';
-import { ListCreditsQueryDto } from './dto/list-credits-query.dto';
 
 /**
- * Endpoints `/credits` — Fase 9. Agregador read-only que consolida
- * `sale_credits` + `purchase_credits` en una sola vista paginable.
+ * Endpoints `/credits` — paridad estricta PlacePos.
  *
- * **Divergencia documentada respecto a PlacePos**: en PlacePos local,
- * `/credits` es POST que recibe un payload de `processCreditPayment` (procesa
- * un pago de crédito). El cloud asume ese mismo path con semántica DIFERENTE:
- * GET agregador. La razón es que en multi-tenant el dashboard necesita listar
- * créditos consolidados sin tener que llamar dos endpoints distintos. El
- * endpoint POST de PlacePos `credits` se mantendrá deshabilitado o
- * reasignado cuando se implemente la Fase 10.
+ * PlacePos expone una sola ruta:
+ *   - `POST /credits` → `processCreditPayment` (abono a un SaleCredit).
  *
- * Roles: `owner`, `manager` (administradores ven créditos; los empleados
- * operativos no necesitan la vista consolidada — paridad con el panel
- * admin de PlacePos).
+ * Multi-tenancy: el `company_id` se inyecta vía `@CurrentCompany()` desde el
+ * JWT — nunca del payload ni query.
+ *
+ * Roles: `owner | manager | employee` (todos pueden registrar abonos desde el
+ * POS).
  */
 @ApiTags('credits')
 @ApiBearerAuth('bearer')
@@ -30,17 +34,60 @@ import { ListCreditsQueryDto } from './dto/list-credits-query.dto';
 export class CreditsController {
   constructor(private readonly creditsService: CreditsService) {}
 
-  @Get()
-  @Roles('owner', 'manager')
+  // --------------------------------------------------------------------------
+  // POST /credits
+  // --------------------------------------------------------------------------
+
+  @Post('/')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
-      'Listar todos los créditos (ventas + compras) de la company. Filtrable por type, status, customer, supplier, rango de fechas.',
+      'Registrar abono a un crédito de venta. Espejo PlacePos POST /credits (processCreditPayment).',
   })
-  @ApiResponse({ status: HttpStatus.OK, type: ListCreditsResponseDto })
-  async listAll(
-    @Query() query: ListCreditsQueryDto,
+  @ApiBody({ type: ProcessCreditPaymentDto })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Abono registrado correctamente.',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description:
+      'No se pudo procesar el abono (crédito inexistente, ya pagado, monto inválido, etc.).',
+  })
+  async processPayment(
+    @Body() dto: ProcessCreditPaymentDto,
     @CurrentCompany() companyId: number,
-  ): Promise<ListCreditsResponseDto> {
-    return this.creditsService.listAll(companyId, query);
+    @CurrentUser() user: AuthUser,
+  ): Promise<{
+    success: true;
+    message: string;
+    payment_id: number;
+    credit_status: string;
+    credit_balance: number;
+  }> {
+    const fullName = `${user.name} ${user.lastname}`.trim();
+    const result = await this.creditsService.processCreditPayment(dto, companyId, {
+      id: user.user_id,
+      fullName,
+    });
+
+    if (!result.success) {
+      // Paridad PlacePos: 422 con `{ success: false, error, payload: { code } }`.
+      // El `ResponseWrapperInterceptor` global aplica el envelope a partir de
+      // la HttpException — el `payload.code` permite al cliente discriminar.
+      throw new UnprocessableEntityException({
+        message: result.message,
+        payload: { code: result.code },
+      });
+    }
+
+    return {
+      success: true,
+      message: result.message,
+      payment_id: result.payment_id,
+      credit_status: result.credit_status,
+      credit_balance: result.credit_balance,
+    };
   }
 }

@@ -4,6 +4,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { BanksModule } from '@/modules/banks/banks.module';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
+import { CreditNote } from '@/modules/credit-notes/entities/credit-note.entity';
+import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { CustomersModule } from '@/modules/customers/customers.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
@@ -14,15 +16,15 @@ import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
-import { ConvertOrderToSaleAction } from './actions/convert-order-to-sale.action';
 import { CreateSaleAction } from './actions/create-sale.action';
 import { FindAllSalesAction } from './actions/find-all-sales.action';
 import { FindSaleAction } from './actions/find-sale.action';
-import { FindSalesByCustomerAction } from './actions/find-sales-by-customer.action';
-import { ListSalePaymentsAction } from './actions/list-sale-payments.action';
-import { RegisterSalePaymentAction } from './actions/register-sale-payment.action';
-import { SoftDeleteSaleAction } from './actions/soft-delete-sale.action';
+import { GetConsolidatedInvoiceAction } from './actions/get-consolidated-invoice.action';
+import { GetConsolidatedInvoiceUpToAction } from './actions/get-consolidated-invoice-upto.action';
+import { GetLastSaleAction } from './actions/get-last-sale.action';
+import { GetSaleCreditNoteAction } from './actions/get-sale-credit-note.action';
 import { UpdateSaleAction } from './actions/update-sale.action';
+import { VoidSaleAction } from './actions/void-sale.action';
 import { SaleCredit } from './entities/sale-credit.entity';
 import { SaleInvoiceLine } from './entities/sale-invoice-line.entity';
 import { SaleInvoice } from './entities/sale-invoice.entity';
@@ -52,6 +54,8 @@ import { SalesService } from './sales.service';
       SaleInvoiceLine,
       SalePayment,
       SaleCredit,
+      CreditNote,
+      CreditNoteLine,
       Customer,
       Product,
       ProductPrice,
@@ -71,13 +75,13 @@ import { SalesService } from './sales.service';
     SalesService,
     FindAllSalesAction,
     FindSaleAction,
-    FindSalesByCustomerAction,
     CreateSaleAction,
     UpdateSaleAction,
-    ConvertOrderToSaleAction,
-    SoftDeleteSaleAction,
-    RegisterSalePaymentAction,
-    ListSalePaymentsAction,
+    VoidSaleAction,
+    GetLastSaleAction,
+    GetConsolidatedInvoiceAction,
+    GetConsolidatedInvoiceUpToAction,
+    GetSaleCreditNoteAction,
   ],
   exports: [SalesService, TypeOrmModule],
 })

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 
+import { ApplyWalletAdjustmentAction } from './actions/apply-wallet-adjustment.action';
 import { ArchiveWalletAction } from './actions/archive-wallet.action';
 import { CreateDefaultWalletAction } from './actions/create-default-wallet.action';
 import { CreateWalletAction } from './actions/create-wallet.action';
@@ -34,6 +35,7 @@ import { WalletsService } from './wallets.service';
     UpdateWalletAction,
     ArchiveWalletAction,
     CreateDefaultWalletAction,
+    ApplyWalletAdjustmentAction,
   ],
   exports: [WalletsService, CreateDefaultWalletAction, TypeOrmModule],
 })

@@ -4,19 +4,22 @@ import type { EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
   CashRegisterLogType,
 } from '@/modules/cash-register/entities/cash-register-log.entity';
-import { requireOpenCashRegisterForUpdate } from '@/modules/cash-register/internal/cash-register-lookups';
-import { computeCashRegisterBalance } from '@/modules/cash-register/internal/compute-balance';
+import { getOrCreateCashRegisterForUser } from '@/modules/cash-register/internal/get-or-create-cash-register-for-user.helper';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
 import type { ExpenseSourceType } from '../entities/expense.entity';
 
 /**
  * Actor (snapshot del usuario que origina el gasto). Mismo shape que en
- * `purchase-payment.action`/`sale-payment.action` para mantener consistencia.
+ * `purchase-payment.action`/`sale-payment.action` para consistencia.
+ *
+ * Para fuentes `cash_register`, el `id` del actor se usa como `user_id` que
+ * resuelve la caja PERMANENTE.
  */
 export interface ExpenseActor {
   id: number;
@@ -24,30 +27,29 @@ export interface ExpenseActor {
 }
 
 /**
- * Resultado de debitar la fuente: nombre legible (snapshot) y, cuando la
- * fuente es cash_register, el id del turno abierto (que PlacePos ignora del
- * payload del cliente y resuelve server-side).
+ * Resultado de debitar la fuente: nombre legible (snapshot) y, para
+ * cash_register, el id del row resuelto (el del actor — PlacePos ignora el
+ * source_id del payload).
  */
 export interface DebitExpenseSourceResult {
   /** Snapshot del nombre — guardado en `Expense.source_name`. */
   sourceName: string;
-  /** ID resuelto: el del turno abierto si source_type=cash_register; sino igual al payload. */
+  /** ID resuelto: el del cash_register del actor si source_type=cash_register; sino igual al payload. */
   resolvedSourceId: number;
 }
 
 /**
  * Debita el monto de la cuenta origen con lock pessimistic_write. Aborta con:
- *   - `NotFoundException` si la cuenta no existe en la company o está
- *     archivada.
+ *   - `NotFoundException` si la cuenta no existe en la company o está archivada.
  *   - `UnprocessableEntityException` si el balance es insuficiente.
  *
- * Mismo patrón que `register-purchase-payment.action.debitSource`. Encapsulado
+ * Patrón espejo de `register-purchase-payment.action.debitSource`. Encapsulado
  * en helper porque se reusa entre `CreateExpenseAction` (debita) y la
- * acreditación del soft-delete (que añade en vez de restar — `addToSource`).
+ * acreditación del soft-delete (`creditExpenseSource`).
  *
- * **Lock pessimistic_write**: garantiza que dos gastos concurrentes contra la
- * misma cuenta no validen ambos balance>=amount antes del UPDATE — el segundo
- * espera al commit del primero y re-lee el balance actualizado.
+ * **Lock pessimistic_write**: dos gastos concurrentes contra la misma cuenta
+ * serializan en el lock; el segundo re-lee el balance tras el commit del
+ * primero.
  */
 export async function debitExpenseSource(
   manager: EntityManager,
@@ -120,19 +122,25 @@ export async function debitExpenseSource(
   }
 
   // sourceType === 'cash_register'
-  // El `sourceId` del payload se ignora (paridad PlacePos): solo hay UN turno
-  // abierto por company y la action lo resuelve server-side.
-  const open = await requireOpenCashRegisterForUpdate(manager, companyId);
-  const balanceBig = await computeCashRegisterBalance(manager, open);
-  if (amountBig.gt(balanceBig)) {
+  // El `sourceId` del payload se ignora (paridad PlacePos): la caja del actor
+  // se resuelve por user_id server-side.
+  const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
+  const balance = toBig(register.balance);
+  if (amountBig.gt(balance)) {
     throw new UnprocessableEntityException(
-      `Saldo insuficiente en la caja. Disponible: ${balanceBig.toFixed(2)}`,
+      `Saldo insuficiente en la caja. Disponible: ${balance.toFixed(2)}`,
     );
   }
+  const newBalance = preciseNumber(balance.minus(amountBig), 2);
+  await manager.update(
+    CashRegister,
+    { id: register.id, company_id: String(companyId) },
+    { balance: newBalance },
+  );
   const log = manager.create(CashRegisterLog, {
     company_id: String(companyId),
-    cash_register_id: open.id,
-    type: CashRegisterLogType.CASH_OUT,
+    cash_register_id: register.id,
+    type: CashRegisterLogType.EXPENSE,
     direction: 'OUT',
     amount,
     affects_balance: true,
@@ -143,7 +151,7 @@ export async function debitExpenseSource(
   await manager.save(CashRegisterLog, log);
   return {
     sourceName: 'Caja',
-    resolvedSourceId: Number(open.id),
+    resolvedSourceId: Number(register.id),
   };
 }
 
@@ -153,10 +161,8 @@ export async function debitExpenseSource(
  *
  * - bank/wallet: UPDATE balance += amount, requiriendo que la cuenta siga
  *   activa (rechazo si fue archivada después del gasto — el usuario debe
- *   reactivarla primero, paridad con el comportamiento PlacePos).
- * - cash_register: INSERT CashRegisterLog(direction=IN, type=CASH_IN). El
- *   turno DEBE estar abierto — no se puede revertir un gasto contra un
- *   turno cerrado.
+ *   reactivarla primero, paridad PlacePos).
+ * - cash_register: UPDATE register.balance += amount + INSERT log VOID_EXPENSE.
  */
 export async function creditExpenseSource(
   manager: EntityManager,
@@ -215,11 +221,20 @@ export async function creditExpenseSource(
   }
 
   // sourceType === 'cash_register'
-  const open = await requireOpenCashRegisterForUpdate(manager, companyId);
+  // La reversión se hace contra la caja del actor que ANULA (no la del actor
+  // que creó originalmente el gasto). Esa es la semántica de PlacePos: el
+  // efectivo regresa a la caja del owner que dispara la anulación.
+  const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
+  const newBalance = preciseNumber(toBig(register.balance).plus(amountBig), 2);
+  await manager.update(
+    CashRegister,
+    { id: register.id, company_id: String(companyId) },
+    { balance: newBalance },
+  );
   const log = manager.create(CashRegisterLog, {
     company_id: String(companyId),
-    cash_register_id: open.id,
-    type: CashRegisterLogType.CASH_IN,
+    cash_register_id: register.id,
+    type: CashRegisterLogType.VOID_EXPENSE,
     direction: 'IN',
     amount,
     affects_balance: true,

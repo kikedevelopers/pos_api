@@ -1,4 +1,4 @@
-import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { UnprocessableEntityException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
@@ -8,8 +8,11 @@ import { TransferCashAction } from '../actions/transfer-cash.action';
 import type { TransferCashDto } from '../dto/transfer-cash.dto';
 
 /**
- * Tests unitarios de `TransferCashAction`. Cubre los 6 escenarios críticos
- * señalados por el security-auditor de Fase 11 (MED-5).
+ * Tests unitarios de `TransferCashAction` adaptados al modelo PERMANENTE.
+ *
+ * - La caja del actor se resuelve auto por `(company_id, user_id)`.
+ *   `getOrCreateCashRegisterForUser` la crea con balance=0 si no existe.
+ * - El balance vive en `cash_registers.balance` y se mutea con UPDATE.
  */
 describe('TransferCashAction', () => {
   let action: TransferCashAction;
@@ -33,15 +36,8 @@ describe('TransferCashAction', () => {
   >;
   let cashRegisters: Map<
     string,
-    { id: string; company_id: string; status: string; opening_balance: number }
+    { id: string; company_id: string; user_id: string; balance: number; base_amount: number }
   >;
-  let cashLogs: Array<{
-    direction: 'IN' | 'OUT';
-    amount: number;
-    affects_balance: boolean;
-    cash_register_id: string;
-    company_id: string;
-  }>;
 
   beforeEach(async () => {
     saves = [];
@@ -49,7 +45,6 @@ describe('TransferCashAction', () => {
     banks = new Map();
     wallets = new Map();
     cashRegisters = new Map();
-    cashLogs = [];
 
     const managerMock = {
       findOne: jest.fn(
@@ -60,12 +55,9 @@ describe('TransferCashAction', () => {
           const entityName = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
           const where = options.where;
           if (entityName === 'CashRegister') {
-            for (const cr of cashRegisters.values()) {
-              if (cr.company_id === String(where.company_id) && cr.status === 'OPEN') {
-                return Promise.resolve(cr);
-              }
-            }
-            return Promise.resolve(null);
+            const key = `${String(where.company_id)}|${String(where.user_id)}`;
+            const cr = cashRegisters.get(key);
+            return Promise.resolve(cr ?? null);
           }
           if (entityName === 'Bank') {
             const key = `${String(where.id)}|${String(where.company_id)}`;
@@ -86,35 +78,20 @@ describe('TransferCashAction', () => {
           return Promise.resolve(null);
         },
       ),
-      find: jest.fn(
-        (entity: { name?: string } | string, options: { where: Record<string, unknown> }) => {
-          const entityName = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
-          if (entityName === 'CashRegisterLog') {
-            const filtered = cashLogs.filter(
-              (l) =>
-                l.cash_register_id === String(options.where.cash_register_id) &&
-                l.company_id === String(options.where.company_id) &&
-                l.affects_balance === true,
-            );
-            return Promise.resolve(filtered);
-          }
-          return Promise.resolve([]);
-        },
-      ),
+      find: jest.fn().mockResolvedValue([]),
+      create: jest.fn((_entity: { name?: string } | string, input: Record<string, unknown>) => {
+        return input;
+      }),
+      save: jest.fn((entity: { name?: string } | string, payload: Record<string, unknown>) => {
+        const entityName = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
+        saves.push({ entity: entityName, payload });
+        return Promise.resolve({ ...payload, id: payload.id ?? '777' });
+      }),
       getRepository: jest.fn((entity: { name?: string } | string) => {
         const entityName = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
         return {
           save: (payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
             saves.push({ entity: entityName, payload });
-            if (entityName === 'CashRegisterLog') {
-              cashLogs.push({
-                direction: payload.direction as 'IN' | 'OUT',
-                amount: payload.amount as number,
-                affects_balance: payload.affects_balance as boolean,
-                cash_register_id: String(payload.cash_register_id),
-                company_id: String(payload.company_id),
-              });
-            }
             return Promise.resolve({ ...payload, id: '777' });
           },
         };
@@ -139,6 +116,17 @@ describe('TransferCashAction', () => {
             const w = wallets.get(key);
             if (w && typeof patch.balance === 'number') {
               wallets.set(key, { ...w, balance: patch.balance });
+            }
+          }
+          if (entityName === 'CashRegister') {
+            for (const [key, cr] of cashRegisters.entries()) {
+              if (cr.id === String(where.id) && cr.company_id === String(where.company_id)) {
+                cashRegisters.set(key, {
+                  ...cr,
+                  ...(typeof patch.balance === 'number' ? { balance: patch.balance } : {}),
+                });
+                break;
+              }
             }
           }
           return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
@@ -183,27 +171,19 @@ describe('TransferCashAction', () => {
       is_archived: isArchived,
     });
   }
-  function seedOpenCashRegister(
+  function seedCashRegisterForUser(
     id: number,
     companyId: number,
-    opening: number,
-    logs: { direction: 'IN' | 'OUT'; amount: number }[] = [],
+    userId: number,
+    balance: number,
   ): void {
-    cashRegisters.set(String(id), {
+    cashRegisters.set(`${companyId}|${userId}`, {
       id: String(id),
       company_id: String(companyId),
-      status: 'OPEN',
-      opening_balance: opening,
+      user_id: String(userId),
+      balance,
+      base_amount: 0,
     });
-    for (const log of logs) {
-      cashLogs.push({
-        direction: log.direction,
-        amount: log.amount,
-        affects_balance: true,
-        cash_register_id: String(id),
-        company_id: String(companyId),
-      });
-    }
   }
 
   const baseDto = (overrides: Partial<TransferCashDto> = {}): TransferCashDto => ({
@@ -216,21 +196,20 @@ describe('TransferCashAction', () => {
   const actor = { id: 7, fullName: 'Cajero Test' };
 
   it('destinationType="user" → 422 UNSUPPORTED_DESTINATION (sin tocar DB)', async () => {
-    seedOpenCashRegister(1, 42, 500);
+    seedCashRegisterForUser(1, 42, actor.id, 500);
     seedWallet(10, 42, 0);
 
     await expect(
       action.execute(baseDto({ destinationType: 'user' }), 42, actor),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
 
-    // No transacción abierta: el guard sucede ANTES de dataSource.transaction.
     expect(transactionSpy).not.toHaveBeenCalled();
     expect(saves.length).toBe(0);
     expect(updates.length).toBe(0);
   });
 
   it('amount <= 0 → 422', async () => {
-    seedOpenCashRegister(1, 42, 500);
+    seedCashRegisterForUser(1, 42, actor.id, 500);
     seedWallet(10, 42, 0);
 
     await expect(action.execute(baseDto({ amount: 0 }), 42, actor)).rejects.toBeInstanceOf(
@@ -243,31 +222,21 @@ describe('TransferCashAction', () => {
     expect(transactionSpy).not.toHaveBeenCalled();
   });
 
-  it('sin caja abierta → 404', async () => {
-    // No seedOpenCashRegister
-    seedWallet(10, 42, 0);
-
-    await expect(action.execute(baseDto(), 42, actor)).rejects.toBeInstanceOf(NotFoundException);
-    expect(saves.length).toBe(0);
-  });
-
   it('saldo insuficiente en caja → 422 con balance disponible formateado', async () => {
-    // Opening 100, sin logs → balance 100; intentamos transferir 150.
-    seedOpenCashRegister(1, 42, 100);
+    seedCashRegisterForUser(1, 42, actor.id, 100);
     seedWallet(10, 42, 0);
 
     await expect(action.execute(baseDto({ amount: 150 }), 42, actor)).rejects.toThrow(
       /Saldo insuficiente.*100\.00/,
     );
 
-    // No se llegó a insertar log ni actualizar destino.
     expect(saves.find((s) => s.entity === 'CashRegisterLog')).toBeUndefined();
     expect(updates.find((u) => u.entity === 'Wallet')).toBeUndefined();
     expect(recordSpy).not.toHaveBeenCalled();
   });
 
   it('wallet destino archivado → 404 (filtro is_archived=false impide cobrar)', async () => {
-    seedOpenCashRegister(1, 42, 500);
+    seedCashRegisterForUser(1, 42, actor.id, 500);
     seedWallet(10, 42, 0, true);
 
     await expect(action.execute(baseDto(), 42, actor)).rejects.toBeInstanceOf(NotFoundException);
@@ -275,22 +244,25 @@ describe('TransferCashAction', () => {
   });
 
   it('wallet destino de OTRA company → 404 (aislamiento multi-tenant)', async () => {
-    seedOpenCashRegister(1, 42, 500);
-    seedWallet(10, 99, 0); // wallet existe en company 99, no 42.
+    seedCashRegisterForUser(1, 42, actor.id, 500);
+    seedWallet(10, 99, 0);
 
     await expect(action.execute(baseDto(), 42, actor)).rejects.toBeInstanceOf(NotFoundException);
     expect(recordSpy).not.toHaveBeenCalled();
   });
 
-  it('happy path wallet: log OUT en caja, balance wallet aumenta, FM TRANSFER registrado', async () => {
-    // Opening 200, log IN 50 → balance 250.
-    seedOpenCashRegister(1, 42, 200, [{ direction: 'IN', amount: 50 }]);
+  it('happy path wallet: UPDATE balance caja, log OUT, balance wallet aumenta, FM TRANSFER', async () => {
+    seedCashRegisterForUser(1, 42, actor.id, 250);
     seedWallet(10, 42, 1000);
 
     const result = await action.execute(baseDto({ amount: 100 }), 42, actor);
 
     expect(result.message).toBe('Traslado completado exitosamente');
     expect(transactionSpy).toHaveBeenCalledTimes(1);
+
+    // UPDATE balance origen (caja): 250 - 100 = 150.
+    const crUpdate = updates.find((u) => u.entity === 'CashRegister');
+    expect(crUpdate?.patch.balance).toBe(150);
 
     // Log OUT en cash_register_logs.
     const cashLog = saves.find((s) => s.entity === 'CashRegisterLog');
@@ -304,7 +276,7 @@ describe('TransferCashAction', () => {
     const walletUpdate = updates.find((u) => u.entity === 'Wallet');
     expect(walletUpdate?.patch.balance).toBe(1100);
 
-    // FinancialMovement TRANSFER registrado con source=cash_register, dest=wallet.
+    // FinancialMovement TRANSFER.
     expect(recordSpy).toHaveBeenCalledTimes(1);
     const fmArgs = (recordSpy.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
     expect(fmArgs.movement_type).toBe('TRANSFER');
@@ -319,7 +291,7 @@ describe('TransferCashAction', () => {
   });
 
   it('happy path bank: destination_type="bank" propagado al FinancialMovement', async () => {
-    seedOpenCashRegister(1, 42, 500);
+    seedCashRegisterForUser(1, 42, actor.id, 500);
     seedBank(20, 42, 0);
 
     await action.execute(baseDto({ destinationType: 'bank', destinationId: 20 }), 42, actor);

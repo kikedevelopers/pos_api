@@ -10,6 +10,7 @@ import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.
 import { UsersModule } from '@/modules/users/users.module';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
+import { CheckEmailAction } from './actions/check-email.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
 import { LoginAction } from './actions/login.action';
@@ -63,6 +64,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     LoginAction,
     GetMeAction,
     GetProfileAction,
+    CheckEmailAction,
     // Facade.
     AuthService,
     // Passport.

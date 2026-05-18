@@ -24,8 +24,9 @@ import { debitExpenseSource, type ExpenseActor } from '../internal/debit-expense
  *   1. Resolver y debitar la fuente (`debitExpenseSource`):
  *        - `bank` / `wallet`: lock pessimistic_write, validar
  *          `balance >= amount`, UPDATE balance.
- *        - `cash_register`: requireOpenCashRegisterForUpdate (lock), validar
- *          balance computado contra logs, INSERT CashRegisterLog(CASH_OUT).
+ *        - `cash_register`: getOrCreateCashRegisterForUser (lock), validar
+ *          `register.balance >= amount`, UPDATE balance, INSERT
+ *          CashRegisterLog(EXPENSE).
  *
  *   2. INSERT `expenses` con `source_name` snapshot.
  *
@@ -64,6 +65,13 @@ export class CreateExpenseAction {
 
     return this.dataSource.transaction<Expense>(async (manager) => {
       // 1. Resolver y debitar la fuente con lock + validación de balance.
+      //
+      // DEFENSA CROSS-CASHIER: si `source_type === 'cash_register'`, el
+      // `source_id` del payload se IGNORA dentro de `debitExpenseSource` y
+      // la caja se resuelve server-side (el turno abierto de la company).
+      // Esto evita que un cajero malicioso envíe el id de la caja de otro
+      // tenant/turno; PlacePos hace lo mismo. El helper expone el
+      // `resolvedSourceId` que SÍ se persiste en `Expense.source_id`.
       const { sourceName, resolvedSourceId } = await debitExpenseSource(
         manager,
         dto.source_type,
