@@ -48,26 +48,26 @@ export class ProductPriceInputDto {
 
   @ApiPropertyOptional({
     example: 3.5,
-    description: 'IGNORADO en el server. Recalculado desde sale_price - cost.',
+    description: 'IGNORADO en el server. Recalculado desde sale_price - cost con Big.js.',
   })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber(
-    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 },
-    { message: 'profit debe ser número con hasta 2 decimales' },
-  )
+  // Sin maxDecimalPlaces: el cliente puede enviar valores con ruido de
+  // floating point (ej. 0.30000000000000004) producidos por su cálculo en
+  // JS. El server los IGNORA y recalcula con Big.js — validar decimales
+  // aquí solo rompe el payload sin aportar nada.
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { message: 'profit debe ser número' })
   profit?: number;
 
   @ApiPropertyOptional({
     example: 33.3333,
-    description: 'IGNORADO en el server. Recalculado.',
+    description: 'IGNORADO en el server. Recalculado con Big.js.',
   })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber(
-    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
-    { message: 'margin debe ser número con hasta 4 decimales' },
-  )
+  // Mismo racional que profit: ruido floating-point del cliente se acepta;
+  // el server lo descarta y recalcula.
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { message: 'margin debe ser número' })
   margin?: number;
 
   @ApiPropertyOptional({
