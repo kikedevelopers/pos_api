@@ -59,6 +59,19 @@ export class BulkItemDto {
   @Min(0, { message: 'cost debe ser >= 0' })
   cost?: number;
 
+  @ApiPropertyOptional({
+    example: 10,
+    description: 'Stock unitario. numeric(15,4). Opcional en bulk.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
+    { message: 'stock debe ser número con hasta 4 decimales' },
+  )
+  @Min(0, { message: 'stock debe ser >= 0' })
+  stock?: number;
+
   @ApiPropertyOptional({ example: 'SKU-12345', maxLength: 50, nullable: true })
   @IsOptional()
   @IsString()

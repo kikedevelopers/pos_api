@@ -25,10 +25,11 @@ export interface QuickProductCreator {
  *     (anti cross-tenant).
  *   - `cost > 0`. La validación de número está en el DTO.
  *   - Producto creado con:
- *       `product_type = SIMPLE`
- *       `show_in_pos  = false`   // PlacePos lo hace así
- *       `is_archived  = false`
- *       (`stock` y `is_purchasable` no existen aún en pos_api Fase 3)
+ *       `product_type   = SIMPLE`
+ *       `show_in_pos    = false`   // PlacePos lo hace así
+ *       `is_purchasable = true`    // espejo PlacePos línea 751
+ *       `is_archived    = false`
+ *       `stock          = 0`       // quick-create siempre arranca en 0
  *   - Inserta UN ProductPrice con `sale_price = cost`, profit = 0, margin = 0.
  *   - Colisiones UNIQUE → 400 con código (translate constraint).
  *
@@ -63,10 +64,14 @@ export class QuickCreateProductAction {
         sku_code: null,
         bar_code: null,
         packaging_id: dto.packaging_id ? String(dto.packaging_id) : null,
+        category_id: null,
         cost: dto.cost,
+        stock: 0,
         image: null,
         show_in_pos: false,
+        is_purchasable: true,
         is_archived: false,
+        hash: null,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
       });
@@ -102,7 +107,7 @@ export class QuickCreateProductAction {
       // Re-fetch con relations para devolver el producto completo.
       return manager.findOneOrFail(Product, {
         where: { id: saved.id, company_id: String(companyId) },
-        relations: { prices: true, packaging: true },
+        relations: { prices: true, packaging: true, category: true },
       });
     });
   }

@@ -122,6 +122,7 @@ describe('CreateProductAction', () => {
       {
         name: 'Coca-Cola 2L',
         cost: 2,
+        stock: 0,
         prices: [{ sale_price: 5 }],
       },
       42,
@@ -132,7 +133,7 @@ describe('CreateProductAction', () => {
   });
 
   it('inicializa is_archived = false y show_in_pos = true por default', async () => {
-    await action.execute({ name: 'X', cost: 1, prices: [{ sale_price: 2 }] }, 1, {
+    await action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 1, {
       id: 1,
       fullName: 'Owner',
     });
@@ -142,7 +143,7 @@ describe('CreateProductAction', () => {
   });
 
   it('default product_type = SIMPLE si no viene en el DTO', async () => {
-    await action.execute({ name: 'X', cost: 1, prices: [{ sale_price: 2 }] }, 1, {
+    await action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 1, {
       id: 1,
       fullName: 'Owner',
     });
@@ -154,6 +155,7 @@ describe('CreateProductAction', () => {
       {
         name: 'Y',
         cost: 2,
+        stock: 0,
         // El cliente envía hint profit/margin "erróneos"; el server los ignora.
         prices: [{ sale_price: 10, profit: 9999, margin: 9999 }],
       },
@@ -167,7 +169,7 @@ describe('CreateProductAction', () => {
   });
 
   it('ejecuta toda la creación dentro de UNA SOLA dataSource.transaction', async () => {
-    await action.execute({ name: 'X', cost: 1, prices: [{ sale_price: 2 }] }, 1, {
+    await action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 1, {
       id: 1,
       fullName: 'Owner',
     });

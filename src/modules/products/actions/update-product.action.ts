@@ -8,6 +8,7 @@ import { Product } from '../entities/product.entity';
 import { ProductPrice } from '../entities/product-price.entity';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 import {
+  assertCategoryBelongsToCompany,
   assertPackagingBelongsToCompany,
   assertParentBelongsToCompany,
   findProductInCompany,
@@ -62,6 +63,7 @@ export class UpdateProductAction {
       // Validaciones anti cross-tenant para FKs.
       await assertParentBelongsToCompany(manager, dto.parent_id ?? null, companyId);
       await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
+      await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
 
       // Patch de columnas del product (solo las enviadas).
       const patch: Partial<Product> = {};
@@ -86,14 +88,26 @@ export class UpdateProductAction {
       if (dto.packaging_id !== undefined) {
         patch.packaging_id = dto.packaging_id ? String(dto.packaging_id) : null;
       }
+      if (dto.category_id !== undefined) {
+        patch.category_id = dto.category_id ? String(dto.category_id) : null;
+      }
       if (dto.cost !== undefined) {
         patch.cost = dto.cost;
+      }
+      if (dto.stock !== undefined) {
+        patch.stock = dto.stock;
       }
       if (dto.image !== undefined) {
         patch.image = dto.image ?? null;
       }
       if (dto.show_in_pos !== undefined) {
         patch.show_in_pos = dto.show_in_pos;
+      }
+      if (dto.is_purchasable !== undefined) {
+        patch.is_purchasable = dto.is_purchasable;
+      }
+      if (dto.hash !== undefined) {
+        patch.hash = dto.hash ?? null;
       }
       patch.updated_by = actor.fullName;
       patch.updated_by_id = String(actor.id);
@@ -165,7 +179,7 @@ export class UpdateProductAction {
 
       return manager.findOneOrFail(Product, {
         where: { id: String(id), company_id: String(companyId) },
-        relations: { prices: true, packaging: true },
+        relations: { prices: true, packaging: true, category: true },
       });
     });
   }

@@ -32,7 +32,10 @@ export async function findProductInCompany(
 
   const product = await manager.findOne(Product, {
     where,
-    relations: options.withRelations === true ? { prices: true, packaging: true } : undefined,
+    relations:
+      options.withRelations === true
+        ? { prices: true, packaging: true, category: true }
+        : undefined,
   });
 
   if (!product) {
@@ -88,5 +91,34 @@ export async function assertPackagingBelongsToCompany(
   );
   if (rows.length === 0) {
     throw new NotFoundException('Empaque no encontrado o pertenece a otro negocio.');
+  }
+}
+
+/**
+ * Verifica que `category_id` (si está presente) sea una categoría válida
+ * de la MISMA company y no archivada. Espejo de `assertPackagingBelongsToCompany`.
+ *
+ * Usamos `manager.query` con LIMIT 1 para no acoplar este módulo al import
+ * de la entidad `Category` (defensa contra ciclos de módulos). El UNIQUE
+ * parcial sobre `(company_id, lower(btrim(name)))` solo cubre activas, así
+ * que asignar una categoría archivada a un producto activo no tendría
+ * sentido y lo bloqueamos aquí.
+ */
+export async function assertCategoryBelongsToCompany(
+  manager: EntityManager,
+  categoryId: number | null | undefined,
+  companyId: number,
+): Promise<void> {
+  if (categoryId === null || categoryId === undefined) {
+    return;
+  }
+  const rows = await manager.query<Array<{ id: string }>>(
+    `SELECT id FROM categories
+     WHERE id = $1 AND company_id = $2 AND is_archived = false
+     LIMIT 1`,
+    [categoryId, companyId],
+  );
+  if (rows.length === 0) {
+    throw new NotFoundException('Categoría no encontrada o pertenece a otro negocio.');
   }
 }

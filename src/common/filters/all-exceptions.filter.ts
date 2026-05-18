@@ -63,10 +63,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // `status` viene como `number` plano de NestJS. Comparamos con literales
     // numéricos para evitar `no-unsafe-enum-comparison` con HttpStatus.
     if (status >= 500) {
+      // nestjs-pino no rendera el segundo argumento (trace) de Logger.error
+      // como propiedad separada — para que el stack aparezca en el log,
+      // lo concatenamos inline al mensaje. Sin esto, los 500 quedan opacos.
       this.logger.error(
-        `${request.method} ${request.url} → ${status} ${body.error}`,
-        stack,
-        JSON.stringify(logCtx),
+        `${request.method} ${request.url} → ${status} ${body.error}${stack ? '\n' + stack : ''} ${JSON.stringify(logCtx)}`,
       );
     } else if (status === 401 || status === 403) {
       this.logger.warn(

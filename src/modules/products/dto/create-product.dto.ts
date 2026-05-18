@@ -25,8 +25,11 @@ import { ProductPriceInputDto } from './product-price.dto';
  *
  * Espejo de `CreateItemBody` en `placepos/src/main/server/routes/inventory.routes.ts`.
  *
- * Diferencias controladas:
- *   - Sin `stock` / `is_purchasable`: fuera del alcance de Fase 3.
+ * Reglas:
+ *   - `stock` REQUERIDO (numeric(15,4)). El cliente lo envía siempre desde
+ *     el formulario de creación.
+ *   - `is_purchasable`, `category_id`, `hash` opcionales — el cliente puede
+ *     omitirlos en payloads simples.
  *   - `product_type` se valida con `IsEnum(ProductType)` — sólo se aceptan
  *     `'SIMPLE'` o `'COMBO'`. PlacePos acepta el string pelado; aquí
  *     forzamos el enum para detectar typos temprano.
@@ -61,6 +64,18 @@ export class CreateProductDto {
   )
   @Min(0, { message: 'cost debe ser >= 0' })
   cost!: number;
+
+  @ApiProperty({
+    example: 10,
+    description: 'Stock unitario. numeric(15,4). Requerido por el cliente.',
+  })
+  @Type(() => Number)
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
+    { message: 'stock debe ser número con hasta 4 decimales' },
+  )
+  @Min(0, { message: 'stock debe ser >= 0' })
+  stock!: number;
 
   @ApiPropertyOptional({ example: 'SKU-12345', nullable: true, maxLength: 50 })
   @IsOptional()
@@ -119,6 +134,37 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   show_in_pos?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    default: false,
+    description: 'Marca productos comprables desde el módulo de compras.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_purchasable?: boolean;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'ID de categoría existente en la misma company. null para sin categoría.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'category_id debe ser entero' })
+  @Min(1, { message: 'category_id debe ser >= 1' })
+  category_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'a1b2c3d4',
+    nullable: true,
+    maxLength: 200,
+    description: 'Hash generado por el cliente. pos_api lo persiste passthrough; no lo recalcula.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  hash?: string | null;
 
   @ApiProperty({
     type: [ProductPriceInputDto],

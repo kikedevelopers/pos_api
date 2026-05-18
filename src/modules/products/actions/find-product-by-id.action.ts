@@ -26,7 +26,7 @@ export class FindProductByIdAction {
   async execute(id: number, companyId: number): Promise<Product | null> {
     return this.repo.findOne({
       where: { id: String(id), company_id: String(companyId) },
-      relations: { prices: true, packaging: true },
+      relations: { prices: true, packaging: true, category: true },
     });
   }
 }

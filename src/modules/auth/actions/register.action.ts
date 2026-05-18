@@ -67,6 +67,12 @@ export class RegisterAction {
         address: null,
         email: null,
         phone_number: null,
+        // TypeORM 0.3 NO aplica defaults SQL si la columna no aparece en
+        // `create()` — el INSERT escribe NULL explícito. Seteamos los tres
+        // numéricos NOT NULL.
+        balance: 0,
+        break_even_amount: 0,
+        break_even_period_days: 30,
       });
       const savedCompany = await manager.save(Company, company);
 
@@ -78,6 +84,8 @@ export class RegisterAction {
         password: passwordHash,
         type: UserType.OWNER,
         company_id: savedCompany.id,
+        // TypeORM 0.3 no aplica defaults SQL si el campo no aparece en create().
+        balance: 0,
       });
 
       let saved: User;

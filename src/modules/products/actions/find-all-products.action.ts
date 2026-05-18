@@ -41,6 +41,7 @@ export class FindAllProductsAction {
       .createQueryBuilder('p')
       .leftJoinAndSelect('p.prices', 'pp')
       .leftJoinAndSelect('p.packaging', 'pk')
+      .leftJoinAndSelect('p.category', 'cat')
       .where('p.company_id = :companyId', { companyId: String(companyId) });
 
     if (query.include_archived !== true) {

@@ -9,6 +9,7 @@ import { Product, ProductType } from '../entities/product.entity';
 import { ProductPrice } from '../entities/product-price.entity';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 import {
+  assertCategoryBelongsToCompany,
   assertPackagingBelongsToCompany,
   assertParentBelongsToCompany,
 } from '../internal/product-lookups';
@@ -48,9 +49,11 @@ export class CreateProductAction {
     createdBy: ProductCreator,
   ): Promise<Product> {
     return this.dataSource.transaction<Product>(async (manager) => {
-      // Anti cross-tenant: parent y packaging deben ser de la misma company.
+      // Anti cross-tenant: parent, packaging y category deben ser de la
+      // misma company.
       await assertParentBelongsToCompany(manager, dto.parent_id ?? null, companyId);
       await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
+      await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
 
       const trimmedName = dto.name.trim();
       const trimmedSku = (dto.sku_code ?? '').trim() || null;
@@ -66,10 +69,15 @@ export class CreateProductAction {
         sku_code: trimmedSku,
         bar_code: trimmedBarcode,
         packaging_id: dto.packaging_id ? String(dto.packaging_id) : null,
+        category_id: dto.category_id ? String(dto.category_id) : null,
         cost: dto.cost,
+        stock: dto.stock,
         image: dto.image ?? null,
         show_in_pos: dto.show_in_pos !== false,
+        is_purchasable: dto.is_purchasable === true,
         is_archived: false,
+        // PlacePos genera `hash` localmente. pos_api lo persiste passthrough.
+        hash: dto.hash ?? null,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
       });
@@ -93,7 +101,7 @@ export class CreateProductAction {
       // contra DELETE concurrente — improbable dentro de la transacción).
       return manager.findOneOrFail(Product, {
         where: { id: saved.id, company_id: String(companyId) },
-        relations: { prices: true, packaging: true },
+        relations: { prices: true, packaging: true, category: true },
       });
     });
   }

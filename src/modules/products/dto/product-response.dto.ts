@@ -52,11 +52,21 @@ export class ProductPriceNestedDto {
  * (`inventory.routes.ts`).
  *
  * Diferencias menores:
- *   - Sin `stock` / `is_purchasable` / `archived` (renombrado a
- *     `is_archived` en este API por convención CLAUDE.md §2.4).
  *   - `archived` (legacy PlacePos) ↔ `is_archived` (aquí). Mantenemos
  *     AMBOS en el response para paridad — `archived` = `is_archived` value.
+ *   - `stock_display` se calcula a partir de `stock` y `packaging.value`.
+ *     Por ahora lo igualamos a `stock` (el cliente lo ignora si el
+ *     packaging no aplica). El cálculo final contra `packaging.value` se
+ *     puede mover aquí sin romper el contrato.
  */
+export class ProductPriceCategoryNestedDto {
+  @ApiProperty({ example: 1 })
+  id!: number;
+
+  @ApiProperty({ example: 'Bebidas' })
+  name!: string;
+}
+
 export class ProductResponseDto {
   @ApiProperty({ example: 1 })
   id!: number;
@@ -76,6 +86,15 @@ export class ProductResponseDto {
   @ApiProperty({ example: 2.5 })
   cost!: number;
 
+  @ApiProperty({ example: 10, description: 'Stock unitario en unidad mínima.' })
+  stock!: number;
+
+  @ApiProperty({
+    example: 10,
+    description: 'Stock mostrado al usuario. Por ahora igual a `stock`.',
+  })
+  stock_display!: number;
+
   @ApiProperty({ example: ProductType.SIMPLE, enum: ProductType })
   product_type!: ProductType;
 
@@ -86,10 +105,16 @@ export class ProductResponseDto {
   packaging_id!: number | null;
 
   @ApiPropertyOptional({ example: null, nullable: true })
+  category_id!: number | null;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
   image!: string | null;
 
   @ApiProperty({ example: true })
   show_in_pos!: boolean;
+
+  @ApiProperty({ example: false })
+  is_purchasable!: boolean;
 
   @ApiProperty({ example: false })
   is_archived!: boolean;
@@ -115,6 +140,9 @@ export class ProductResponseDto {
   @ApiPropertyOptional({ type: ProductPackagingNestedDto, nullable: true })
   packaging!: ProductPackagingNestedDto | null;
 
+  @ApiPropertyOptional({ type: ProductPriceCategoryNestedDto, nullable: true })
+  category!: ProductPriceCategoryNestedDto | null;
+
   @ApiProperty({ type: [ProductPriceNestedDto] })
   prices!: ProductPriceNestedDto[];
 }
@@ -124,6 +152,7 @@ export class ProductResponseDto {
  * (con relaciones cargadas) se proyecta a respuesta.
  */
 export function toProductResponseDto(p: Product): ProductResponseDto {
+  const stock = Number(p.stock);
   return {
     id: Number(p.id),
     name: p.name,
@@ -131,11 +160,19 @@ export function toProductResponseDto(p: Product): ProductResponseDto {
     sku_code: p.sku_code ?? null,
     description: p.description ?? null,
     cost: Number(p.cost),
+    stock,
+    // `stock_display` debe derivarse contra `packaging.value` cuando aplique.
+    // En este momento el cliente acepta cualquier número y lo recalcula en
+    // su lado para mostrarlo. Devolvemos `stock` plano para no romper
+    // contrato; el cálculo final puede moverse aquí sin cambios de API.
+    stock_display: stock,
     product_type: p.product_type,
     parent_id: p.parent_id === null ? null : Number(p.parent_id),
     packaging_id: p.packaging_id === null ? null : Number(p.packaging_id),
+    category_id: p.category_id === null ? null : Number(p.category_id),
     image: p.image ?? null,
     show_in_pos: p.show_in_pos,
+    is_purchasable: p.is_purchasable,
     is_archived: p.is_archived,
     archived: p.is_archived,
     created_by: p.created_by ?? null,
@@ -147,6 +184,12 @@ export function toProductResponseDto(p: Product): ProductResponseDto {
           id: Number(p.packaging.id),
           name: p.packaging.name,
           value: Number(p.packaging.value),
+        }
+      : null,
+    category: p.category
+      ? {
+          id: Number(p.category.id),
+          name: p.category.name,
         }
       : null,
     prices: (p.prices ?? []).map(mapPriceNested),

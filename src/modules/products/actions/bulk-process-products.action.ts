@@ -85,13 +85,13 @@ export class BulkProcessProductsAction {
 
       // Match por name + company (mismo namespace que el UNIQUE parcial).
       // Buscamos activos (los archivados liberan el name).
-      // HIGH-5 auditoría: incluimos `cost` en el SELECT para poder usarlo
-      // como fallback si el cliente NO envía `item.cost` en el bulk. Antes
-      // se persistía `cost = 0`, lo que recalculaba márgenes erróneos en
-      // los precios recreados.
+      // HIGH-5 auditoría: incluimos `cost` (y ahora `stock`) en el SELECT
+      // para poder usarlos como fallback si el cliente NO envía esos
+      // campos en el bulk. Antes se persistía `cost = 0`, lo que
+      // recalculaba márgenes erróneos en los precios recreados.
       const existing = await manager.findOne(Product, {
         where: { name: trimmedName, company_id: String(companyId), is_archived: false },
-        select: { id: true, cost: true },
+        select: { id: true, cost: true, stock: true },
       });
 
       // Determinar costo efectivo:
@@ -103,6 +103,16 @@ export class BulkProcessProductsAction {
           ? item.cost
           : existing
             ? Number(existing.cost)
+            : 0;
+
+      // Igual semántica para `stock`: si el bulk no lo trae, preserva el
+      // del producto existente; si es nuevo, arranca en 0 (paridad con la
+      // ruta `/inventory/bulk` de PlacePos línea 238/280).
+      const stock =
+        item.stock !== undefined && item.stock !== null
+          ? item.stock
+          : existing
+            ? Number(existing.stock)
             : 0;
 
       const validPrices = (item.prices ?? [])
@@ -129,6 +139,7 @@ export class BulkProcessProductsAction {
             bar_code: item.bar_code || null,
             description: item.description || null,
             cost,
+            stock,
             updated_by: actor.fullName,
             updated_by_id: String(actor.id),
           },
@@ -171,8 +182,10 @@ export class BulkProcessProductsAction {
           bar_code: item.bar_code || null,
           sku_code: item.sku_code || null,
           cost,
+          stock,
           product_type: item.product_type ?? ProductType.SIMPLE,
           show_in_pos: true,
+          is_purchasable: false,
           is_archived: false,
           created_by: actor.fullName,
           created_by_id: String(actor.id),

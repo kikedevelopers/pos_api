@@ -12,6 +12,7 @@ import {
 } from 'typeorm';
 
 import { NumericTransformer } from '@/common/utils/numeric-transformer';
+import { Category } from '@/modules/categories/entities/category.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 
@@ -40,6 +41,7 @@ export enum ProductType {
  *
  *   - `name` no en blanco (`chk_products_name_not_empty`).
  *   - `cost >= 0` (`chk_products_cost_non_negative`).
+ *   - `stock >= 0` (`chk_products_stock_non_negative`).
  *   - `parent_id <> id` (anti-self-loop, `chk_products_parent_self_ref`).
  *   - UNIQUE per-company sobre `lower(btrim(name))` para activos
  *     (índice parcial `idx_products_company_name_unique`).
@@ -62,13 +64,14 @@ export enum ProductType {
  * --------------------------------------------------------------------------
  *
  * El shape de respuesta replica `normalizeProduct` de PlacePos
- * (`inventory.routes.ts`). Los campos OMITIDOS aquí respecto a PlacePos
- * (`stock`, `hash`, `is_purchasable`) se reincorporan en fases posteriores
- * añadiendo columnas — backwards-compatible.
+ * (`inventory.routes.ts`). Migración 1747010520000 reincorporó `stock`,
+ * `is_purchasable` y `hash` para alineación byte-por-byte con el cliente
+ * Electron. `category_id` ya estaba presente desde la Fase 2A.
  */
 @Entity('products')
 @Check('chk_products_name_not_empty', 'length(btrim(name)) > 0')
 @Check('chk_products_cost_non_negative', 'cost >= 0')
+@Check('chk_products_stock_non_negative', 'stock >= 0')
 @Check('chk_products_parent_self_ref', 'parent_id IS NULL OR parent_id <> id')
 export class Product {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -139,6 +142,24 @@ export class Product {
   packaging!: Packaging | null;
 
   /**
+   * FK opcional a `categories`. La columna y la FK las crea la migración
+   * Fase 2A (`1747009740000-create-categories-table.ts`).
+   *
+   * ON DELETE SET NULL — archivar / borrar la categoría desliga al producto
+   * sin romperlo. Espejo de PlacePos.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  category_id!: string | null;
+
+  @ManyToOne(() => Category, {
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'category_id' })
+  category!: Category | null;
+
+  /**
    * Costo unitario. numeric(15,2). Dentro del service, vuélvelo a `Big`
    * antes de calcular profit/margin.
    */
@@ -150,6 +171,42 @@ export class Product {
     transformer: NumericTransformer,
   })
   cost!: number;
+
+  /**
+   * Stock unitario. numeric(15,4) — la unidad mínima vendible. Lo persistimos
+   * passthrough del cliente. `stock_display` (lo que se muestra al usuario,
+   * dividiendo por `packaging.value`) se calcula en la capa de respuesta y
+   * no se persiste.
+   *
+   * Check `stock >= 0` en la migración. Los descuentos por venta o compra
+   * deben validar antes de bajar el valor.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 4,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  stock!: number;
+
+  /**
+   * Marca productos comprables (`is_purchasable = true`). Activado por
+   * `quick-create` desde el módulo de compras o por toggle manual.
+   * Default `false` — un producto nuevo no es comprable hasta que se
+   * declare explícitamente.
+   */
+  @Column({ type: 'boolean', default: false })
+  is_purchasable!: boolean;
+
+  /**
+   * Hash del producto calculado por el cliente (PlacePos lo genera con
+   * `generateProductHash`). Se persiste passthrough — pos_api NUNCA lo
+   * recalcula del lado del servidor para no divergir del valor del cliente.
+   * NULLABLE para payloads viejos.
+   */
+  @Column({ type: 'text', nullable: true })
+  hash!: string | null;
 
   @Column({ type: 'text', nullable: true })
   image!: string | null;
