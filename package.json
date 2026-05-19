@@ -30,7 +30,7 @@
     "migration:run": "pnpm typeorm migration:run",
     "migration:revert": "pnpm typeorm migration:revert",
     "migration:show": "pnpm typeorm migration:show",
-    "db:seed": "echo 'TODO: implementar seeders cuando existan entidades' && exit 0"
+    "db:seed": "ts-node -r tsconfig-paths/register ./src/database/seeds/demo.seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",
