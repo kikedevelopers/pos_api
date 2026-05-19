@@ -86,7 +86,26 @@ export class CreateSalePaymentInlineDto {
 }
 
 /**
- * Una línea del payload de `POST /sales`. Espejo PlacePos.
+ * Modo en que se asignó el precio a una línea. Espejo PlacePos
+ * `SaleInvoiceLinePayload.price_mode`.
+ *
+ *   - `fixed` : se aplicó un nivel de precio del catálogo.
+ *   - `manual`: el vendedor lo escribió a mano.
+ */
+export const SALE_LINE_PRICE_MODES = ['fixed', 'manual'] as const;
+export type SaleLinePriceModeDto = (typeof SALE_LINE_PRICE_MODES)[number];
+
+/**
+ * Una línea del payload de `POST /sales`. Espejo byte-por-byte de
+ * `SaleInvoiceLinePayload` de PlacePos (`placepos/src/main/database/types.ts`).
+ *
+ * El cliente PlacePos pre-calcula `cost`, `total`, `profit` y `margin` por
+ * línea con Big.js y los envía como snapshot histórico. El service los
+ * persiste tal cual (sin recalcular) — paridad estricta con el modo
+ * servidor/cliente que confía en el cliente.
+ *
+ * Multi-tenancy: el service valida que cada `item_id` pertenezca a la
+ * `company_id` del JWT antes de insertar.
  */
 export class CreateSaleLineDto {
   @ApiProperty({
@@ -94,41 +113,35 @@ export class CreateSaleLineDto {
     description: 'ID del producto vendido (debe pertenecer a la company).',
   })
   @Type(() => Number)
-  @IsInt({ message: 'product_id debe ser entero' })
-  @Min(1, { message: 'product_id debe ser >= 1' })
-  product_id!: number;
+  @IsInt({ message: 'item_id debe ser entero' })
+  @Min(1, { message: 'item_id debe ser >= 1' })
+  item_id!: number;
 
-  @ApiPropertyOptional({
-    example: 5,
-    description: 'ID del empaque aplicado (opcional). Debe pertenecer a la company.',
-    nullable: true,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'packaging_id debe ser entero' })
-  @Min(1, { message: 'packaging_id debe ser >= 1' })
-  packaging_id?: number | null;
-
-  @ApiPropertyOptional({
-    example: 3,
-    description:
-      'ID del nivel de precio aplicado (ProductPrice). Si viene, debe pertenecer al producto.',
-    nullable: true,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'product_price_id debe ser entero' })
-  @Min(1, { message: 'product_price_id debe ser >= 1' })
-  product_price_id?: number | null;
-
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'Aceite Diana 1L',
-    description: 'Snapshot opcional del nombre. Si no viene, se toma de product.name.',
+    description: 'Snapshot inmutable del nombre del producto al momento de la venta.',
   })
-  @IsOptional()
   @IsString()
   @MaxLength(200)
-  description?: string;
+  name!: string;
+
+  @ApiProperty({
+    example: 18.5,
+    description: 'Costo unitario al momento de la venta (snapshot). >= 0.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'cost debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'cost debe ser >= 0' })
+  cost!: number;
+
+  @ApiProperty({
+    example: 25.5,
+    description: 'Precio unitario al momento de la venta (snapshot). >= 0.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'price debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'price debe ser >= 0' })
+  price!: number;
 
   @ApiProperty({ example: 2, description: 'Cantidad vendida. > 0. Hasta 4 decimales.' })
   @Type(() => Number)
@@ -140,48 +153,115 @@ export class CreateSaleLineDto {
   quantity!: number;
 
   @ApiProperty({
-    example: 25.5,
-    description: 'Precio unitario al momento de la venta (snapshot). >= 0.',
+    example: 51,
+    description: 'Total de la línea (price * quantity). Pre-calculado por el cliente con Big.js.',
   })
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 2 },
-    { message: 'unit_price debe ser un número con hasta 2 decimales' },
-  )
-  @Min(0, { message: 'unit_price debe ser >= 0' })
-  unit_price!: number;
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'total debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'total debe ser >= 0' })
+  total!: number;
+
+  @ApiProperty({
+    example: 14,
+    description:
+      'Ganancia de la línea ((price - cost) * quantity). Pre-calculada por el cliente.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })
+  profit!: number;
+
+  @ApiProperty({
+    example: 27.45,
+    description: 'Margen porcentual de la línea (profit / total * 100). Hasta 4 decimales.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'margin debe ser número con hasta 4 decimales' })
+  margin!: number;
+
+  @ApiProperty({
+    enum: SALE_LINE_PRICE_MODES,
+    example: 'fixed',
+    description:
+      'Cómo se determinó el precio de la línea. `fixed` = nivel del catálogo; `manual` = escrito por el vendedor.',
+  })
+  @IsString()
+  @IsIn([...SALE_LINE_PRICE_MODES], {
+    message: 'price_mode inválido. Usa fixed o manual.',
+  })
+  price_mode!: SaleLinePriceModeDto;
 
   @ApiPropertyOptional({
-    example: 16,
-    description: 'Porcentaje IVA aplicado a esta línea (0-100). Default 0.',
+    example: 1,
+    description:
+      'Índice del nivel de precio usado (0..n-1) cuando `price_mode = fixed`. null si manual.',
+    nullable: true,
   })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 4 },
-    { message: 'iva_percentage debe ser un número con hasta 4 decimales' },
-  )
-  @Min(0, { message: 'iva_percentage debe ser >= 0' })
-  iva_percentage?: number;
+  @IsInt({ message: 'price_position debe ser entero' })
+  @Min(0, { message: 'price_position debe ser >= 0' })
+  price_position?: number | null;
 }
 
 /**
- * Payload de `POST /sales`. Espejo PlacePos `SaleInvoicePayload`.
+ * Payload de `POST /sales`. Espejo byte-por-byte de `SaleInvoicePayload` de
+ * PlacePos (`placepos/src/main/database/types.ts`).
  *
- * PlacePos siempre crea con `ticket_type = 'ORDER'`; aceptamos el campo en
- * el DTO pero el service lo OVERRIDEA a `ORDER` (paridad estricta: el
- * convert se hace vía `POST /sales/:id/convert`).
+ * Multi-tenancy: el `company_id` se toma del JWT (`@CurrentCompany`), nunca
+ * del body. El service valida que `customer_id` y todos los `item_id` de las
+ * líneas pertenezcan a esa company.
+ *
+ * Totales: el cliente PlacePos los pre-calcula con Big.js y los envía. El
+ * service los persiste tal cual — paridad con `saleOperations.createOrder`.
+ *
+ * PlacePos siempre crea con `ticket_type = 'ORDER'`; aceptamos el campo
+ * en el DTO pero el service lo OVERRIDEA a ORDER (paridad estricta: la
+ * conversión ORDER→SALE se hace al cobrar vía `POST /payments`).
  */
 export class CreateSaleDto {
-  @ApiPropertyOptional({
-    enum: TicketType,
-    example: TicketType.ORDER,
-    description:
-      'Tipo de ticket al crear. PlacePos siempre envía ORDER; el service ignora override.',
+  @ApiProperty({
+    type: [CreateSaleLineDto],
+    description: 'Líneas de la venta. Al menos una.',
   })
-  @IsOptional()
-  @IsEnum(TicketType, { message: 'ticket_type inválido' })
-  ticket_type?: TicketType;
+  @IsArray()
+  @ArrayMinSize(1, { message: 'La venta debe contener al menos una línea' })
+  @ValidateNested({ each: true })
+  @Type(() => CreateSaleLineDto)
+  items!: CreateSaleLineDto[];
+
+  @ApiProperty({
+    example: 102,
+    description: 'Total de la venta. Σ items.total. Pre-calculado por el cliente con Big.js.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'total debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'total debe ser >= 0' })
+  total!: number;
+
+  @ApiProperty({
+    example: 74,
+    description: 'Costo total de la venta. Σ items.cost * items.quantity.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'cost debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'cost debe ser >= 0' })
+  cost!: number;
+
+  @ApiProperty({
+    example: 28,
+    description: 'Ganancia total de la venta. total - cost.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })
+  profit!: number;
+
+  @ApiProperty({
+    example: 27.4509,
+    description: 'Margen porcentual de la venta. (profit / total) * 100. Hasta 4 decimales.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'margin debe ser número con hasta 4 decimales' })
+  margin!: number;
 
   @ApiPropertyOptional({
     example: 1,
@@ -193,6 +273,27 @@ export class CreateSaleDto {
   @IsInt({ message: 'customer_id debe ser entero' })
   @Min(1, { message: 'customer_id debe ser >= 1' })
   customer_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Juan Pérez',
+    description:
+      'Snapshot del nombre del cliente al crear la venta. Si no viene y customer_id está, el service toma `customer.name`.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  customer_name?: string | null;
+
+  @ApiPropertyOptional({
+    enum: TicketType,
+    example: TicketType.ORDER,
+    description:
+      'Tipo de ticket al crear. PlacePos siempre envía ORDER; el service ignora override.',
+  })
+  @IsOptional()
+  @IsEnum(TicketType, { message: 'ticket_type inválido' })
+  ticket_type?: TicketType;
 
   @ApiPropertyOptional({ example: 'Pago en efectivo + transferencia.' })
   @IsOptional()
@@ -209,20 +310,10 @@ export class CreateSaleDto {
   @IsDateString({}, { message: 'due_date debe ser una fecha válida (YYYY-MM-DD)' })
   due_date?: string;
 
-  @ApiProperty({
-    type: [CreateSaleLineDto],
-    description: 'Líneas de la venta. Al menos una.',
-  })
-  @IsArray()
-  @ArrayMinSize(1, { message: 'La venta debe contener al menos una línea' })
-  @ValidateNested({ each: true })
-  @Type(() => CreateSaleLineDto)
-  lines!: CreateSaleLineDto[];
-
   @ApiPropertyOptional({
     type: [CreateSalePaymentInlineDto],
     description:
-      'Pagos aplicados al momento de crear la venta. Si Σ payments < total, se genera un SaleCredit (requiere customer_id).',
+      'Pagos aplicados al momento de crear la venta. Si Σ payments < total, se genera un SaleCredit (requiere customer_id). PlacePos no envía este campo al crear ORDER (los pagos van por POST /payments).',
   })
   @IsOptional()
   @IsArray()

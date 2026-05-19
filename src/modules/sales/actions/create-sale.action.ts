@@ -8,21 +8,22 @@ import {
 import Big from 'big.js';
 import { DataSource, In, type EntityManager } from 'typeorm';
 
-import { preciseNumber, toBig } from '@/common/utils/precision';
+import { toBig } from '@/common/utils/precision';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
-import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
-import { ProductPrice } from '@/modules/products/entities/product-price.entity';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
-import type { CreateSaleDto, CreateSalePaymentInlineDto } from '../dto/create-sale.dto';
+import type {
+  CreateSaleDto,
+  CreateSaleLineDto,
+  CreateSalePaymentInlineDto,
+} from '../dto/create-sale.dto';
 import { SaleCredit, SaleCreditStatus } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { applySalePayment, type SalePaymentActor } from '../internal/apply-sale-payment';
-import { calculateSaleTotals } from '../internal/calculate-sale-totals';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
 import { findSaleCredit, findSaleLines, findSalePayments } from '../internal/sale-lookups';
 import type { SaleAggregate } from './find-sale.action';
@@ -40,52 +41,47 @@ export interface SaleCreator {
  * (`sales.routes.ts → createOrder`).
  *
  * --------------------------------------------------------------------------
+ * Contrato del payload
+ * --------------------------------------------------------------------------
+ *
+ * El cliente PlacePos envía exactamente `SaleInvoicePayload`:
+ *
+ *   items: [{ item_id, name, cost, price, quantity, total, profit, margin,
+ *             price_mode, price_position }]
+ *   total, cost, profit, margin       (pre-calculados con Big.js en el cliente)
+ *   customer_id?, customer_name?      (mostrador → null/omit)
+ *   ticket_type?                       (siempre ORDER al crear)
+ *
+ * El service confía en los totales del cliente — paridad estricta con
+ * `saleOperations.createOrder` del modo servidor/cliente. La extensión cloud
+ * son las validaciones multi-tenant antes del INSERT.
+ *
+ * --------------------------------------------------------------------------
  * Pasos atómicos (UNA transacción)
  * --------------------------------------------------------------------------
  *
  *   1. (Opcional) Validar `customer_id` pertenece a la company (no archivado).
- *      Lock pessimistic_write sobre el customer si se va a tocar su
- *      `balance` (sale a crédito).
+ *      Lock pessimistic_write sobre el customer si va a quedar saldo.
  *
- *   2. Validar TODOS los `product_id` de las líneas pertenecen a la company,
+ *   2. Validar TODOS los `item_id` de las líneas pertenecen a la company,
  *      son SIMPLE y NO están archivados.
  *
- *   3. Validar TODOS los `packaging_id` declarados pertenecen a la company.
+ *   3. Generar `ticket_number` con `IncrementTicketNumberAction` para
+ *      ticket_type ORDER (paridad PlacePos).
  *
- *   4. Validar TODOS los `product_price_id` declarados pertenecen a la
- *      company Y al producto que la línea referencia.
+ *   4. INSERT `SaleInvoice` con los totales del payload + multi-tenancy.
  *
- *   5. Calcular totales con Big.js (`calculateSaleTotals`). El cliente
- *      puede enviar `total` como hint pero el service lo IGNORA — fuente
- *      única de verdad.
+ *   5. INSERT batch de `SaleInvoiceLine` mapeando los items del payload a la
+ *      entidad cloud (campos pre-existentes IVA/packaging/product_price se
+ *      persisten con valores neutros: el local no maneja esos conceptos).
  *
- *   6. Generar `ticket_number` con `IncrementTicketNumberAction` para
- *      ticket_type `ORDER` (PlacePos siempre crea como ORDER).
- *
- *   7. INSERT `SaleInvoice` + batch INSERT de `SaleInvoiceLine`.
- *
- *   8. Si el DTO trae `payments[]`, por cada uno:
- *      - Idempotency uuid (devuelve el row existente si ya procesado).
- *      - Acreditar la cuenta receptora (bank/wallet con FOR UPDATE;
- *        cash_register con CashRegisterLog IN).
- *      - INSERT SalePayment.
- *      - INSERT FinancialMovement(INCOME, SALE).
- *
- *   9. Si `Σ payments < total`:
- *      - REQUIERE `customer_id`. Si la venta es mostrador (sin customer)
- *        rechazar 422.
- *      - INSERT SaleCredit con balance = total - paidSum,
- *        status = PARTIALLY_PAID (si paidSum > 0) o PENDING (si paidSum = 0).
- *      - DECREMENTAR `Customer.balance` por `balance` (signed: el cliente
- *        queda debiendo). Espejo PlacePos.
- *
- *  10. (Si `Σ payments > total` → rechazar 422.)
+ *   6. Si el DTO trae `payments[]` (el cliente PlacePos no los envía al crear
+ *      ORDER, pero el endpoint los soporta para futuro), procesar cada uno
+ *      con `applySalePayment` (idempotente por uuid). Si Σ payments < total
+ *      y hay customer_id, INSERT `SaleCredit` y decrementar
+ *      `Customer.balance`. Si Σ payments > total → 422.
  *
  * Cualquier paso falla → rollback total.
- *
- * NO actualizamos stock de productos porque la columna `Product.stock` no
- * existe aún en este API (Fase 3 lo omitió). El TODO se mantiene en sync
- * con PlacePos cuando se añada.
  */
 @Injectable()
 export class CreateSaleAction {
@@ -103,7 +99,7 @@ export class CreateSaleAction {
     createdBy: SaleCreator,
   ): Promise<SaleAggregate> {
     return this.dataSource.transaction<SaleAggregate>(async (manager) => {
-      // 1. Customer (opcional). Si viene, validar + (lock si va a crédito).
+      // 1. Customer (opcional). Si viene, validar + lock.
       let customer: Customer | null = null;
       if (typeof dto.customer_id === 'number' && dto.customer_id > 0) {
         customer = await manager.findOne(Customer, {
@@ -119,8 +115,10 @@ export class CreateSaleAction {
         }
       }
 
-      // 2. Productos.
-      const productIds = Array.from(new Set(dto.lines.map((l) => String(l.product_id))));
+      // 2. Productos: validar que cada item_id pertenezca a la company y sea
+      // SIMPLE no archivado. Cross-tenant guard crítico — sin esto un usuario
+      // podría facturar productos de otra company.
+      const productIds = Array.from(new Set(dto.items.map((l) => String(l.item_id))));
       const products = await manager.find(Product, {
         where: { id: In(productIds), company_id: String(companyId) },
       });
@@ -135,86 +133,34 @@ export class CreateSaleAction {
           `El producto "${invalidProduct.name}" no es un producto simple disponible`,
         );
       }
-      const productById = new Map(products.map((p) => [Number(p.id), p]));
 
-      // 3. Packagings (solo los referenciados).
-      const packagingIds = Array.from(
-        new Set(
-          dto.lines
-            .map((l) => l.packaging_id)
-            .filter((id): id is number => typeof id === 'number' && id > 0)
-            .map((id) => String(id)),
-        ),
-      );
-      const packagingById = new Map<number, Packaging>();
-      if (packagingIds.length > 0) {
-        const packagings = await manager.find(Packaging, {
-          where: {
-            id: In(packagingIds),
-            company_id: String(companyId),
-            is_archived: false,
-          },
-        });
-        if (packagings.length !== packagingIds.length) {
-          throw new BadRequestException('Uno o más empaques no existen o están archivados');
-        }
-        for (const p of packagings) {
-          packagingById.set(Number(p.id), p);
-        }
-      }
-
-      // 4. ProductPrices (solo los referenciados).
-      const productPriceIds = Array.from(
-        new Set(
-          dto.lines
-            .map((l) => l.product_price_id)
-            .filter((id): id is number => typeof id === 'number' && id > 0)
-            .map((id) => String(id)),
-        ),
-      );
-      const productPriceById = new Map<number, ProductPrice>();
-      if (productPriceIds.length > 0) {
-        const prices = await manager.find(ProductPrice, {
-          where: { id: In(productPriceIds), company_id: String(companyId) },
-        });
-        if (prices.length !== productPriceIds.length) {
-          throw new BadRequestException('Uno o más niveles de precio no existen');
-        }
-        for (const p of prices) {
-          productPriceById.set(Number(p.id), p);
-        }
-      }
-
-      // 5. Cálculo de totales con Big.js.
-      const totals = calculateSaleTotals(
-        dto.lines,
-        companyId,
-        productById,
-        packagingById,
-        productPriceById,
-      );
-
-      // 6. Folio ORDER per-company (atómico).
+      // 3. Folio ORDER per-company (atómico).
       const ticket = await this.incrementTicketNumberAction.execute(
         manager,
         companyId,
         TicketSettingType.ORDER,
       );
 
-      // 7. INSERT SaleInvoice + lines.
+      // 4. INSERT SaleInvoice con los totales del payload. El cliente PlacePos
+      // los pre-calcula con Big.js; el service los persiste tal cual (paridad
+      // con `saleOperations.createOrder`). `subtotal = total` y `tax_total = 0`
+      // porque el modo servidor/cliente no maneja IVA en ventas.
       const saleEntity = manager.create(SaleInvoice, {
         company_id: String(companyId),
         ticket_type: TicketType.ORDER,
         ticket_number: ticket.formatted,
         sale_number: null,
         customer_id: customer ? customer.id : null,
-        customer_name: customer ? customer.name : null,
-        subtotal: totals.subtotal,
-        tax_total: totals.tax_total,
-        total: totals.total,
-        cost: totals.cost,
-        profit: totals.profit,
-        margin: totals.margin,
+        // Snapshot del nombre tal como llegó del cliente (paridad con
+        // `saleOperations.createOrder`: persiste payload.customer_name ?? null
+        // sin tocar el customer.name del BD).
+        customer_name: dto.customer_name ?? null,
+        subtotal: dto.total,
+        tax_total: 0,
+        total: dto.total,
+        cost: dto.cost,
+        profit: dto.profit,
+        margin: dto.margin,
         notes: dto.notes?.trim() || null,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
@@ -229,13 +175,15 @@ export class CreateSaleAction {
         throw error;
       }
 
-      const lineRows = totals.lines.map((l) => ({
-        ...l,
-        sale_invoice_id: savedSale.id,
-      }));
+      // 5. Mapear y persistir las líneas. Los campos cloud-only sin equivalente
+      // en el payload local quedan en su default neutro: `subtotal = total`,
+      // `iva_percentage = 0`, `iva_amount = 0`, `packaging_id = null`,
+      // `product_price_id = null`. La columna `description` recibe el `name`
+      // (snapshot del producto).
+      const lineRows = dto.items.map((item) => mapItemToLineRow(item, savedSale.id, companyId));
       await manager.insert(SaleInvoiceLine, lineRows);
 
-      // 8. Pagos inline (opcional).
+      // 6. Pagos inline (opcional — PlacePos no los envía al crear ORDER).
       const paymentsInput: CreateSalePaymentInlineDto[] = dto.payments ?? [];
       let paidSum: Big = toBig(0);
       const ticketReference = ticket.formatted;
@@ -245,7 +193,6 @@ export class CreateSaleAction {
           saleId: Number(savedSale.id),
           companyId,
           ticketReference,
-          // CRIT-1 auditoría: propagar customer_id para el CHECK del FM.
           customerId: dto.customer_id ?? null,
           account_type: p.account_type,
           account_id: p.account_id,
@@ -257,23 +204,22 @@ export class CreateSaleAction {
         if (!result.idempotent) {
           paidSum = paidSum.plus(toBig(p.amount));
         } else {
-          // Idempotente: el row preexistente ya cuenta — sumamos su amount real
-          // (el cliente puede haber enviado un monto distinto al ya procesado;
-          // confiamos en el registro persistido).
           paidSum = paidSum.plus(toBig(result.payment.amount));
         }
       }
 
-      const totalBig = toBig(totals.total);
+      const totalBig = toBig(dto.total);
       if (paidSum.gt(totalBig)) {
         throw new UnprocessableEntityException(
           `La suma de pagos excede el total de la venta (${totalBig.toFixed(2)})`,
         );
       }
 
-      // 9. SaleCredit si quedó saldo pendiente.
       const balanceBig = totalBig.minus(paidSum);
-      if (balanceBig.gt(0)) {
+      if (balanceBig.gt(0) && paymentsInput.length > 0) {
+        // Solo creamos SaleCredit si se aplicaron pagos parciales. Si no
+        // vinieron pagos (caso PlacePos al crear ORDER), la venta queda sin
+        // crédito — el saldo se gestiona al cobrar vía POST /payments.
         if (!customer) {
           throw new UnprocessableEntityException(
             'No se puede dejar saldo pendiente en una venta sin cliente identificado',
@@ -283,9 +229,9 @@ export class CreateSaleAction {
           manager,
           savedSale,
           customer,
-          totals.total,
-          preciseNumber(paidSum, 2),
-          preciseNumber(balanceBig, 2),
+          dto.total,
+          Number(paidSum.toFixed(2)),
+          Number(balanceBig.toFixed(2)),
           dto.due_date,
           companyId,
         );
@@ -297,9 +243,9 @@ export class CreateSaleAction {
         saleId: Number(savedSale.id),
         ticketNumber: ticket.formatted,
         customerId: customer ? Number(customer.id) : null,
-        total: totals.total,
-        paid: preciseNumber(paidSum, 2),
-        balance: preciseNumber(balanceBig, 2),
+        total: dto.total,
+        paid: Number(paidSum.toFixed(2)),
+        balance: Number(balanceBig.toFixed(2)),
         actorId: createdBy.id,
       });
 
@@ -345,7 +291,6 @@ export class CreateSaleAction {
       throw error;
     }
 
-    // Customer.balance -= balance (cliente queda debiendo más).
     await manager.decrement(
       Customer,
       { id: customer.id, company_id: String(companyId) },
@@ -370,4 +315,33 @@ export class CreateSaleAction {
     const credit = await findSaleCredit(manager, saleId, companyId);
     return { sale, lines, payments, credit };
   }
+}
+
+/**
+ * Mapea un item del payload PlacePos a la fila lista para INSERT en
+ * `sale_invoice_lines`. Los campos cloud-only sin equivalente en el shape
+ * local (`packaging_id`, `product_price_id`, `iva_percentage`, `iva_amount`)
+ * quedan en su valor neutro — el modo servidor/cliente no maneja esos
+ * conceptos en ventas.
+ */
+function mapItemToLineRow(item: CreateSaleLineDto, saleInvoiceId: string, companyId: number) {
+  const unitCost = item.cost;
+  const lineTotal = item.total;
+  return {
+    company_id: String(companyId),
+    sale_invoice_id: saleInvoiceId,
+    product_id: String(item.item_id),
+    packaging_id: null as string | null,
+    product_price_id: null as string | null,
+    description: item.name,
+    quantity: item.quantity,
+    unit_price: item.price,
+    unit_cost: unitCost,
+    subtotal: lineTotal,
+    iva_percentage: 0,
+    iva_amount: 0,
+    total: lineTotal,
+    profit: item.profit,
+    margin: item.margin,
+  };
 }

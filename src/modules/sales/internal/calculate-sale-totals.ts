@@ -6,7 +6,7 @@ import type { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import type { Product } from '@/modules/products/entities/product.entity';
 import type { ProductPrice } from '@/modules/products/entities/product-price.entity';
 
-import type { CreateSaleLineDto } from '../dto/create-sale.dto';
+import type { UpdateSaleLineDto } from '../dto/update-sale.dto';
 
 /**
  * Estructura de cada línea ya calculada y lista para INSERT batch en
@@ -69,7 +69,7 @@ export interface ComputedSaleTotals {
  *   margin_v    = profit_v / total_v * 100 (0 si total_v = 0)
  */
 export function calculateSaleTotals(
-  lines: CreateSaleLineDto[],
+  lines: UpdateSaleLineDto[],
   companyId: number,
   productById: Map<number, Product>,
   packagingById: Map<number, Packaging>,

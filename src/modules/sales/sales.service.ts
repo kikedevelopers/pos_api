@@ -11,10 +11,12 @@ import { GetLastSaleAction, type LastSaleResult } from './actions/get-last-sale.
 import { GetSaleCreditNoteAction } from './actions/get-sale-credit-note.action';
 import { UpdateSaleAction, type UpdateSaleActor } from './actions/update-sale.action';
 import { VoidSaleAction, type VoidSaleActor } from './actions/void-sale.action';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
+
 import type { CreateSaleDto } from './dto/create-sale.dto';
 import type { ListSalesQueryDto } from './dto/list-sales-query.dto';
+import type { SaleListItemDto } from './dto/sale-list-item.dto';
 import type { UpdateSaleDto } from './dto/update-sale.dto';
-import type { SaleInvoice } from './entities/sale-invoice.entity';
 import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
 
 export type { SaleCreator } from './actions/create-sale.action';
@@ -44,8 +46,12 @@ export class SalesService {
     private readonly getSaleCreditNoteAction: GetSaleCreditNoteAction,
   ) {}
 
-  findAll(companyId: number, query: ListSalesQueryDto): Promise<SaleInvoice[]> {
-    return this.findAllSalesAction.execute(companyId, query);
+  findAll(
+    companyId: number,
+    query: ListSalesQueryDto,
+    actor: AuthUser,
+  ): Promise<SaleListItemDto[]> {
+    return this.findAllSalesAction.execute(companyId, query, actor);
   }
 
   findOne(id: number, companyId: number): Promise<SaleAggregate> {

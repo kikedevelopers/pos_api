@@ -26,12 +26,17 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import type { LastSaleResult } from './actions/get-last-sale.action';
+import {
+  CreateSaleResponseDto,
+  toCreateSaleResponseDto,
+} from './dto/create-sale-response.dto';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import {
   SaleCreditNoteResponseDto,
   toSaleCreditNoteResponseDto,
 } from './dto/sale-credit-note-response.dto';
+import { SaleListItemDto } from './dto/sale-list-item.dto';
 import { SaleResponseDto, toSaleResponseDto } from './dto/sale-response.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
@@ -152,16 +157,19 @@ export class SalesController {
   @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
-      'Listar ventas de la company. Acepta ?limit, ?ticket_type, ?customer_id, ?date_from, ?date_to, ?show_deleted.',
+      'Listar ventas del día (paridad PlacePos `getTickets`). Acepta ?limit, ' +
+      '?ticket_type, ?customer_id, ?date_from, ?date_to, ?show_deleted. ' +
+      'Por default filtra ventas de HOY; employees solo ven las suyas. ' +
+      'Totales consolidados (V + Σ ND − Σ NC). Shape camelCase exigido por ' +
+      'el renderer del POS.',
   })
-  @ApiResponse({ status: HttpStatus.OK, type: [SaleResponseDto] })
+  @ApiResponse({ status: HttpStatus.OK, type: [SaleListItemDto] })
   async findAll(
     @Query() query: ListSalesQueryDto,
     @CurrentCompany() companyId: number,
-  ): Promise<SaleResponseDto[]> {
-    const rows = await this.salesService.findAll(companyId, query);
-    // Listado liviano: sin líneas/pagos/credit — paridad PlacePos.
-    return rows.map((s) => toSaleResponseDto(s, [], [], null));
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<SaleListItemDto[]> {
+    return this.salesService.findAll(companyId, query, currentUser);
   }
 
   // --------------------------------------------------------------------------
@@ -191,10 +199,13 @@ export class SalesController {
   @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
-      'Crear una venta (ORDER) con líneas + pagos opcionales. Genera SaleCredit si queda saldo.',
+      'Crear una venta (ORDER) con líneas + pagos opcionales. Genera SaleCredit si queda saldo. ' +
+      'Retorna shape minimal { success, message, invoice_id, ticket_number } — paridad con el ' +
+      '`createOrder` del modo servidor/cliente de PlacePos. Para el aggregate completo usa ' +
+      '`GET /sales/:id` con el invoice_id devuelto.',
   })
   @ApiBody({ type: CreateSaleDto })
-  @ApiResponse({ status: HttpStatus.CREATED, type: SaleResponseDto })
+  @ApiResponse({ status: HttpStatus.CREATED, type: CreateSaleResponseDto })
   @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -204,12 +215,12 @@ export class SalesController {
     @Body() dto: CreateSaleDto,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<SaleResponseDto> {
-    const { sale, lines, payments, credit } = await this.salesService.create(dto, companyId, {
+  ): Promise<CreateSaleResponseDto> {
+    const { sale } = await this.salesService.create(dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
-    return toSaleResponseDto(sale, lines, payments, credit);
+    return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number);
   }
 
   // --------------------------------------------------------------------------
