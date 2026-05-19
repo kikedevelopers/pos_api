@@ -12,6 +12,11 @@ import { SaleInvoice } from '../entities/sale-invoice.entity';
 /**
  * Línea consolidada — espejo PlacePos `ConsolidatedLine`. Representa el
  * estado VIVO de una línea tras aplicar todas las NC/ND.
+ *
+ * `price_mode` / `price_position` son metadatos del POS (cómo se eligió el
+ * precio) que el cloud no persiste. Se emiten con valores neutros (`'fixed'`,
+ * `null`) para que `useEditTicket` del cliente pueda hidratar el carrito sin
+ * crashear — la UI del POS los usa para repintar el selector de precio.
  */
 export interface ConsolidatedLine {
   item_id: number;
@@ -22,6 +27,8 @@ export interface ConsolidatedLine {
   total: number;
   profit: number;
   margin: number;
+  price_mode: 'fixed' | 'manual';
+  price_position: number | null;
 }
 
 /**
@@ -126,6 +133,8 @@ function applyDebitAdjustment(
     total: noteLine.total,
     profit,
     margin,
+    price_mode: 'fixed',
+    price_position: null,
   });
 }
 
@@ -176,6 +185,10 @@ function mapInvoiceLine(l: SaleInvoiceLine): ConsolidatedLine {
     total: Number(l.total),
     profit: Number(l.profit),
     margin: Number(l.margin),
+    // Cloud no persiste estos metadatos del POS. Valores neutros que
+    // permiten al renderer hidratar el cart sin lógica condicional extra.
+    price_mode: 'fixed',
+    price_position: null,
   };
 }
 

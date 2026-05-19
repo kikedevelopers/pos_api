@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -15,15 +16,24 @@ import {
 } from 'class-validator';
 
 /**
- * Línea del payload de `PUT /sales/:id`. Conserva el shape cloud histórico
- * (`product_id`, `unit_price`, `iva_percentage`, `packaging_id`,
- * `product_price_id`) porque el `UpdateSaleAction` lo usa internamente para
- * recalcular totales y generar NC/ND con precisión.
- *
- * NOTA: el `POST /sales` usa otro shape (espejo PlacePos, ver
- * `CreateSaleLineDto`). No se reutiliza este DTO para el create porque los
- * contratos divergen intencionalmente: el create acepta totales pre-
- * calculados por el cliente, el update recalcula desde cero.
+ * Tipos de cuenta receptora aceptados como `credit_correction_source` /
+ * `debit_correction_source`. Espejo PlacePos `CorrectionSourceType`.
+ */
+export const SALE_CORRECTION_SOURCE_TYPES = ['bank', 'wallet', 'cash_register'] as const;
+export type SaleCorrectionSourceTypeDto = (typeof SALE_CORRECTION_SOURCE_TYPES)[number];
+
+/**
+ * Modo en que se asignó el precio a una línea. Espejo PlacePos.
+ */
+export const UPDATE_SALE_LINE_PRICE_MODES = ['fixed', 'manual'] as const;
+export type UpdateSaleLinePriceModeDto = (typeof UPDATE_SALE_LINE_PRICE_MODES)[number];
+
+/**
+ * Línea del payload de `PUT /sales/:id`. Espejo byte-por-byte de
+ * `SaleInvoiceLinePayload` de PlacePos
+ * (`placepos/src/main/database/types.ts`). El cliente PlacePos pre-calcula
+ * `cost`, `total`, `profit` y `margin` por línea con Big.js — el service los
+ * usa tal cual al persistir / calcular delta (paridad estricta).
  */
 export class UpdateSaleLineDto {
   @ApiProperty({
@@ -31,41 +41,35 @@ export class UpdateSaleLineDto {
     description: 'ID del producto vendido (debe pertenecer a la company).',
   })
   @Type(() => Number)
-  @IsInt({ message: 'product_id debe ser entero' })
-  @Min(1, { message: 'product_id debe ser >= 1' })
-  product_id!: number;
+  @IsInt({ message: 'item_id debe ser entero' })
+  @Min(1, { message: 'item_id debe ser >= 1' })
+  item_id!: number;
 
-  @ApiPropertyOptional({
-    example: 5,
-    description: 'ID del empaque aplicado (opcional). Debe pertenecer a la company.',
-    nullable: true,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'packaging_id debe ser entero' })
-  @Min(1, { message: 'packaging_id debe ser >= 1' })
-  packaging_id?: number | null;
-
-  @ApiPropertyOptional({
-    example: 3,
-    description:
-      'ID del nivel de precio aplicado (ProductPrice). Si viene, debe pertenecer al producto.',
-    nullable: true,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'product_price_id debe ser entero' })
-  @Min(1, { message: 'product_price_id debe ser >= 1' })
-  product_price_id?: number | null;
-
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'Aceite Diana 1L',
-    description: 'Snapshot opcional del nombre. Si no viene, se toma de product.name.',
+    description: 'Snapshot inmutable del nombre del producto al momento de la edición.',
   })
-  @IsOptional()
   @IsString()
   @MaxLength(200)
-  description?: string;
+  name!: string;
+
+  @ApiProperty({
+    example: 18.5,
+    description: 'Costo unitario al momento de la edición (snapshot). >= 0.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'cost debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'cost debe ser >= 0' })
+  cost!: number;
+
+  @ApiProperty({
+    example: 25.5,
+    description: 'Precio unitario al momento de la edición (snapshot). >= 0.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'price debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'price debe ser >= 0' })
+  price!: number;
 
   @ApiProperty({ example: 2, description: 'Cantidad vendida. > 0. Hasta 4 decimales.' })
   @Type(() => Number)
@@ -77,73 +81,114 @@ export class UpdateSaleLineDto {
   quantity!: number;
 
   @ApiProperty({
-    example: 25.5,
-    description: 'Precio unitario al momento de la venta (snapshot). >= 0.',
+    example: 51,
+    description: 'Total de la línea (price * quantity). Pre-calculado por el cliente con Big.js.',
   })
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 2 },
-    { message: 'unit_price debe ser un número con hasta 2 decimales' },
-  )
-  @Min(0, { message: 'unit_price debe ser >= 0' })
-  unit_price!: number;
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'total debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'total debe ser >= 0' })
+  total!: number;
+
+  @ApiProperty({
+    example: 14,
+    description: 'Ganancia de la línea ((price - cost) * quantity). Pre-calculada por el cliente.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })
+  profit!: number;
+
+  @ApiProperty({
+    example: 27.45,
+    description: 'Margen porcentual de la línea (profit / total * 100). Hasta 4 decimales.',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'margin debe ser número con hasta 4 decimales' })
+  margin!: number;
+
+  @ApiProperty({
+    enum: UPDATE_SALE_LINE_PRICE_MODES,
+    example: 'fixed',
+    description: 'Cómo se determinó el precio de la línea.',
+  })
+  @IsString()
+  @IsIn([...UPDATE_SALE_LINE_PRICE_MODES], {
+    message: 'price_mode inválido. Usa fixed o manual.',
+  })
+  price_mode!: UpdateSaleLinePriceModeDto;
 
   @ApiPropertyOptional({
-    example: 16,
-    description: 'Porcentaje IVA aplicado a esta línea (0-100). Default 0.',
+    example: 1,
+    description:
+      'Índice del nivel de precio usado (0..n-1) cuando `price_mode = fixed`. null si manual.',
+    nullable: true,
   })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 4 },
-    { message: 'iva_percentage debe ser un número con hasta 4 decimales' },
-  )
-  @Min(0, { message: 'iva_percentage debe ser >= 0' })
-  iva_percentage?: number;
+  @IsInt({ message: 'price_position debe ser entero' })
+  @Min(0, { message: 'price_position debe ser >= 0' })
+  price_position?: number | null;
 }
 
 /**
- * Payload de `PUT /sales/:id`. Espejo del `editTicket` de PlacePos.
+ * Origen de un ajuste (NC/ND) para devoluciones/cargos asociados a una
+ * edición. Espejo PlacePos `CorrectionSource`. El front del POS lo envía
+ * cuando la edición de una venta SALE genera NC o ND y existe dinero que
+ * regresa / entra a una cuenta concreta (bank, wallet o cash_register).
+ */
+export class SaleCorrectionSourceDto {
+  @ApiProperty({
+    enum: SALE_CORRECTION_SOURCE_TYPES,
+    example: 'cash_register',
+    description: 'Tipo de cuenta destino/origen del ajuste.',
+  })
+  @IsString()
+  @IsIn([...SALE_CORRECTION_SOURCE_TYPES], {
+    message: 'correction_source.type inválido. Usa bank, wallet o cash_register.',
+  })
+  type!: SaleCorrectionSourceTypeDto;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'ID de la cuenta (bank/wallet) o de la cash_register asociada. Multi-tenant: el service valida ownership.',
+  })
+  @Type(() => Number)
+  @IsInt({ message: 'correction_source.id debe ser entero' })
+  @Min(1, { message: 'correction_source.id debe ser >= 1' })
+  id!: number;
+
+  @ApiProperty({ example: 'Caja registradora principal' })
+  @IsString()
+  @MaxLength(200)
+  name!: string;
+}
+
+/**
+ * Payload de `PUT /sales/:id`. Espejo byte-por-byte de `SaleInvoicePayload`
+ * de PlacePos (`placepos/src/main/database/types.ts`).
  *
  * --------------------------------------------------------------------------
  * Casos de uso (según el `ticket_type` actual de la venta)
  * --------------------------------------------------------------------------
  *
- *   - `ORDER`: edición libre. Reemplazo total de líneas + cliente + notas.
- *     NO genera NC/ND. NO toca inventario (las ORDER no consumieron stock).
+ *   - `ORDER`: edición libre. Reemplazo total de líneas + cliente. NO genera
+ *     NC/ND. NO toca inventario (las ORDER no consumieron stock). NO consulta
+ *     `*_correction_source`.
  *
  *   - `SALE`:
- *     - Solo cambia el cliente (lines ausentes o iguales): UPDATE
- *       `customer_id`/`customer_name` (bloquea si la venta tiene SaleCredit
- *       con `paid_amount > 0`).
- *     - Cambian las líneas: emite NC `PARTIAL_VOID` por las
- *       `removed/reduced`, ND `ADDITION` por las `added/increased`, ajusta
- *       inventario diferencial, y recalcula los totales consolidados de la
- *       cabecera. Si la venta tiene una NC `FULL_VOID` activa la edición
- *       es rechazada (422).
+ *     - Sin cambio de líneas y sin cambio de cliente: no-op.
+ *     - Solo cambia el cliente: UPDATE `customer_*` (bloquea si la venta
+ *       tiene SaleCredit con `paid_amount > 0`).
+ *     - Cambian las líneas: emite NC `PARTIAL_VOID` por removidas/reducidas,
+ *       ND `ADDITION` por añadidas/incrementadas, ajusta inventario
+ *       diferencial. Si la venta tiene NC `FULL_VOID` activa → 422.
+ *       Cuando la NC mueve dinero ↦ se exige `credit_correction_source`;
+ *       cuando la ND mueve dinero ↦ se exige `debit_correction_source`.
  *
- * El campo `override_margin` lo respeta solo si el actor es owner/superadmin
- * (enforced por `assertMarginAboveMinimum`).
+ * El campo `override_margin` solo lo respeta el guard de margen si el actor
+ * es owner/superadmin.
  */
 export class UpdateSaleDto {
-  @ApiPropertyOptional({
-    example: 1,
-    description:
-      'ID del cliente (debe pertenecer a la company). Para venta mostrador, omitir o enviar null.',
-    nullable: true,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'customer_id debe ser entero' })
-  @Min(1, { message: 'customer_id debe ser >= 1' })
-  customer_id?: number | null;
-
-  @ApiPropertyOptional({ example: 'Pedido editado.' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  notes?: string | null;
-
   @ApiPropertyOptional({
     type: [UpdateSaleLineDto],
     description:
@@ -156,13 +201,95 @@ export class UpdateSaleDto {
   @ArrayMinSize(1, { message: 'La venta debe contener al menos una línea' })
   @ValidateNested({ each: true })
   @Type(() => UpdateSaleLineDto)
-  lines?: UpdateSaleLineDto[];
+  items?: UpdateSaleLineDto[];
+
+  @ApiPropertyOptional({
+    example: 102,
+    description: 'Total consolidado de la venta tras la edición. Σ items.total.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'total debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'total debe ser >= 0' })
+  total?: number;
+
+  @ApiPropertyOptional({
+    example: 74,
+    description: 'Costo consolidado de la venta tras la edición.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'cost debe ser número con hasta 2 decimales' })
+  @Min(0, { message: 'cost debe ser >= 0' })
+  cost?: number;
+
+  @ApiPropertyOptional({
+    example: 28,
+    description: 'Ganancia consolidada de la venta tras la edición.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })
+  profit?: number;
+
+  @ApiPropertyOptional({
+    example: 27.4509,
+    description: 'Margen consolidado de la venta tras la edición. Hasta 4 decimales.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'margin debe ser número con hasta 4 decimales' })
+  margin?: number;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description:
+      'ID del cliente (debe pertenecer a la company). Omitir = no tocar; null = limpiar (venta mostrador).',
+    nullable: true,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'customer_id debe ser entero' })
+  @Min(1, { message: 'customer_id debe ser >= 1' })
+  customer_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Juan Pérez',
+    description:
+      'Snapshot del nombre del cliente. Si no viene y customer_id está, el service toma `customer.name`.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  customer_name?: string | null;
+
+  @ApiPropertyOptional({
+    type: SaleCorrectionSourceDto,
+    description:
+      'Cuenta a la que vuelve el dinero por la NC generada en la edición (solo para ventas SALE con productos removidos/reducidos).',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SaleCorrectionSourceDto)
+  credit_correction_source?: SaleCorrectionSourceDto | null;
+
+  @ApiPropertyOptional({
+    type: SaleCorrectionSourceDto,
+    description:
+      'Cuenta desde la que entra el dinero por la ND generada en la edición (solo para ventas SALE con productos añadidos/incrementados).',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SaleCorrectionSourceDto)
+  debit_correction_source?: SaleCorrectionSourceDto | null;
 
   @ApiPropertyOptional({
     example: false,
     description:
-      'Solicita saltar la validación de margen mínimo. Solo respetado si el ' +
-      'actor es owner / superadmin (enforced por `assertMarginAboveMinimum`).',
+      'Solicita saltar la validación de margen mínimo. Solo respetado si el actor es owner / superadmin.',
     default: false,
   })
   @IsOptional()

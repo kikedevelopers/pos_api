@@ -26,10 +26,7 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import type { LastSaleResult } from './actions/get-last-sale.action';
-import {
-  CreateSaleResponseDto,
-  toCreateSaleResponseDto,
-} from './dto/create-sale-response.dto';
+import { CreateSaleResponseDto, toCreateSaleResponseDto } from './dto/create-sale-response.dto';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import {
@@ -38,6 +35,12 @@ import {
 } from './dto/sale-credit-note-response.dto';
 import { SaleListItemDto } from './dto/sale-list-item.dto';
 import { SaleResponseDto, toSaleResponseDto } from './dto/sale-response.dto';
+import {
+  UpdateSaleResponseDto,
+  VoidSaleResponseDto,
+  toUpdateSaleResponseDto,
+  toVoidSaleResponseDto,
+} from './dto/update-sale-response.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
 import { SalesService } from './sales.service';
@@ -186,8 +189,11 @@ export class SalesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
   ): Promise<SaleResponseDto> {
-    const { sale, lines, payments, credit } = await this.salesService.findOne(id, companyId);
-    return toSaleResponseDto(sale, lines, payments, credit);
+    const { sale, lines, payments, credit, creditNotes } = await this.salesService.findOne(
+      id,
+      companyId,
+    );
+    return toSaleResponseDto(sale, lines, payments, credit, creditNotes);
   }
 
   // --------------------------------------------------------------------------
@@ -231,28 +237,40 @@ export class SalesController {
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
   @ApiOperation({
-    summary: 'Editar venta (solo ORDER sin pagos). Si es SALE o tiene pagos → 422.',
+    summary:
+      'Editar un ticket. ORDER: reemplazo total de líneas + cliente. SALE: emite ' +
+      'NC PARTIAL_VOID (o FULL_VOID) / ND ADDITION según el delta, ajusta inventario ' +
+      'y registra reembolso/cobro en la cuenta indicada por *_correction_source. ' +
+      'Retorna shape minimal { success, message, creditNoteId, creditNoteNumber, ' +
+      'debitNoteId, debitNoteNumber } — paridad con `editTicket` de PlacePos. Para ' +
+      'el aggregate completo usa `GET /sales/:id` con el id editado.',
   })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiBody({ type: UpdateSaleDto })
-  @ApiResponse({ status: HttpStatus.OK, type: SaleResponseDto })
+  @ApiResponse({ status: HttpStatus.OK, type: UpdateSaleResponseDto })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta no encontrada' })
   @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'override_margin solo permitido a owner/superadmin',
+  })
+  @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
-    description: 'Venta no editable (SALE confirmada o tiene pagos)',
+    description:
+      'Venta con FULL_VOID activa, cliente con abonos, margen bajo mínimo, ' +
+      'cuenta inválida o sin saldo para reembolso',
   })
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSaleDto,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<SaleResponseDto> {
-    const { sale, lines, payments, credit } = await this.salesService.update(id, dto, companyId, {
+  ): Promise<UpdateSaleResponseDto> {
+    const result = await this.salesService.update(id, dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
       type: currentUser.type,
     });
-    return toSaleResponseDto(sale, lines, payments, credit);
+    return toUpdateSaleResponseDto(result);
   }
 
   // --------------------------------------------------------------------------
@@ -264,24 +282,34 @@ export class SalesController {
   @Roles('owner', 'manager')
   @ApiOperation({
     summary:
-      'Anular un ORDER sin pagos. Para SALE confirmada usa CreditNote. Paridad PlacePos: usa POST /void, no DELETE.',
+      'Anular un ticket. ORDER: soft-delete directo. SALE: emite NC FULL_VOID, ' +
+      'devuelve stock y reversa CASH si aplica (los pagos TRANSFER no se reversan ' +
+      'automáticamente — paridad PlacePos). Retorna { success, message, creditNoteId, ' +
+      'creditNoteNumber }; los campos NC son null para anulación de ORDER.',
   })
   @ApiParam({ name: 'id', type: 'integer' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Payload `{ voided: true }`.' })
+  @ApiResponse({ status: HttpStatus.OK, type: VoidSaleResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta no encontrada' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
-    description: 'Venta SALE o con pagos aplicados',
+    description: 'Venta ya anulada, NC FULL_VOID existente o caja sin saldo para reembolso',
   })
   async void(
     @Param('id', ParseIntPipe) id: number,
+    @Body() body: { reason?: string } | undefined,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
-  ): Promise<{ voided: true }> {
-    await this.salesService.void(id, companyId, {
-      id: currentUser.user_id,
-      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
-      type: currentUser.type,
-    });
-    return { voided: true };
+  ): Promise<VoidSaleResponseDto> {
+    const result = await this.salesService.void(
+      id,
+      companyId,
+      {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+        type: currentUser.type,
+      },
+      body?.reason ?? null,
+    );
+    return toVoidSaleResponseDto(result);
   }
 }

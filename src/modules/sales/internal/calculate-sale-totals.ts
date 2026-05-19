@@ -6,7 +6,22 @@ import type { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import type { Product } from '@/modules/products/entities/product.entity';
 import type { ProductPrice } from '@/modules/products/entities/product-price.entity';
 
-import type { UpdateSaleLineDto } from '../dto/update-sale.dto';
+/**
+ * Shape de entrada que aceptaba este helper en su versión cloud original
+ * (cuando `UpdateSaleLineDto` traía product_id/unit_price/iva_percentage).
+ * Tras el realineamiento del DTO con el shape PlacePos, este helper quedó
+ * huérfano — se conserva por si futuros endpoints internos (no el PUT/void)
+ * lo necesitan. La firma local elimina la dependencia del DTO público.
+ */
+export interface CalculateSaleLineInput {
+  product_id: number;
+  packaging_id?: number | null;
+  product_price_id?: number | null;
+  description?: string;
+  quantity: number;
+  unit_price: number;
+  iva_percentage?: number;
+}
 
 /**
  * Estructura de cada línea ya calculada y lista para INSERT batch en
@@ -69,7 +84,7 @@ export interface ComputedSaleTotals {
  *   margin_v    = profit_v / total_v * 100 (0 si total_v = 0)
  */
 export function calculateSaleTotals(
-  lines: UpdateSaleLineDto[],
+  lines: CalculateSaleLineInput[],
   companyId: number,
   productById: Map<number, Product>,
   packagingById: Map<number, Packaging>,

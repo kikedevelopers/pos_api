@@ -1,42 +1,58 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { DataSource, In, type EntityManager } from 'typeorm';
+import Big from 'big.js';
+import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
-import { CreditNote, OperationType } from '@/modules/credit-notes/entities/credit-note.entity';
+import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
+import {
+  CashRegisterLog,
+  CashRegisterLogType,
+} from '@/modules/cash-register/entities/cash-register-log.entity';
+import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
+import {
+  CreditNote,
+  NoteType,
+  OperationType,
+} from '@/modules/credit-notes/entities/credit-note.entity';
 import { Customer } from '@/modules/customers/entities/customer.entity';
-import { Packaging } from '@/modules/packagings/entities/packaging.entity';
-import { Product, ProductType } from '@/modules/products/entities/product.entity';
-import { ProductPrice } from '@/modules/products/entities/product-price.entity';
+import {
+  MovementConcept,
+  MovementType,
+} from '@/modules/financial-movements/entities/financial-movement.entity';
+import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
+import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
-import { UpdateSaleDto } from '../dto/update-sale.dto';
+import { SaleCorrectionSourceDto, UpdateSaleDto, UpdateSaleLineDto } from '../dto/update-sale.dto';
 import { SaleCredit } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
-import { calculateSaleTotals } from '../internal/calculate-sale-totals';
-import { computeLineDelta, type LineDifference } from '../internal/compute-line-delta';
 import {
   getConsolidatedInvoice,
   type ConsolidatedInvoice,
+  type ConsolidatedLine,
 } from '../internal/consolidate-invoice.helper';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
-import { generateEditNotes } from '../internal/generate-edit-notes';
 import { assertMarginAboveMinimum } from '../internal/margin-guard.helper';
-import {
-  findSaleCredit,
-  findSaleInCompany,
-  findSaleLines,
-  findSalePayments,
-} from '../internal/sale-lookups';
-import type { SaleAggregate } from './find-sale.action';
+import { findSaleInCompany } from '../internal/sale-lookups';
+
+/**
+ * Resultado del action — shape PlacePos `editTicket`.
+ */
+export interface UpdateSaleActionResult {
+  message: string;
+  creditNoteId: number | null;
+  creditNoteNumber: string | null;
+  debitNoteId: number | null;
+  debitNoteNumber: string | null;
+}
 
 /**
  * Actor que ejecuta la edición (User u Employee). Se persiste como
@@ -49,60 +65,47 @@ export interface UpdateSaleActor {
   type: string | null;
 }
 
+interface PlacePosLineDifference {
+  type: 'removed' | 'added' | 'reduced' | 'increased';
+  item_id: number;
+  name: string;
+  cost: number;
+  price: number;
+  quantity: number;
+  total: number;
+}
+
 /**
- * Edita una venta. Espejo del `editTicket` (`editOrder` + `editSale`) de
- * PlacePos `editOperations.ts` (807 líneas), con las particularidades del
- * cloud (multi-tenant, idempotencia diferente, sin `correction_source`
- * implícito en CASH).
+ * Edita una venta. Espejo byte-por-byte del `editTicket` (`editOrder` +
+ * `editSale`) de PlacePos local. Multi-tenant: el `companyId` se inyecta
+ * desde el JWT — nunca del payload.
  *
  * --------------------------------------------------------------------------
- * Rutas según `ticket_type`
+ * Flujo según `ticket_type`
  * --------------------------------------------------------------------------
  *
- *   1. `ORDER`: reemplazo total — sin pagos, sin NC/ND, sin caja, sin stock.
- *      Equivalente a PlacePos `editOrder`.
- *
- *   2. `SALE`:
- *      - Si NO hay delta de líneas y NO cambia el cliente → no-op (paridad
- *        PlacePos: PUT sin cambios devuelve la venta tal cual).
- *      - Si NO hay delta de líneas y SÍ cambia el cliente → UPDATE
- *        `customer_*` solamente (con guard de SaleCredit con abonos).
- *      - Si hay delta → emite NC `PARTIAL_VOID` (removed/reduced) y ND
- *        `ADDITION` (added/increased), ajusta inventario diferencial y
- *        recalcula los totales consolidados de la cabecera.
+ *   - `ORDER`: reemplazo total (DELETE + INSERT lines, UPDATE cabecera).
+ *     Sin NC/ND, sin inventario, sin caja.
+ *   - `SALE`:
+ *       * Sin delta de líneas:
+ *         - Si no cambia el cliente → no-op.
+ *         - Si cambia el cliente → UPDATE `customer_*` (guard SaleCredit).
+ *       * Con delta:
+ *         - NC `PARTIAL_VOID` (o `FULL_VOID` si la edición remueve toda la
+ *           venta) por líneas removidas / reducidas.
+ *         - ND `ADDITION` por líneas añadidas / incrementadas.
+ *         - Si la edición incluye ND → guard de margen consolidado.
+ *         - Inventario diferencial (RETURN para NC, DEDUCT para ND).
+ *         - Movimientos de caja / banco / wallet si vienen
+ *           `credit_correction_source` / `debit_correction_source`.
  *
  * --------------------------------------------------------------------------
  * Transacción SERIALIZABLE
  * --------------------------------------------------------------------------
  *
- * El flujo:
- *   - Lockea la venta con `pessimistic_write`.
- *   - Lee notas existentes (FULL_VOID activo bloquea).
- *   - Genera folios CN/DN atómicos vía `IncrementTicketNumberAction`.
- *   - Muta cabecera + inserta NC/ND + ajusta stock.
- *
- * Concurrencia con un cobro paralelo (`POST /payments`) puede afectar el
- * SaleCredit y el customer.balance; SERIALIZABLE protege contra anomalías
- * de lectura no repetible cuando se evalúa el delta + balance del crédito.
- * Espejo CLAUDE.md §9.4.
- *
- * --------------------------------------------------------------------------
- * Side effects de caja: deliberadamente AUSENTES
- * --------------------------------------------------------------------------
- *
- * PlacePos local registra `registerCreditNotePartialVoid` /
- * `registerDebitNoteIncome` (movimientos en caja / banco / wallet) solo
- * cuando el cliente envía `credit_correction_source` / `debit_correction_source`
- * EXPLÍCITOS. El cloud heredará esa misma API en una iteración posterior
- * cuando se implementen las DTOs de correction source (paridad PlacePos
- * exige el explícito — no inferimos cuenta destino del pago original).
- *
- * Hoy `PUT /sales/:id` NO toca caja/banco/wallet ni emite FinancialMovement —
- * dejamos los ajustes financieros a `POST /payments` o a un flujo manual
- * separado. Esto evita des-cuadres silenciosos si el operador edita una
- * venta cuyos pagos fueron por TRANSFER (un escenario donde PlacePos local
- * exige `correction_source.bank` obligatorio). Riesgo abierto: ver reporte
- * para security-auditor.
+ * SERIALIZABLE protege contra anomalías de lectura no repetible cuando se
+ * evalúa el delta + balance del crédito mientras un cobro paralelo
+ * (`POST /payments`) muta el SaleCredit. Espejo CLAUDE.md §9.4.
  */
 @Injectable()
 export class UpdateSaleAction {
@@ -111,6 +114,7 @@ export class UpdateSaleAction {
   constructor(
     private readonly dataSource: DataSource,
     private readonly incrementTicketNumberAction: IncrementTicketNumberAction,
+    private readonly financialMovementsService: FinancialMovementsService,
   ) {}
 
   async execute(
@@ -118,8 +122,8 @@ export class UpdateSaleAction {
     dto: UpdateSaleDto,
     companyId: number,
     actor: UpdateSaleActor,
-  ): Promise<SaleAggregate> {
-    return this.dataSource.transaction<SaleAggregate>('SERIALIZABLE', async (manager) =>
+  ): Promise<UpdateSaleActionResult> {
+    return this.dataSource.transaction<UpdateSaleActionResult>('SERIALIZABLE', async (manager) =>
       this.run(manager, id, dto, companyId, actor),
     );
   }
@@ -130,11 +134,7 @@ export class UpdateSaleAction {
     dto: UpdateSaleDto,
     companyId: number,
     actor: UpdateSaleActor,
-  ): Promise<SaleAggregate> {
-    // 0. Enforcement early de `override_margin`. Solo `owner | superadmin`
-    //    pueden activar la flag — `manager`/`employee` reciben 403 ANTES de
-    //    cualquier mutación (defensa en profundidad: el guard de margen ya lo
-    //    rechazaba más adentro, pero queremos fail-fast con código explícito).
+  ): Promise<UpdateSaleActionResult> {
     if (dto.override_margin === true && actor.type !== 'owner' && actor.type !== 'superadmin') {
       throw new ForbiddenException({
         message: 'Solo el dueño puede forzar el override de margen mínimo.',
@@ -142,7 +142,6 @@ export class UpdateSaleAction {
       });
     }
 
-    // 1. Lookup + lock pessimistic_write (sobre la cabecera).
     const sale = await findSaleInCompany(manager, id, companyId, {
       requireActive: true,
       lock: true,
@@ -164,57 +163,67 @@ export class UpdateSaleAction {
     dto: UpdateSaleDto,
     companyId: number,
     actor: UpdateSaleActor,
-  ): Promise<SaleAggregate> {
-    const patch: Partial<SaleInvoice> = {};
-
-    if (dto.customer_id !== undefined) {
-      const resolved = await this.resolveCustomer(manager, dto.customer_id, companyId);
-      patch.customer_id = resolved.customerId;
-      patch.customer_name = resolved.customerName;
+  ): Promise<UpdateSaleActionResult> {
+    if (!dto.items || dto.items.length === 0) {
+      throw new UnprocessableEntityException(
+        'Se requieren items para editar el pedido. Para anular usa POST /sales/:id/void.',
+      );
     }
-    if (dto.notes !== undefined) {
-      patch.notes = dto.notes === null ? null : dto.notes?.trim() || null;
-    }
-
-    if (dto.lines !== undefined && dto.lines.length > 0) {
-      const totals = await this.loadAndCalculateTotals(manager, dto, companyId);
-      // ORDER en PlacePos no toca el margen (no hay reglas) — el guard sí lo
-      // valida en POS local cuando se confirma. En la edición de un ORDER el
-      // margen puede ser temporalmente bajo sin generar 422.
-
-      await manager.delete(SaleInvoiceLine, {
-        sale_invoice_id: sale.id,
-        company_id: String(companyId),
-      });
-      const lineRows = totals.lines.map((l) => ({ ...l, sale_invoice_id: sale.id }));
-      await manager.insert(SaleInvoiceLine, lineRows);
-
-      patch.subtotal = totals.subtotal;
-      patch.tax_total = totals.tax_total;
-      patch.total = totals.total;
-      patch.cost = totals.cost;
-      patch.profit = totals.profit;
-      patch.margin = totals.margin;
+    if (
+      dto.total === undefined ||
+      dto.cost === undefined ||
+      dto.profit === undefined ||
+      dto.margin === undefined
+    ) {
+      throw new UnprocessableEntityException(
+        'Los totales (total, cost, profit, margin) son obligatorios para editar un pedido.',
+      );
     }
 
-    if (Object.keys(patch).length > 0) {
-      try {
-        await manager.update(SaleInvoice, { id: sale.id, company_id: String(companyId) }, patch);
-      } catch (error) {
-        translateSaleConstraintError(error);
-        throw error;
-      }
+    const resolvedCustomer = await this.resolveCustomerForPayload(manager, dto, companyId);
+
+    await manager.delete(SaleInvoiceLine, {
+      sale_invoice_id: sale.id,
+      company_id: String(companyId),
+    });
+
+    const lineRows = dto.items.map((item) => mapPayloadLineToRow(item, sale.id, companyId));
+    await manager.insert(SaleInvoiceLine, lineRows);
+
+    try {
+      await manager.update(
+        SaleInvoice,
+        { id: sale.id, company_id: String(companyId) },
+        {
+          customer_id: resolvedCustomer.customerId,
+          customer_name: resolvedCustomer.customerName,
+          subtotal: dto.total,
+          tax_total: 0,
+          total: dto.total,
+          cost: dto.cost,
+          profit: dto.profit,
+          margin: dto.margin,
+        },
+      );
+    } catch (error) {
+      translateSaleConstraintError(error);
+      throw error;
     }
 
     this.logger.log({
       event: 'sale.updated.order',
       companyId,
       saleId: Number(sale.id),
-      fieldsTouched: Object.keys(patch),
       actorId: actor.id,
     });
 
-    return this.loadAggregate(manager, Number(sale.id), companyId);
+    return {
+      message: 'Pedido actualizado exitosamente',
+      creditNoteId: null,
+      creditNoteNumber: null,
+      debitNoteId: null,
+      debitNoteNumber: null,
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -227,8 +236,7 @@ export class UpdateSaleAction {
     dto: UpdateSaleDto,
     companyId: number,
     actor: UpdateSaleActor,
-  ): Promise<SaleAggregate> {
-    // FULL_VOID activo → bloquea: una venta anulada no se edita.
+  ): Promise<UpdateSaleActionResult> {
     const fullVoid = await manager.findOne(CreditNote, {
       where: {
         company_id: String(companyId),
@@ -245,190 +253,196 @@ export class UpdateSaleAction {
       });
     }
 
-    // Cargar estado consolidado VIVO (con todas las NC/ND aplicadas).
     const consolidated = await getConsolidatedInvoice(manager, companyId, Number(sale.id));
     if (!consolidated) {
       throw new NotFoundException('Venta no encontrada');
     }
 
-    const customerChange = this.evaluateCustomerChange(dto, sale);
+    const customerChanged = this.hasCustomerChanged(dto, consolidated);
 
-    // Si no llegan líneas, solo se permite cambio de cliente / notas.
-    if (dto.lines === undefined) {
-      return this.applyCustomerOnlyChange(manager, sale, dto, companyId, actor, customerChange);
+    // Si no llegan líneas, solo se permite cambio de cliente.
+    if (!dto.items) {
+      if (!customerChanged) {
+        return this.noChangesResult();
+      }
+      await this.applyCustomerChange(manager, sale, dto, companyId);
+      return {
+        message: 'Cliente de la venta actualizado',
+        creditNoteId: null,
+        creditNoteNumber: null,
+        debitNoteId: null,
+        debitNoteNumber: null,
+      };
     }
 
-    // Calcular totales del payload con Big.js (mismo helper que create-sale).
-    const computedPayload = await this.loadAndCalculateTotals(manager, dto, companyId);
+    const { removedOrReduced, addedOrIncreased } = calculatePlacePosLineDifferences(
+      consolidated.lines,
+      dto.items,
+    );
 
-    // Delta vs líneas vivas consolidadas.
-    const delta = computeLineDelta(consolidated.lines, computedPayload.lines);
-
-    if (delta.isEmpty) {
-      // Sin cambios en líneas — solo posible cambio de cliente / notas.
-      return this.applyCustomerOnlyChange(manager, sale, dto, companyId, actor, customerChange);
+    if (removedOrReduced.length === 0 && addedOrIncreased.length === 0) {
+      if (!customerChanged) {
+        return this.noChangesResult();
+      }
+      await this.applyCustomerChange(manager, sale, dto, companyId);
+      return {
+        message: 'Cliente de la venta actualizado',
+        creditNoteId: null,
+        creditNoteNumber: null,
+        debitNoteId: null,
+        debitNoteNumber: null,
+      };
     }
 
-    // Validar margen consolidado SOLO si hay ND (productos añadidos /
-    // aumentados). Una NC pura siempre baja el margen — paridad PlacePos.
-    if (delta.addedOrIncreased.length > 0) {
-      const consolidatedTotals = this.computeConsolidatedTotalsAfterEdit(
-        consolidated,
-        delta.removedOrReduced,
-        delta.addedOrIncreased,
-      );
+    // Guard de margen consolidado SOLO cuando la edición incluye ND
+    // (productos añadidos / aumentados). Una NC pura siempre reduce el
+    // margen — paridad PlacePos.
+    if (addedOrIncreased.length > 0) {
+      if (dto.total === undefined || dto.cost === undefined) {
+        throw new UnprocessableEntityException(
+          'Los totales consolidados (total, cost) son obligatorios cuando se añaden o incrementan líneas.',
+        );
+      }
       await assertMarginAboveMinimum({
         manager,
         companyId,
-        total: consolidatedTotals.total,
-        cost: consolidatedTotals.cost,
+        total: dto.total,
+        cost: dto.cost,
         overrideMargin: dto.override_margin === true,
         userType: actor.type,
         messagePrefix: 'El margen consolidado de la venta',
       });
     }
 
-    // Resolver el cliente final (si cambió) y aplicar guard de SaleCredit.
-    let finalCustomerId: number | null = customerChange.changed
-      ? customerChange.newCustomerId
-      : consolidated.customerId;
-    let finalCustomerName: string | null = customerChange.changed
-      ? customerChange.newCustomerName
-      : sale.customer_name;
-    if (customerChange.changed) {
-      await this.assertNoLockedCredit(manager, Number(sale.id), companyId);
-      const resolved = await this.resolveCustomer(manager, dto.customer_id ?? null, companyId);
-      finalCustomerId = resolved.customerId === null ? null : Number(resolved.customerId);
-      finalCustomerName = resolved.customerName;
-    }
+    const isFullVoidEdit =
+      removedOrReduced.length === consolidated.lines.length &&
+      addedOrIncreased.length === 0 &&
+      removedOrReduced.every((r) => r.type === 'removed');
 
-    // Emitir NC / ND atómicamente.
-    const notesResult = await generateEditNotes(manager, this.incrementTicketNumberAction, {
-      companyId,
-      saleInvoiceId: Number(sale.id),
-      customerId: finalCustomerId,
-      removedOrReduced: delta.removedOrReduced,
-      addedOrIncreased: delta.addedOrIncreased,
-      actor: { id: actor.id, fullName: actor.fullName },
-    });
+    let creditNoteId: number | null = null;
+    let creditNoteNumber: string | null = null;
+    let debitNoteId: number | null = null;
+    let debitNoteNumber: string | null = null;
 
-    // Inventario diferencial — solo para SALE (las ORDER no consumieron stock).
-    if (delta.removedOrReduced.length > 0) {
-      await adjustInventory(
-        manager,
+    if (removedOrReduced.length > 0) {
+      const credit = await this.emitCreditNote(manager, {
         companyId,
-        delta.removedOrReduced.map((l) => ({ item_id: l.product_id, quantity: l.quantity })),
-        'RETURN',
-      );
-    }
-    if (delta.addedOrIncreased.length > 0) {
-      await adjustInventory(
-        manager,
-        companyId,
-        delta.addedOrIncreased.map((l) => ({ item_id: l.product_id, quantity: l.quantity })),
-        'DEDUCT',
-      );
+        sale,
+        customerId: this.currentCustomerId(sale),
+        lines: removedOrReduced,
+        isFullVoidEdit,
+        actor,
+        source: dto.credit_correction_source ?? null,
+      });
+      creditNoteId = credit.id;
+      creditNoteNumber = credit.number;
     }
 
-    // UPDATE cabecera: el `SaleInvoice.total` / `cost` / `profit` / `margin`
-    // conservan los valores ORIGINALES de la venta — PlacePos hace lo mismo.
-    // Los totales consolidados se derivan dinámicamente (NC/ND aplicadas).
-    // Solo persistimos cambios de customer/notes.
-    const patch: Partial<SaleInvoice> = {};
-    if (customerChange.changed) {
-      patch.customer_id = finalCustomerId === null ? null : String(finalCustomerId);
-      patch.customer_name = finalCustomerName;
+    if (addedOrIncreased.length > 0) {
+      const debit = await this.emitDebitNote(manager, {
+        companyId,
+        sale,
+        customerId: this.currentCustomerId(sale),
+        lines: addedOrIncreased,
+        actor,
+        source: dto.debit_correction_source ?? null,
+      });
+      debitNoteId = debit.id;
+      debitNoteNumber = debit.number;
     }
-    if (dto.notes !== undefined) {
-      patch.notes = dto.notes === null ? null : dto.notes?.trim() || null;
+
+    if (customerChanged) {
+      await this.applyCustomerChange(manager, sale, dto, companyId);
     }
-    if (Object.keys(patch).length > 0) {
-      try {
-        await manager.update(SaleInvoice, { id: sale.id, company_id: String(companyId) }, patch);
-      } catch (error) {
-        translateSaleConstraintError(error);
-        throw error;
-      }
+
+    let message = 'Venta editada exitosamente.';
+    if (creditNoteNumber) {
+      message += ` Nota crédito: ${creditNoteNumber}.`;
+    }
+    if (debitNoteNumber) {
+      message += ` Nota débito: ${debitNoteNumber}.`;
+    }
+    if (customerChanged) {
+      message += ' Cliente actualizado.';
     }
 
     this.logger.log({
       event: 'sale.updated.sale',
       companyId,
       saleId: Number(sale.id),
-      creditNoteId: notesResult.creditNoteId,
-      creditNoteNumber: notesResult.creditNoteNumber,
-      debitNoteId: notesResult.debitNoteId,
-      debitNoteNumber: notesResult.debitNoteNumber,
-      customerChanged: customerChange.changed,
-      removed: delta.removedOrReduced.length,
-      added: delta.addedOrIncreased.length,
+      creditNoteId,
+      creditNoteNumber,
+      debitNoteId,
+      debitNoteNumber,
+      customerChanged,
+      removed: removedOrReduced.length,
+      added: addedOrIncreased.length,
       actorId: actor.id,
     });
 
-    return this.loadAggregate(manager, Number(sale.id), companyId);
+    return {
+      message,
+      creditNoteId,
+      creditNoteNumber,
+      debitNoteId,
+      debitNoteNumber,
+    };
   }
 
   // --------------------------------------------------------------------------
-  // Helpers privados
+  // Helpers
   // --------------------------------------------------------------------------
 
+  private noChangesResult(): UpdateSaleActionResult {
+    return {
+      message: 'No hay cambios que procesar',
+      creditNoteId: null,
+      creditNoteNumber: null,
+      debitNoteId: null,
+      debitNoteNumber: null,
+    };
+  }
+
   /**
-   * Aplica un UPDATE de customer / notes cuando NO hay delta de líneas. Si
-   * NADA cambió, es un no-op contractual (paridad PlacePos).
+   * Devuelve el customer_id actual del sale como number|null. Lo usamos al
+   * fijar `credit_notes.customer_id` para snapshot histórico, antes de
+   * aplicar un eventual cambio de cliente.
    */
-  private async applyCustomerOnlyChange(
+  private currentCustomerId(sale: SaleInvoice): number | null {
+    return sale.customer_id === null ? null : Number(sale.customer_id);
+  }
+
+  /**
+   * Compara el customer del payload contra el de la venta consolidada SOLO
+   * por id. `undefined` en el DTO se interpreta como "no tocar" (paridad
+   * PlacePos `hasCustomerChanged`).
+   */
+  private hasCustomerChanged(dto: UpdateSaleDto, consolidated: ConsolidatedInvoice): boolean {
+    if (dto.customer_id === undefined) {
+      return false;
+    }
+    const current = consolidated.customerId ?? null;
+    const next = dto.customer_id === null ? null : Number(dto.customer_id);
+    return current !== next;
+  }
+
+  /**
+   * Resuelve `customer_id`/`customer_name` para persistir. Multi-tenant +
+   * filtro `is_archived = false`. Si el DTO trae `customer_name` lo respeta
+   * como snapshot (paridad PlacePos: el name se guarda tal como llega del
+   * cliente sin tocar el catálogo); si no, toma `customer.name`.
+   */
+  private async resolveCustomerForPayload(
     manager: EntityManager,
-    sale: SaleInvoice,
     dto: UpdateSaleDto,
     companyId: number,
-    actor: UpdateSaleActor,
-    customerChange: CustomerChangeEvaluation,
-  ): Promise<SaleAggregate> {
-    const patch: Partial<SaleInvoice> = {};
-    if (customerChange.changed) {
-      await this.assertNoLockedCredit(manager, Number(sale.id), companyId);
-      const resolved = await this.resolveCustomer(manager, dto.customer_id ?? null, companyId);
-      patch.customer_id = resolved.customerId;
-      patch.customer_name = resolved.customerName;
-    }
-    if (dto.notes !== undefined) {
-      patch.notes = dto.notes === null ? null : dto.notes?.trim() || null;
-    }
-    if (Object.keys(patch).length > 0) {
-      try {
-        await manager.update(SaleInvoice, { id: sale.id, company_id: String(companyId) }, patch);
-      } catch (error) {
-        translateSaleConstraintError(error);
-        throw error;
-      }
-      this.logger.log({
-        event: 'sale.updated.sale.customer_only',
-        companyId,
-        saleId: Number(sale.id),
-        fieldsTouched: Object.keys(patch),
-        actorId: actor.id,
-      });
-    }
-    return this.loadAggregate(manager, Number(sale.id), companyId);
-  }
-
-  /**
-   * Devuelve `customerId` y `customerName` listos para persistir según el
-   * shape de la entidad (`string | null`). Valida ownership multi-tenant y
-   * que no esté archivado. Si `customerId === null` representa venta
-   * mostrador (sin cliente). El `undefined` no llega aquí — el caller filtra.
-   */
-  private async resolveCustomer(
-    manager: EntityManager,
-    customerId: number | null | undefined,
-    companyId: number,
   ): Promise<{ customerId: string | null; customerName: string | null }> {
-    if (customerId === null || customerId === undefined) {
-      return { customerId: null, customerName: null };
+    if (dto.customer_id === undefined || dto.customer_id === null) {
+      return { customerId: null, customerName: dto.customer_name ?? null };
     }
     const customer = await manager.findOne(Customer, {
       where: {
-        id: String(customerId),
+        id: String(dto.customer_id),
         company_id: String(companyId),
         is_archived: false,
       },
@@ -437,13 +451,42 @@ export class UpdateSaleAction {
     if (!customer) {
       throw new UnprocessableEntityException('Cliente no encontrado o archivado');
     }
-    return { customerId: customer.id, customerName: customer.name };
+    return {
+      customerId: customer.id,
+      customerName: dto.customer_name ?? customer.name,
+    };
   }
 
   /**
-   * Bloquea el cambio de cliente cuando la venta tiene un `SaleCredit` con
-   * pagos aplicados — espejo PlacePos `assertNoLockedCredit`. Reasignar el
-   * cliente transferiría silenciosamente la cartera al nuevo cliente.
+   * Aplica UPDATE de customer_* con guards. Solo se invoca cuando ya se
+   * determinó que el cliente cambia.
+   */
+  private async applyCustomerChange(
+    manager: EntityManager,
+    sale: SaleInvoice,
+    dto: UpdateSaleDto,
+    companyId: number,
+  ): Promise<void> {
+    await this.assertNoLockedCredit(manager, Number(sale.id), companyId);
+    const resolved = await this.resolveCustomerForPayload(manager, dto, companyId);
+    try {
+      await manager.update(
+        SaleInvoice,
+        { id: sale.id, company_id: String(companyId) },
+        {
+          customer_id: resolved.customerId,
+          customer_name: resolved.customerName,
+        },
+      );
+    } catch (error) {
+      translateSaleConstraintError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bloquea el cambio de cliente cuando la venta tiene `SaleCredit` con
+   * `paid_amount > 0` — espejo PlacePos `assertNoLockedCredit`.
    */
   private async assertNoLockedCredit(
     manager: EntityManager,
@@ -465,154 +508,451 @@ export class UpdateSaleAction {
   }
 
   /**
-   * Compara el cliente del payload contra el de la venta consolidada usando
-   * solo el `id` (incluyendo null=null). Paridad PlacePos.
-   *
-   * `undefined` en el DTO se interpreta como "no tocar" — no como "limpiar".
+   * Crea NC (`PARTIAL_VOID` o `FULL_VOID` si la edición remueve toda la
+   * venta) + CreditNoteLines, ajusta inventario `RETURN` y, si viene
+   * `credit_correction_source`, registra el reembolso en caja o
+   * `financial_movements`. Si es FULL_VOID, marca la venta como
+   * `is_deleted = true`.
    */
-  private evaluateCustomerChange(dto: UpdateSaleDto, sale: SaleInvoice): CustomerChangeEvaluation {
-    if (dto.customer_id === undefined) {
-      return { changed: false, newCustomerId: null, newCustomerName: null };
-    }
-    const currentId = sale.customer_id === null ? null : Number(sale.customer_id);
-    const newId = dto.customer_id === null ? null : Number(dto.customer_id);
-    if (currentId === newId) {
-      return { changed: false, newCustomerId: null, newCustomerName: null };
-    }
-    return { changed: true, newCustomerId: newId, newCustomerName: null };
-  }
-
-  /**
-   * Carga productos / packagings / product_prices del payload validando
-   * ownership multi-tenant; recalcula totales con Big.js. Espejo de los
-   * pasos 2-5 del `create-sale.action`.
-   */
-  private async loadAndCalculateTotals(
+  private async emitCreditNote(
     manager: EntityManager,
-    dto: UpdateSaleDto,
-    companyId: number,
-  ): Promise<ReturnType<typeof calculateSaleTotals>> {
-    if (!dto.lines) {
-      throw new BadRequestException('lines requerido para recalcular totales');
-    }
-
-    const productIds = Array.from(new Set(dto.lines.map((l) => String(l.product_id))));
-    const products = await manager.find(Product, {
-      where: { id: In(productIds), company_id: String(companyId) },
-    });
-    if (products.length !== productIds.length) {
-      throw new BadRequestException('Uno o más productos no existen');
-    }
-    const invalidProduct = products.find(
-      (p) => p.product_type !== ProductType.SIMPLE || p.is_archived,
+    params: {
+      companyId: number;
+      sale: SaleInvoice;
+      customerId: number | null;
+      lines: PlacePosLineDifference[];
+      isFullVoidEdit: boolean;
+      actor: UpdateSaleActor;
+      source: SaleCorrectionSourceDto | null;
+    },
+  ): Promise<{ id: number; number: string }> {
+    const ticket = await this.incrementTicketNumberAction.execute(
+      manager,
+      params.companyId,
+      TicketSettingType.CREDIT_NOTE,
     );
-    if (invalidProduct) {
-      throw new BadRequestException(
-        `El producto "${invalidProduct.name}" no es un producto simple disponible`,
+    const total = params.lines.reduce((s, l) => s.plus(toBig(l.total)), toBig(0));
+    const operationType = params.isFullVoidEdit
+      ? OperationType.FULL_VOID
+      : OperationType.PARTIAL_VOID;
+
+    const cn = manager.create(CreditNote, {
+      company_id: String(params.companyId),
+      sale_invoice_id: params.sale.id,
+      customer_id: params.customerId === null ? null : String(params.customerId),
+      note_number: ticket.formatted,
+      note_type: NoteType.CREDIT,
+      operation_type: operationType,
+      subtotal: preciseNumber(total, 2),
+      tax_total: 0,
+      total: preciseNumber(total, 2),
+      reason: 'Edición de venta — productos removidos o reducidos',
+      created_by: params.actor.fullName,
+      created_by_id: String(params.actor.id),
+      is_deleted: false,
+    });
+    const saved = await manager.save(CreditNote, cn);
+
+    const cnLines = params.lines.map((l) => ({
+      company_id: String(params.companyId),
+      credit_note_id: saved.id,
+      original_line_id: null as string | null,
+      product_id: String(l.item_id),
+      packaging_id: null as string | null,
+      description: l.name,
+      quantity: l.quantity,
+      unit_price: l.price,
+      unit_cost: l.cost,
+      subtotal: l.total,
+      iva_percentage: 0,
+      iva_amount: 0,
+      total: l.total,
+    }));
+    await manager.insert(CreditNoteLine, cnLines);
+
+    await adjustInventory(
+      manager,
+      params.companyId,
+      params.lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
+      'RETURN',
+    );
+
+    if (params.isFullVoidEdit) {
+      await manager.update(
+        SaleInvoice,
+        { id: params.sale.id, company_id: String(params.companyId) },
+        { is_deleted: true },
       );
     }
-    const productById = new Map(products.map((p) => [Number(p.id), p]));
 
-    const packagingIds = Array.from(
-      new Set(
-        dto.lines
-          .map((l) => l.packaging_id)
-          .filter((idv): idv is number => typeof idv === 'number' && idv > 0)
-          .map((idv) => String(idv)),
-      ),
-    );
-    const packagingById = new Map<number, Packaging>();
-    if (packagingIds.length > 0) {
-      const packagings = await manager.find(Packaging, {
-        where: {
-          id: In(packagingIds),
-          company_id: String(companyId),
-          is_archived: false,
-        },
+    const creditTotal = preciseNumber(total, 2);
+    if (creditTotal > 0 && params.source) {
+      await this.applyCorrectionMovement(manager, {
+        direction: 'CREDIT',
+        amount: creditTotal,
+        companyId: params.companyId,
+        invoiceId: Number(params.sale.id),
+        creditNoteId: Number(saved.id),
+        noteNumber: saved.note_number,
+        isFullVoid: params.isFullVoidEdit,
+        actor: params.actor,
+        source: params.source,
       });
-      if (packagings.length !== packagingIds.length) {
-        throw new BadRequestException('Uno o más empaques no existen o están archivados');
-      }
-      for (const p of packagings) {
-        packagingById.set(Number(p.id), p);
-      }
     }
 
-    const productPriceIds = Array.from(
-      new Set(
-        dto.lines
-          .map((l) => l.product_price_id)
-          .filter((idv): idv is number => typeof idv === 'number' && idv > 0)
-          .map((idv) => String(idv)),
-      ),
-    );
-    const productPriceById = new Map<number, ProductPrice>();
-    if (productPriceIds.length > 0) {
-      const prices = await manager.find(ProductPrice, {
-        where: { id: In(productPriceIds), company_id: String(companyId) },
-      });
-      if (prices.length !== productPriceIds.length) {
-        throw new BadRequestException('Uno o más niveles de precio no existen');
-      }
-      for (const p of prices) {
-        productPriceById.set(Number(p.id), p);
-      }
-    }
-
-    return calculateSaleTotals(dto.lines, companyId, productById, packagingById, productPriceById);
+    return { id: Number(saved.id), number: saved.note_number };
   }
 
   /**
-   * Calcula los totales consolidados tras aplicar el delta sin tener que
-   * leer las notas de DB (las acabamos de calcular en memoria). Espejo
-   * algebraico del `aggregateConsolidatedLines` de PlacePos.
-   *
-   *   total_post = invoice.consolidated.total - Σ removedOrReduced.total
-   *                                            + Σ addedOrIncreased.total
-   *   cost_post  = invoice.consolidated.cost  - Σ (cost*qty)_removed
-   *                                            + Σ (cost*qty)_added
+   * Crea ND `ADDITION` + ND lines, ajusta inventario `DEDUCT` y, si viene
+   * `debit_correction_source`, registra el cobro adicional en caja o
+   * `financial_movements`.
    */
-  private computeConsolidatedTotalsAfterEdit(
-    consolidated: ConsolidatedInvoice,
-    removed: LineDifference[],
-    added: LineDifference[],
-  ): { total: number; cost: number } {
-    let total = toBig(consolidated.total);
-    let cost = toBig(consolidated.cost);
-    for (const r of removed) {
-      total = total.minus(r.total);
-      cost = cost.minus(toBig(r.unit_cost).times(r.quantity));
-    }
-    for (const a of added) {
-      total = total.plus(a.total);
-      cost = cost.plus(toBig(a.unit_cost).times(a.quantity));
-    }
-    return {
+  private async emitDebitNote(
+    manager: EntityManager,
+    params: {
+      companyId: number;
+      sale: SaleInvoice;
+      customerId: number | null;
+      lines: PlacePosLineDifference[];
+      actor: UpdateSaleActor;
+      source: SaleCorrectionSourceDto | null;
+    },
+  ): Promise<{ id: number; number: string }> {
+    const ticket = await this.incrementTicketNumberAction.execute(
+      manager,
+      params.companyId,
+      TicketSettingType.DEBIT_NOTE,
+    );
+    const total = params.lines.reduce((s, l) => s.plus(toBig(l.total)), toBig(0));
+
+    const dn = manager.create(CreditNote, {
+      company_id: String(params.companyId),
+      sale_invoice_id: params.sale.id,
+      customer_id: params.customerId === null ? null : String(params.customerId),
+      note_number: ticket.formatted,
+      note_type: NoteType.DEBIT,
+      operation_type: OperationType.ADDITION,
+      subtotal: preciseNumber(total, 2),
+      tax_total: 0,
       total: preciseNumber(total, 2),
-      cost: preciseNumber(cost, 2),
-    };
+      reason: 'Edición de venta — productos añadidos o incrementados',
+      created_by: params.actor.fullName,
+      created_by_id: String(params.actor.id),
+      is_deleted: false,
+    });
+    const saved = await manager.save(CreditNote, dn);
+
+    const dnLines = params.lines.map((l) => ({
+      company_id: String(params.companyId),
+      credit_note_id: saved.id,
+      original_line_id: null as string | null,
+      product_id: String(l.item_id),
+      packaging_id: null as string | null,
+      description: l.name,
+      quantity: l.quantity,
+      unit_price: l.price,
+      unit_cost: l.cost,
+      subtotal: l.total,
+      iva_percentage: 0,
+      iva_amount: 0,
+      total: l.total,
+    }));
+    await manager.insert(CreditNoteLine, dnLines);
+
+    await adjustInventory(
+      manager,
+      params.companyId,
+      params.lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
+      'DEDUCT',
+    );
+
+    const debitTotal = preciseNumber(total, 2);
+    if (debitTotal > 0 && params.source) {
+      await this.applyCorrectionMovement(manager, {
+        direction: 'DEBIT',
+        amount: debitTotal,
+        companyId: params.companyId,
+        invoiceId: Number(params.sale.id),
+        creditNoteId: Number(saved.id),
+        noteNumber: saved.note_number,
+        isFullVoid: false,
+        actor: params.actor,
+        source: params.source,
+      });
+    }
+
+    return { id: Number(saved.id), number: saved.note_number };
   }
 
-  private async loadAggregate(
+  /**
+   * Registra el reembolso (CREDIT) o cobro adicional (DEBIT) en la cuenta
+   * destino. Espejo PlacePos:
+   *
+   *   - `cash_register` → CashRegisterLog (CREDIT_NOTE_FULL_VOID,
+   *     CREDIT_NOTE_PARTIAL_VOID o DEBIT_NOTE) + UPDATE balance.
+   *   - `bank` / `wallet` → FinancialMovement (INCOME para DEBIT, EXPENSE
+   *     para CREDIT). El ownership multi-tenant lo verifica el
+   *     `RecordFinancialMovementAction`.
+   */
+  private async applyCorrectionMovement(
     manager: EntityManager,
-    saleId: number,
-    companyId: number,
-  ): Promise<SaleAggregate> {
-    const reloaded = await manager.findOne(SaleInvoice, {
-      where: { id: String(saleId), company_id: String(companyId) },
-    });
-    if (!reloaded) {
-      throw new NotFoundException('Venta no encontrada tras actualizar');
+    params: {
+      direction: 'CREDIT' | 'DEBIT';
+      amount: number;
+      companyId: number;
+      invoiceId: number;
+      creditNoteId: number;
+      noteNumber: string;
+      isFullVoid: boolean;
+      actor: UpdateSaleActor;
+      source: SaleCorrectionSourceDto;
+    },
+  ): Promise<void> {
+    if (params.source.type === 'cash_register') {
+      const type =
+        params.direction === 'CREDIT'
+          ? params.isFullVoid
+            ? CashRegisterLogType.CREDIT_NOTE_FULL_VOID
+            : CashRegisterLogType.CREDIT_NOTE_PARTIAL_VOID
+          : CashRegisterLogType.DEBIT_NOTE;
+      const direction = params.direction === 'CREDIT' ? 'OUT' : 'IN';
+
+      // Validar ownership multi-tenant de la cash_register.
+      const register = await manager.findOne(CashRegister, {
+        where: {
+          id: String(params.source.id),
+          company_id: String(params.companyId),
+        },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!register) {
+        throw new UnprocessableEntityException(
+          'La caja registradora seleccionada no pertenece a la empresa',
+        );
+      }
+
+      const currentBalance = toBig(register.balance);
+      const newBalance =
+        params.direction === 'CREDIT'
+          ? currentBalance.minus(params.amount)
+          : currentBalance.plus(params.amount);
+      if (params.direction === 'CREDIT' && newBalance.lt(0)) {
+        throw new UnprocessableEntityException({
+          message:
+            'El saldo de la caja no alcanza para reversar la nota crédito. Selecciona otra cuenta o reconcilia manualmente.',
+          payload: {
+            code: 'INSUFFICIENT_REGISTER_BALANCE',
+            required: params.amount,
+            available: Number(register.balance),
+          },
+        });
+      }
+      await manager.update(
+        CashRegister,
+        { id: register.id, company_id: String(params.companyId) },
+        { balance: Number(newBalance.toFixed(2)) },
+      );
+
+      const log = manager.create(CashRegisterLog, {
+        company_id: String(params.companyId),
+        cash_register_id: register.id,
+        type,
+        direction,
+        amount: params.amount,
+        affects_balance: true,
+        invoice_id: String(params.invoiceId),
+        credit_note_id: String(params.creditNoteId),
+        description: this.buildCorrectionDescription(params),
+        created_by: params.actor.fullName,
+        created_by_id: String(params.actor.id),
+        is_credit_related: false,
+      });
+      await manager.save(CashRegisterLog, log);
+      return;
     }
-    const lines = await findSaleLines(manager, saleId, companyId);
-    const payments = await findSalePayments(manager, saleId, companyId);
-    const credit = await findSaleCredit(manager, saleId, companyId);
-    return { sale: reloaded, lines, payments, credit };
+
+    // bank / wallet → FinancialMovement.
+    const movementType = params.direction === 'CREDIT' ? MovementType.EXPENSE : MovementType.INCOME;
+    const concept =
+      params.direction === 'CREDIT' ? MovementConcept.CREDIT_NOTE_REFUND : MovementConcept.SALE;
+
+    await this.financialMovementsService.record(manager, {
+      companyId: params.companyId,
+      amount: params.amount,
+      movement_type: movementType,
+      concept,
+      description: this.buildCorrectionDescription(params),
+      source_type: params.direction === 'CREDIT' ? params.source.type : null,
+      source_id: params.direction === 'CREDIT' ? params.source.id : null,
+      destination_type: params.direction === 'DEBIT' ? params.source.type : null,
+      destination_id: params.direction === 'DEBIT' ? params.source.id : null,
+      reference_code: params.noteNumber,
+      created_by: params.actor.fullName,
+      created_by_id: params.actor.id,
+    });
+  }
+
+  private buildCorrectionDescription(params: {
+    direction: 'CREDIT' | 'DEBIT';
+    noteNumber: string;
+    invoiceId: number;
+  }): string {
+    if (params.direction === 'CREDIT') {
+      return `Reembolso por edición de venta — Nota crédito ${params.noteNumber} (venta #${params.invoiceId})`;
+    }
+    return `Cobro adicional por edición de venta — Nota débito ${params.noteNumber} (venta #${params.invoiceId})`;
   }
 }
 
-interface CustomerChangeEvaluation {
-  changed: boolean;
-  newCustomerId: number | null;
-  newCustomerName: string | null;
+/**
+ * Calcula el delta entre las líneas vivas consolidadas (shape PlacePos) y
+ * las del payload de edición. Espejo `calculateLineDifferences` de PlacePos.
+ *
+ * Comparación por `item_id`. El `total` de cada diferencia se calcula como
+ * `price * qty_diff` (sin IVA — paridad PlacePos: las CN/DN de edición no
+ * llevan IVA en local).
+ */
+function calculatePlacePosLineDifferences(
+  consolidated: ConsolidatedLine[],
+  payload: UpdateSaleLineDto[],
+): { removedOrReduced: PlacePosLineDifference[]; addedOrIncreased: PlacePosLineDifference[] } {
+  const currentMap = new Map<number, ConsolidatedLine>();
+  for (const line of consolidated) {
+    currentMap.set(Number(line.item_id), line);
+  }
+
+  // Si el cliente envía dos líneas para el MISMO producto, las consolidamos
+  // antes de calcular delta (PlacePos no lo contempla pero el contrato del
+  // DTO no lo impide).
+  const newMap = new Map<number, { line: UpdateSaleLineDto; quantity: Big; total: Big }>();
+  for (const line of payload) {
+    const key = Number(line.item_id);
+    const existing = newMap.get(key);
+    if (existing) {
+      existing.quantity = existing.quantity.plus(toBig(line.quantity));
+      existing.total = existing.total.plus(toBig(line.total));
+    } else {
+      newMap.set(key, {
+        line,
+        quantity: toBig(line.quantity),
+        total: toBig(line.total),
+      });
+    }
+  }
+
+  const removedOrReduced: PlacePosLineDifference[] = [];
+  const addedOrIncreased: PlacePosLineDifference[] = [];
+
+  for (const [itemId, currentLine] of currentMap) {
+    const newEntry = newMap.get(itemId);
+    if (!newEntry) {
+      removedOrReduced.push({
+        type: 'removed',
+        item_id: Number(currentLine.item_id),
+        name: currentLine.name,
+        cost: Number(currentLine.cost),
+        price: Number(currentLine.price),
+        quantity: Number(currentLine.quantity),
+        total: Number(currentLine.total),
+      });
+      continue;
+    }
+    const currentQty = toBig(currentLine.quantity);
+    if (newEntry.quantity.lt(currentQty)) {
+      const diffQty = currentQty.minus(newEntry.quantity);
+      removedOrReduced.push({
+        type: 'reduced',
+        item_id: Number(currentLine.item_id),
+        name: currentLine.name,
+        cost: Number(currentLine.cost),
+        price: Number(currentLine.price),
+        quantity: preciseNumber(diffQty, 4),
+        total: preciseNumber(toBig(currentLine.price).times(diffQty), 2),
+      });
+    }
+  }
+
+  for (const [itemId, newEntry] of newMap) {
+    const currentLine = currentMap.get(itemId);
+    if (!currentLine) {
+      addedOrIncreased.push({
+        type: 'added',
+        item_id: itemId,
+        name: newEntry.line.name,
+        cost: newEntry.line.cost,
+        price: newEntry.line.price,
+        quantity: preciseNumber(newEntry.quantity, 4),
+        total: preciseNumber(newEntry.total, 2),
+      });
+      continue;
+    }
+    const currentQty = toBig(currentLine.quantity);
+    if (newEntry.quantity.gt(currentQty)) {
+      const diffQty = newEntry.quantity.minus(currentQty);
+      addedOrIncreased.push({
+        type: 'increased',
+        item_id: itemId,
+        name: newEntry.line.name,
+        cost: newEntry.line.cost,
+        price: newEntry.line.price,
+        quantity: preciseNumber(diffQty, 4),
+        total: preciseNumber(toBig(newEntry.line.price).times(diffQty), 2),
+      });
+    }
+  }
+
+  return { removedOrReduced, addedOrIncreased };
+}
+
+/**
+ * Shape parcial listo para `manager.insert(SaleInvoiceLine, ...)`. Espeja
+ * las columnas no-default obligatorias de `sale_invoice_lines`.
+ */
+interface SaleInvoiceLineInsertRow {
+  company_id: string;
+  sale_invoice_id: string;
+  product_id: string;
+  packaging_id: string | null;
+  product_price_id: string | null;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  unit_cost: number;
+  subtotal: number;
+  iva_percentage: number;
+  iva_amount: number;
+  total: number;
+  profit: number;
+  margin: number;
+}
+
+/**
+ * Mapea una línea del payload PlacePos al row listo para INSERT en
+ * `sale_invoice_lines`. Los campos cloud-only (`packaging_id`,
+ * `product_price_id`, IVA) quedan en su valor neutro — el modo
+ * servidor/cliente no maneja esos conceptos en ventas.
+ */
+function mapPayloadLineToRow(
+  line: UpdateSaleLineDto,
+  saleInvoiceId: string,
+  companyId: number,
+): SaleInvoiceLineInsertRow {
+  return {
+    company_id: String(companyId),
+    sale_invoice_id: saleInvoiceId,
+    product_id: String(line.item_id),
+    packaging_id: null,
+    product_price_id: null,
+    description: line.name,
+    quantity: line.quantity,
+    unit_price: line.price,
+    unit_cost: line.cost,
+    subtotal: line.total,
+    iva_percentage: 0,
+    iva_amount: 0,
+    total: line.total,
+    profit: line.profit,
+    margin: line.margin,
+  };
 }

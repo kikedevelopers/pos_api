@@ -9,8 +9,16 @@ import { GetConsolidatedInvoiceAction } from './actions/get-consolidated-invoice
 import { GetConsolidatedInvoiceUpToAction } from './actions/get-consolidated-invoice-upto.action';
 import { GetLastSaleAction, type LastSaleResult } from './actions/get-last-sale.action';
 import { GetSaleCreditNoteAction } from './actions/get-sale-credit-note.action';
-import { UpdateSaleAction, type UpdateSaleActor } from './actions/update-sale.action';
-import { VoidSaleAction, type VoidSaleActor } from './actions/void-sale.action';
+import {
+  UpdateSaleAction,
+  type UpdateSaleActionResult,
+  type UpdateSaleActor,
+} from './actions/update-sale.action';
+import {
+  VoidSaleAction,
+  type VoidSaleActionResult,
+  type VoidSaleActor,
+} from './actions/void-sale.action';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import type { CreateSaleDto } from './dto/create-sale.dto';
@@ -87,7 +95,7 @@ export class SalesService {
     dto: UpdateSaleDto,
     companyId: number,
     actor: UpdateSaleActor,
-  ): Promise<SaleAggregate> {
+  ): Promise<UpdateSaleActionResult> {
     return this.updateSaleAction.execute(id, dto, companyId, actor);
   }
 
@@ -96,7 +104,7 @@ export class SalesService {
     companyId: number,
     actor: VoidSaleActor,
     reason?: string | null,
-  ): Promise<{ creditNoteId: number | null; creditNoteNumber: string | null }> {
+  ): Promise<VoidSaleActionResult> {
     return this.voidSaleAction.execute(id, companyId, actor, reason);
   }
 }

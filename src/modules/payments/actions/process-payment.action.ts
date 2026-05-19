@@ -60,6 +60,12 @@ export interface ProcessPaymentResult {
   message: string;
   payment_id: number | null;
   credit_id: number | null;
+  /**
+   * Folio SALE generado al convertir ORDER → SALE. El cliente PlacePos lo
+   * lee de `result.payload.sale_number` (ver `SaleController.ts → handler
+   * payment:process`). Presente solo en `success: true`.
+   */
+  sale_number?: string | null;
   code?: string;
 }
 
@@ -342,6 +348,7 @@ export class ProcessPaymentAction {
       message: 'Pago procesado exitosamente',
       payment_id: paymentId,
       credit_id: creditId,
+      sale_number: folio.formatted,
     };
   }
 
@@ -556,7 +563,9 @@ export class ProcessPaymentAction {
       companyId,
       amount: preciseNumber(amountDueBig, 2),
       movement_type: MovementType.INCOME,
-      concept: MovementConcept.SALE,
+      // Paridad PlacePos: `paymentOperations.ts` emite `SALE_PAYMENT`. El enum
+      // tiene SALE_PAYMENT activo desde la migración 1747010460000.
+      concept: MovementConcept.SALE_PAYMENT,
       description: `Pago por transferencia - Venta ${saleNumber}`,
       ...sourceFields,
       destination_type: 'bank',
@@ -670,6 +679,16 @@ export class ProcessPaymentAction {
         sale_invoice_id: payment.sale_invoice_id,
       },
     });
+    // Re-leer `sale_number` de la venta para devolverlo en la respuesta
+    // idempotente — el cliente PlacePos lo necesita en ambos paths (primer
+    // intento y replay) para imprimir el ticket con el folio correcto.
+    const sale = await this.dataSource.getRepository(SaleInvoice).findOne({
+      where: {
+        company_id: String(companyId),
+        id: payment.sale_invoice_id,
+      },
+      select: { id: true, sale_number: true },
+    });
     this.logger.log({
       event: 'payment.idempotent_replay',
       companyId,
@@ -681,6 +700,7 @@ export class ProcessPaymentAction {
       message: 'Pago procesado exitosamente (reintento idempotente)',
       payment_id: Number(payment.id),
       credit_id: credit ? Number(credit.id) : null,
+      sale_number: sale?.sale_number ?? null,
     };
   }
 

@@ -52,12 +52,21 @@ export type CreditPaymentFailureCode =
  * Espejo de `ProcessCreditPaymentResult` de PlacePos con el añadido `code`
  * para que el controller decida 422 sin parsear mensajes.
  */
+/**
+ * Status del crédito devuelto al cliente PlacePos. El renderer
+ * (`TicketViewer/components/InstallmentModal/index.tsx`, `preload/index.d.ts`)
+ * compara contra `'PARTIAL' | 'PAID' | 'PENDING'`. El enum interno DB usa
+ * `PARTIALLY_PAID` — al borde de salida lo mapeamos a `PARTIAL` para paridad
+ * de contrato.
+ */
+export type CreditStatusClientLabel = 'PENDING' | 'PARTIAL' | 'PAID';
+
 export type ProcessCreditPaymentResult =
   | {
       success: true;
       message: string;
       payment_id: number;
-      credit_status: SaleCreditStatus;
+      credit_status: CreditStatusClientLabel;
       credit_balance: number;
     }
   | {
@@ -279,13 +288,11 @@ export class ProcessCreditPaymentAction {
             companyId,
             amount,
             movement_type: MovementType.INCOME,
-            // DIVERGENCIA controlada vs PlacePos (`MovementConcept.SALE_PAYMENT`):
-            // este API usa `CREDIT_PAYMENT` — valor presente en el enum
-            // Postgres `movement_concept` de las migraciones actuales y
-            // semánticamente más preciso para abonos a crédito. Si en el
-            // futuro se añade `SALE_PAYMENT` al enum (migración aparte),
-            // cambiar a ese valor para paridad exacta.
-            concept: MovementConcept.CREDIT_PAYMENT,
+            // Paridad estricta con PlacePos `creditPaymentOperations.ts`:
+            // los abonos a crédito se categorizan como `SALE_PAYMENT` para
+            // que los reportes financieros de cloud y server-local
+            // concilien sobre la misma categoría.
+            concept: MovementConcept.SALE_PAYMENT,
             description: `Abono a crédito por transferencia - Venta ${saleLabel}`,
             source_type: 'external',
             source_id: Number(credit.customer_id),
@@ -319,11 +326,20 @@ export class ProcessCreditPaymentAction {
         const statusLabel =
           newStatus === SaleCreditStatus.PAID ? 'Crédito pagado completamente' : 'Abono registrado';
 
+        // Mapeo enum interno → label PlacePos. Storage DB no cambia (sigue
+        // `PARTIALLY_PAID`); solo se traduce al borde de salida del endpoint.
+        const credit_status_response: CreditStatusClientLabel =
+          newStatus === SaleCreditStatus.PAID
+            ? 'PAID'
+            : newStatus === SaleCreditStatus.PARTIALLY_PAID
+              ? 'PARTIAL'
+              : 'PENDING';
+
         return {
           success: true,
           message: `${statusLabel}. Saldo pendiente: $${newBalance}`,
           payment_id: paymentId,
-          credit_status: newStatus,
+          credit_status: credit_status_response,
           credit_balance: newBalance,
         } satisfies ProcessCreditPaymentResult;
       });

@@ -24,8 +24,18 @@ import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity'
 import { findSaleInCompany } from '../internal/sale-lookups';
 
 /**
- * Actor que ejecuta la anulación (owner/manager). Se persiste como
- * `created_by`/`created_by_id` en la NC y en el log de caja.
+ * Resultado del action — shape PlacePos `voidTicket`.
+ */
+export interface VoidSaleActionResult {
+  message: string;
+  creditNoteId: number | null;
+  creditNoteNumber: string | null;
+}
+
+/**
+ * Actor que ejecuta la anulación. Se persiste como `created_by`/`created_by_id`
+ * en la NC y en el log de caja, y se usa para resolver la caja receptora
+ * del reembolso CASH.
  */
 export interface VoidSaleActor {
   id: number;
@@ -35,36 +45,17 @@ export interface VoidSaleActor {
 
 /**
  * Anula una venta. Espejo PlacePos `voidTicket`:
+ *
  *   - `ORDER` → soft-delete directo (sin NC, sin stock, sin caja).
  *   - `SALE`  → genera NC `FULL_VOID`, devuelve stock, reversa CASH si aplica.
+ *     Los pagos TRANSFER se IGNORAN intencionalmente — paridad PlacePos:
+ *     `voidSale` local solo busca pagos CASH (`payment_method = 'CASH'`).
+ *     Si hubo cobro por transferencia, la reversa del banco se gestiona
+ *     manualmente o por `PUT /sales/:id` con `credit_correction_source`.
  *
- * --------------------------------------------------------------------------
- * Pasos para SALE (una transacción)
- * --------------------------------------------------------------------------
- *
- *   0. Lock pessimistic_write sobre la venta. Validar `is_deleted=false`.
- *   1. Idempotencia: si ya existe NC `FULL_VOID` activa para la venta → 422
- *      `ALREADY_FULL_VOIDED`.
- *   2. Folio CN per-company (atómico).
- *   3. INSERT CreditNote + lines snapshot.
- *   4. `adjustInventory(... 'RETURN')` (stub mientras Product.stock no exista).
- *   5. UPDATE `SaleInvoice.is_deleted=true`.
- *   6. Reversa de pagos CASH: por CADA SalePayment con payment_method=CASH:
- *      - getOrCreateCashRegisterForUser (caja del actor).
- *      - 422 INSUFFICIENT_REGISTER_BALANCE si balance < amount.
- *      - INSERT CashRegisterLog CREDIT_NOTE_FULL_VOID (OUT, affects=true).
- *      - UPDATE register.balance -= amount.
- *   7. Pagos TRANSFER: requieren correction_source — caso edge, se marca como
- *      pendiente (422 MISSING_CORRECTION_SOURCE). PlacePos local tampoco
- *      reversa transfers automáticamente en voidSale, así que mantenemos
- *      paridad.
- *
- * --------------------------------------------------------------------------
- * Roles
- * --------------------------------------------------------------------------
- *
- * `@Roles('owner', 'manager')` se aplica en el controller. El service
- * recibe `actor.type` solo para auditoría (no enforcement).
+ * Multi-tenant: el `companyId` se filtra en TODOS los lookups. Transacción
+ * SERIALIZABLE para evitar carreras en idempotencia (FULL_VOID) y mutación
+ * concurrente de la caja registradora.
  */
 @Injectable()
 export class VoidSaleAction {
@@ -80,10 +71,8 @@ export class VoidSaleAction {
     companyId: number,
     actor: VoidSaleActor,
     reason?: string | null,
-  ): Promise<{ creditNoteId: number | null; creditNoteNumber: string | null }> {
-    // SERIALIZABLE: CLAUDE.md §9.4 — generación de NC/ND es flujo crítico
-    // (lectura idempotency de FULL_VOID + mutación de stock/caja en paralelo).
-    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+  ): Promise<VoidSaleActionResult> {
+    return this.dataSource.transaction<VoidSaleActionResult>('SERIALIZABLE', async (manager) => {
       const sale = await findSaleInCompany(manager, id, companyId, {
         requireActive: false,
         lock: true,
@@ -91,168 +80,183 @@ export class VoidSaleAction {
 
       if (sale.is_deleted) {
         throw new UnprocessableEntityException({
-          message: 'Esta venta ya fue anulada anteriormente',
+          message:
+            sale.ticket_type === TicketType.ORDER
+              ? 'Este pedido ya fue anulado anteriormente'
+              : 'Esta venta ya fue anulada anteriormente',
           payload: { code: 'INVALID_TICKET_STATE' },
         });
       }
 
-      // ---------- ORDER: soft-delete directo ----------
       if (sale.ticket_type === TicketType.ORDER) {
-        await manager.update(
-          SaleInvoice,
-          { id: sale.id, company_id: String(companyId) },
-          { is_deleted: true },
-        );
-        this.logger.log({
-          event: 'sale.voided.order',
-          companyId,
-          saleId: Number(sale.id),
-          actorId: actor.id,
-        });
-        return { creditNoteId: null, creditNoteNumber: null };
+        return this.voidOrder(manager, sale, companyId, actor);
       }
 
-      // ---------- SALE: genera NC FULL_VOID ----------
-      // Idempotencia: una sola FULL_VOID activa por venta.
-      const existingFullVoid = await manager.findOne(CreditNote, {
-        where: {
-          company_id: String(companyId),
-          sale_invoice_id: sale.id,
-          operation_type: OperationType.FULL_VOID,
-          is_deleted: false,
-        },
-      });
-      if (existingFullVoid) {
-        throw new UnprocessableEntityException({
-          message: 'Esta venta ya tiene una nota crédito de anulación total',
-          payload: { code: 'ALREADY_FULL_VOIDED' },
-        });
-      }
+      return this.voidSale(manager, sale, companyId, actor, reason);
+    });
+  }
 
-      const lines = await manager.find(SaleInvoiceLine, {
-        where: { sale_invoice_id: sale.id, company_id: String(companyId) },
-        order: { id: 'ASC' },
-      });
+  // --------------------------------------------------------------------------
+  // ORDER: soft-delete directo
+  // --------------------------------------------------------------------------
 
-      const payments = await manager.find(SalePayment, {
-        where: { sale_invoice_id: sale.id, company_id: String(companyId) },
-      });
-      const cashPayments = payments.filter((p) => p.payment_method === SalePaymentMethod.CASH);
-      const transferPayments = payments.filter(
-        (p) => p.payment_method === SalePaymentMethod.TRANSFER,
-      );
+  private async voidOrder(
+    manager: EntityManager,
+    sale: SaleInvoice,
+    companyId: number,
+    actor: VoidSaleActor,
+  ): Promise<VoidSaleActionResult> {
+    await manager.update(
+      SaleInvoice,
+      { id: sale.id, company_id: String(companyId) },
+      { is_deleted: true },
+    );
+    this.logger.log({
+      event: 'sale.voided.order',
+      companyId,
+      saleId: Number(sale.id),
+      actorId: actor.id,
+    });
+    return {
+      message: 'Pedido anulado exitosamente',
+      creditNoteId: null,
+      creditNoteNumber: null,
+    };
+  }
 
-      // Defensa: si hay TRANSFER, requerimos correction_source explícito.
-      // PlacePos local no maneja este caso automáticamente; lo bloqueamos en
-      // pos_api para evitar des-cuadre silencioso del banco.
-      // TODO: aceptar un payload `transfer_correction_source` para reversar
-      //       atómicamente el banco con FinancialMovement EXPENSE ADJUSTMENT.
-      if (transferPayments.length > 0) {
-        throw new UnprocessableEntityException({
-          message:
-            'La venta tiene pagos por transferencia. Usa PUT /sales/:id para reversar con correction_source explícito.',
-          payload: {
-            code: 'MISSING_CORRECTION_SOURCE',
-            transferPayments: transferPayments.map((p) => ({
-              id: Number(p.id),
-              amount: Number(p.amount),
-              bank_id: p.bank_id ? Number(p.bank_id) : null,
-            })),
-          },
-        });
-      }
+  // --------------------------------------------------------------------------
+  // SALE: NC FULL_VOID + reversa CASH
+  // --------------------------------------------------------------------------
 
-      // Folio CN.
-      const cnTicket = await this.incrementTicketNumberAction.execute(
-        manager,
-        companyId,
-        TicketSettingType.CREDIT_NOTE,
-      );
-
-      // INSERT CreditNote.
-      const creditNote = manager.create(CreditNote, {
+  private async voidSale(
+    manager: EntityManager,
+    sale: SaleInvoice,
+    companyId: number,
+    actor: VoidSaleActor,
+    reason?: string | null,
+  ): Promise<VoidSaleActionResult> {
+    // Idempotencia: una sola FULL_VOID activa por venta.
+    const existingFullVoid = await manager.findOne(CreditNote, {
+      where: {
         company_id: String(companyId),
         sale_invoice_id: sale.id,
-        customer_id: sale.customer_id,
-        note_number: cnTicket.formatted,
-        note_type: NoteType.CREDIT,
         operation_type: OperationType.FULL_VOID,
-        subtotal: sale.subtotal,
-        tax_total: sale.tax_total,
-        total: sale.total,
-        reason: reason?.trim() || 'Anulación total de venta',
-        created_by: actor.fullName,
-        created_by_id: String(actor.id),
         is_deleted: false,
+      },
+      select: { id: true },
+    });
+    if (existingFullVoid) {
+      throw new UnprocessableEntityException({
+        message: 'Esta venta ya tiene una nota crédito de anulación total',
+        payload: { code: 'ALREADY_FULL_VOIDED' },
       });
-      const savedNote = await manager.save(CreditNote, creditNote);
+    }
 
-      // INSERT CreditNoteLine (snapshot).
-      if (lines.length > 0) {
-        const noteLines = lines.map((l) => ({
-          company_id: String(companyId),
-          credit_note_id: savedNote.id,
-          original_line_id: l.id,
-          product_id: l.product_id,
-          packaging_id: l.packaging_id,
-          description: l.description,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          unit_cost: l.unit_cost,
-          subtotal: l.subtotal,
-          iva_percentage: l.iva_percentage,
-          iva_amount: l.iva_amount,
-          total: l.total,
-        }));
-        await manager.insert(CreditNoteLine, noteLines);
-      }
+    const lines = await manager.find(SaleInvoiceLine, {
+      where: { sale_invoice_id: sale.id, company_id: String(companyId) },
+      order: { id: 'ASC' },
+    });
 
-      // Stock: devolver al inventario.
-      await adjustInventory(
+    // Paridad PlacePos: solo se busca el pago CASH para reversar. Los pagos
+    // TRANSFER NO generan reversa automática aquí — si existen, la
+    // conciliación del banco se hace manualmente o vía PUT /sales/:id con
+    // correction_source explícito.
+    const cashPayment = await manager.findOne(SalePayment, {
+      where: {
+        sale_invoice_id: sale.id,
+        company_id: String(companyId),
+        payment_method: SalePaymentMethod.CASH,
+      },
+      select: { id: true, amount: true },
+    });
+
+    // Folio CN.
+    const cnTicket = await this.incrementTicketNumberAction.execute(
+      manager,
+      companyId,
+      TicketSettingType.CREDIT_NOTE,
+    );
+
+    const creditNote = manager.create(CreditNote, {
+      company_id: String(companyId),
+      sale_invoice_id: sale.id,
+      customer_id: sale.customer_id,
+      note_number: cnTicket.formatted,
+      note_type: NoteType.CREDIT,
+      operation_type: OperationType.FULL_VOID,
+      subtotal: sale.subtotal,
+      tax_total: sale.tax_total,
+      total: sale.total,
+      reason: reason?.trim() || 'Anulación total de venta',
+      created_by: actor.fullName,
+      created_by_id: String(actor.id),
+      is_deleted: false,
+    });
+    const savedNote = await manager.save(CreditNote, creditNote);
+
+    if (lines.length > 0) {
+      const noteLines = lines.map((l) => ({
+        company_id: String(companyId),
+        credit_note_id: savedNote.id,
+        original_line_id: l.id,
+        product_id: l.product_id,
+        packaging_id: l.packaging_id,
+        description: l.description,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        unit_cost: l.unit_cost,
+        subtotal: l.subtotal,
+        iva_percentage: l.iva_percentage,
+        iva_amount: l.iva_amount,
+        total: l.total,
+      }));
+      await manager.insert(CreditNoteLine, noteLines);
+    }
+
+    await adjustInventory(
+      manager,
+      companyId,
+      lines.map((l) => ({
+        item_id: Number(l.product_id),
+        quantity: Number(l.quantity),
+      })),
+      'RETURN',
+    );
+
+    await manager.update(
+      SaleInvoice,
+      { id: sale.id, company_id: String(companyId) },
+      { is_deleted: true },
+    );
+
+    // Reversa CASH si hubo pago en efectivo y monto > 0 (paridad PlacePos
+    // `registerCreditNoteFullVoid`).
+    if (cashPayment && toBig(cashPayment.amount).gt(0)) {
+      await this.reverseCashPayment(
         manager,
         companyId,
-        lines.map((l) => ({
-          item_id: Number(l.product_id),
-          quantity: Number(l.quantity),
-        })),
-        'RETURN',
+        actor,
+        Number(sale.id),
+        Number(savedNote.id),
+        Number(cashPayment.amount),
       );
+    }
 
-      // UPDATE invoice.is_deleted = true.
-      await manager.update(
-        SaleInvoice,
-        { id: sale.id, company_id: String(companyId) },
-        { is_deleted: true },
-      );
-
-      // Reversa CASH: por cada pago en efectivo, descontar de la caja del
-      // actor y registrar log CREDIT_NOTE_FULL_VOID.
-      for (const cashPayment of cashPayments) {
-        await this.reverseCashPayment(
-          manager,
-          companyId,
-          actor,
-          Number(sale.id),
-          Number(savedNote.id),
-          Number(cashPayment.amount),
-        );
-      }
-
-      this.logger.log({
-        event: 'sale.voided.sale',
-        companyId,
-        saleId: Number(sale.id),
-        creditNoteId: Number(savedNote.id),
-        creditNoteNumber: savedNote.note_number,
-        cashRefunded: cashPayments.reduce((s, p) => s + Number(p.amount), 0),
-        actorId: actor.id,
-      });
-
-      return {
-        creditNoteId: Number(savedNote.id),
-        creditNoteNumber: savedNote.note_number,
-      };
+    this.logger.log({
+      event: 'sale.voided.sale',
+      companyId,
+      saleId: Number(sale.id),
+      creditNoteId: Number(savedNote.id),
+      creditNoteNumber: savedNote.note_number,
+      cashRefunded: cashPayment ? Number(cashPayment.amount) : 0,
+      actorId: actor.id,
     });
+
+    return {
+      message: 'Venta anulada exitosamente. Se generó nota crédito.',
+      creditNoteId: Number(savedNote.id),
+      creditNoteNumber: savedNote.note_number,
+    };
   }
 
   /**
@@ -295,7 +299,7 @@ export class VoidSaleAction {
       affects_balance: true,
       invoice_id: String(invoiceId),
       credit_note_id: String(creditNoteId),
-      description: `Devolución por anulación total - Venta #${invoiceId}`,
+      description: `Devolución por anulación total — Venta #${invoiceId}`,
       created_by: actor.fullName,
       created_by_id: String(actor.id),
       is_credit_related: false,

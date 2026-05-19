@@ -55,11 +55,19 @@ describe('CreateDefaultTicketSettingsAction', () => {
       ]),
     );
 
+    const EXPECTED_PREFIXES: Record<string, string> = {
+      [TicketSettingType.ORDER]: 'PED',
+      [TicketSettingType.SALE]: 'VTA',
+      [TicketSettingType.CREDIT_NOTE]: 'NC',
+      [TicketSettingType.DEBIT_NOTE]: 'ND',
+      [TicketSettingType.PURCHASE]: 'COMP',
+    };
+
     for (const row of createdRows) {
       expect(row.company_id).toBe('42');
       expect(row.current_number).toBe(0);
-      expect(row.prefix).toBeNull();
       expect(row.suffix).toBeNull();
+      expect(row.prefix).toBe(EXPECTED_PREFIXES[row.ticket_type as string]);
     }
   });
 });

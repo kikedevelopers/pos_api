@@ -313,7 +313,9 @@ export class CreateSaleAction {
     const lines = await findSaleLines(manager, saleId, companyId);
     const payments = await findSalePayments(manager, saleId, companyId);
     const credit = await findSaleCredit(manager, saleId, companyId);
-    return { sale, lines, payments, credit };
+    // Una venta recién creada nunca tiene NC/ND, pero el shape del aggregate
+    // las exige para mantener el contrato del DTO uniforme.
+    return { sale, lines, payments, credit, creditNotes: [] };
   }
 }
 

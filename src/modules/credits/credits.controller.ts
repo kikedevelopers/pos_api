@@ -63,7 +63,7 @@ export class CreditsController {
     success: true;
     message: string;
     payment_id: number;
-    credit_status: string;
+    credit_status: 'PENDING' | 'PARTIAL' | 'PAID';
     credit_balance: number;
   }> {
     const fullName = `${user.name} ${user.lastname}`.trim();

@@ -21,27 +21,27 @@ export interface CreateDefaultTicketSettingsInput {
 }
 
 /**
- * Prefijos por defecto. Espejo del seed `seedEssentials` de PlacePos.
+ * Prefijos por defecto. Espejo del seed `seedEssentials` de PlacePos +
+ * Document Numbering Glossary del proyecto (CLAUDE.md).
  *
- * El cliente local de PlacePos crea las 5 rows con prefix = '' (cadena
- * vacía) — el helper `formatTicketNumber` produce solo el número padded
- * cuando `prefix` es vacío. Para evitar cargar al frontend con la lógica
- * "es vacío, omite el guion" y mantener paridad con clientes que esperan
- * `null` para "sin prefijo", aquí seedeamos prefix = null y suffix = null.
+ * El renderer del cliente PlacePos asume que `ticket_number` SIEMPRE viene
+ * con prefijo (no implementa fallback al padded number solo). Si dejamos
+ * prefix = null, el cloud emite `001` y la UI muestra solo el número — el
+ * usuario ve los pedidos sin identificador legible. Por eso seedeamos los
+ * códigos canónicos del proyecto: PED, VTA, NC, ND, COMP.
  *
- * Si el owner quiere personalizar (ej. "F" para SALE, "NC" para
- * CREDIT_NOTE), lo hace vía `PUT /ticket-settings/:ticket_type` después
- * del registro.
+ * Si el owner quiere personalizar (ej. agregar sufijo de sede), lo hace
+ * vía `PUT /ticket-settings/:ticket_type` después del registro.
  */
 const DEFAULT_PREFIXES: Record<
   TicketSettingType,
-  { prefix: string | null; suffix: string | null }
+  { prefix: string; suffix: string | null }
 > = {
-  [TicketSettingType.ORDER]: { prefix: null, suffix: null },
-  [TicketSettingType.SALE]: { prefix: null, suffix: null },
-  [TicketSettingType.CREDIT_NOTE]: { prefix: null, suffix: null },
-  [TicketSettingType.DEBIT_NOTE]: { prefix: null, suffix: null },
-  [TicketSettingType.PURCHASE]: { prefix: null, suffix: null },
+  [TicketSettingType.ORDER]: { prefix: 'PED', suffix: null },
+  [TicketSettingType.SALE]: { prefix: 'VTA', suffix: null },
+  [TicketSettingType.CREDIT_NOTE]: { prefix: 'NC', suffix: null },
+  [TicketSettingType.DEBIT_NOTE]: { prefix: 'ND', suffix: null },
+  [TicketSettingType.PURCHASE]: { prefix: 'COMP', suffix: null },
 };
 
 /**
