@@ -83,15 +83,30 @@ echo "[deploy] Estado de los servicios:"
 $COMPOSE ps
 
 echo
-echo "[deploy] Verificando health del API (esperando hasta 30s)..."
-for i in $(seq 1 30); do
-  if curl -fsS "http://localhost:${PORT:-3010}/health/live" >/dev/null 2>&1; then
-    echo "[deploy] API responde OK en /health/live."
-    break
-  fi
+echo "[deploy] Verificando health del API (esperando hasta 90s)..."
+# El contenedor `api` solo expone 3010 a la red interna de Docker (sin
+# publish al host), así que NO podemos hacer curl localhost:3010 desde aquí.
+# Usamos el healthcheck nativo de Docker, que sí corre dentro del namespace
+# del container. start_period=20s + interval=30s, por eso damos hasta 90s.
+for i in $(seq 1 90); do
+  status=$(docker inspect -f '{{.State.Health.Status}}' pos_api 2>/dev/null || echo "missing")
+  case "$status" in
+    healthy)
+      echo "[deploy] API healthy (Docker healthcheck OK)."
+      break
+      ;;
+    unhealthy)
+      echo "[deploy] API marcado unhealthy por Docker. Revisa: docker compose -f $COMPOSE_FILE logs api" >&2
+      exit 1
+      ;;
+    missing)
+      echo "[deploy] Contenedor pos_api no existe — algo voló durante el up." >&2
+      exit 1
+      ;;
+  esac
   sleep 1
-  if [ "$i" -eq 30 ]; then
-    echo "[deploy] El API no respondió en 30s. Revisa: docker compose -f $COMPOSE_FILE logs api" >&2
+  if [ "$i" -eq 90 ]; then
+    echo "[deploy] El API seguía en '$status' tras 90s. Revisa: docker compose -f $COMPOSE_FILE logs api" >&2
     exit 1
   fi
 done
