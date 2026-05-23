@@ -1,64 +1,59 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
-  IsNumber,
   IsObject,
-  IsOptional,
   IsString,
   Matches,
-  Max,
   MaxLength,
-  Min,
 } from 'class-validator';
 
 /**
  * Payload de `PUT /alert-configs/:type`.
  *
- * El `type` viaja por URL (no en el body). El body trae `enabled`,
- * `threshold` y `config`. El service hace UPSERT — si no existía, crea la
- * row con `type` del URL.
+ * Espejo PlacePos `AlertConfigUpdatePayload`:
+ *   { is_enabled: boolean; check_time: 'HH:mm:ss'; params: Record<string, unknown> }
  *
- * `threshold` puede ser null para deshabilitar el umbral (cuando la
- * forma del `config` no lo requiere).
- *
- * `config` es jsonb libre — su forma la valida cada evaluator en Fase 11.
+ * El service combina `check_time` con `params` y los persiste juntos dentro
+ * del jsonb `config` de la tabla `alert_configs` para preservar el shape
+ * cloud-multi-tenant sin migrar columna por columna.
  */
 export class UpsertAlertConfigDto {
-  @ApiProperty({ example: true })
+  @ApiProperty({ example: false })
   @IsBoolean()
-  enabled!: boolean;
+  is_enabled!: boolean;
 
-  @ApiPropertyOptional({
-    example: 5,
-    nullable: true,
-    description: 'Umbral genérico (cantidad o porcentaje). Hasta 4 decimales, no negativo.',
+  @ApiProperty({
+    example: '07:00:00',
+    description:
+      'Hora local de disparo del scheduler en formato HH:mm:ss (24h). Validamos el shape para evitar persistir strings que luego rompan el scheduler.',
   })
-  @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'threshold debe ser número con hasta 4 decimales' })
-  @Min(0)
-  @Max(999_999_999_999)
-  threshold?: number | null;
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/, {
+    message: 'check_time debe ser HH:mm:ss (24h)',
+  })
+  check_time!: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     type: Object,
-    default: {},
-    description: 'Parámetros específicos del evaluator. Forma libre — el evaluator decide.',
+    description:
+      'Parámetros específicos del evaluator. Forma libre — el evaluator decide. NO incluir `check_time` aquí.',
+    example: { inactivity_days: 15, min_purchases: 3, recurrence_window_days: 60 },
   })
-  @IsOptional()
-  @IsObject({ message: 'config debe ser un objeto' })
-  config?: Record<string, unknown>;
+  @IsObject({ message: 'params debe ser un objeto' })
+  params!: Record<string, unknown>;
 }
 
 /**
- * Validador de `:type` — string sin espacios, solo caracteres seguros
- * (`[a-z0-9_]+`). Mantiene el namespace acotado.
+ * Validador de `:type` — string sin espacios, solo caracteres seguros.
+ * Acepta UPPER_SNAKE_CASE y lower_snake_case porque placepos usa
+ * `INACTIVE_CUSTOMER` en uppercase y el contrato debe ser cross-compatible.
  */
 export class AlertConfigTypeParam {
-  @ApiProperty({ example: 'low_stock' })
+  @ApiProperty({ example: 'INACTIVE_CUSTOMER' })
   @IsString()
   @MaxLength(50)
-  @Matches(/^[a-z][a-z0-9_]*$/, {
-    message: 'type debe ser snake_case (a-z, 0-9, _), comenzando con letra',
+  @Matches(/^[a-zA-Z][a-zA-Z0-9_]*$/, {
+    message: 'type debe ser letras/dígitos/guion bajo, comenzando con letra',
   })
   type!: string;
 }

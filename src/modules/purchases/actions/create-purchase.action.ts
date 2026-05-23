@@ -8,6 +8,11 @@ import Big from 'big.js';
 import { DataSource, In } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
+import {
+  CarrierCredit,
+  CarrierCreditStatus,
+} from '@/modules/carriers/entities/carrier-credit.entity';
+import { Carrier } from '@/modules/carriers/entities/carrier.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
 import { Supplier } from '@/modules/suppliers/entities/supplier.entity';
@@ -97,6 +102,28 @@ export class CreatePurchaseAction {
     companyId: number,
     createdBy: PurchaseCreator,
   ): Promise<PurchaseAggregate> {
+    // Normalización temprana de los flags de carrier/transport — la
+    // validación cruzada `transport_cost > 0 ⇒ carrier_id` no la cubre
+    // class-validator, así que la hacemos aquí antes de tocar la DB.
+    const carrierId =
+      dto.carrier_id !== null && dto.carrier_id !== undefined && dto.carrier_id > 0
+        ? Number(dto.carrier_id)
+        : null;
+    const transportCostBig: Big = toBig(dto.transport_cost ?? 0);
+    const totalKilosBig: Big | null =
+      dto.total_kilos === null || dto.total_kilos === undefined ? null : toBig(dto.total_kilos);
+    if (transportCostBig.lt(0)) {
+      throw new BadRequestException('El costo de transporte no puede ser negativo');
+    }
+    if (totalKilosBig !== null && totalKilosBig.lt(0)) {
+      throw new BadRequestException('El peso total no puede ser negativo');
+    }
+    if (transportCostBig.gt(0) && !carrierId) {
+      throw new UnprocessableEntityException(
+        'Debe seleccionarse un transportista para registrar costo de flete',
+      );
+    }
+
     return this.dataSource.transaction<PurchaseAggregate>(async (manager) => {
       // 1. Supplier de la company y activo.
       const supplier = await manager.findOne(Supplier, {
@@ -108,6 +135,24 @@ export class CreatePurchaseAction {
       });
       if (!supplier) {
         throw new UnprocessableEntityException('Proveedor no encontrado o archivado');
+      }
+
+      // 1.b Carrier (si llega). Validar mismo tenant y no archivado.
+      //     Snapshot del nombre se persiste en `purchase.carrier_name` para
+      //     que un rename / archive futuro del carrier no afecte historia.
+      let carrierSnapshotName: string | null = null;
+      if (carrierId) {
+        const carrier = await manager.findOne(Carrier, {
+          where: {
+            id: String(carrierId),
+            company_id: String(companyId),
+            is_archived: false,
+          },
+        });
+        if (!carrier) {
+          throw new UnprocessableEntityException('Transportista no encontrado o archivado');
+        }
+        carrierSnapshotName = carrier.name;
       }
 
       // 2. Productos: cargar todos los referenciados en una sola query
@@ -239,6 +284,16 @@ export class CreatePurchaseAction {
       const totalRounded = preciseNumber(totalGrand, 2);
 
       // 6. INSERT Purchase.
+      const transportCostRounded = preciseNumber(transportCostBig, 2);
+      const totalKilosRounded = totalKilosBig === null ? null : preciseNumber(totalKilosBig, 4);
+      // Factura física del proveedor: paridad placepos. NULL si el cliente
+      // registra la compra como remisión sin factura formal.
+      const invoiceDate =
+        dto.invoice_date !== undefined && dto.invoice_date !== null
+          ? new Date(dto.invoice_date)
+          : null;
+      const invoiceNumber = dto.invoice_number?.trim() || null;
+
       const purchase = manager.create(Purchase, {
         company_id: String(companyId),
         purchase_number: purchaseNumber,
@@ -249,7 +304,12 @@ export class CreatePurchaseAction {
         total: totalRounded,
         notes: dto.notes?.trim() || null,
         status: PurchaseStatus.PENDING,
-        carrier_name: null,
+        carrier_id: carrierId === null ? null : String(carrierId),
+        carrier_name: carrierSnapshotName,
+        transport_cost: transportCostRounded,
+        total_kilos: totalKilosRounded,
+        invoice_date: invoiceDate,
+        invoice_number: invoiceNumber,
         received_by: null,
         received_at: null,
         created_by: createdBy.fullName,
@@ -297,12 +357,36 @@ export class CreatePurchaseAction {
         totalRounded,
       );
 
+      // 10. CarrierCredit: si la compra trae transportista con flete > 0,
+      //     creamos su deuda al transportista en la misma transacción.
+      //     balance == total y status PENDING; los abonos se registran
+      //     después vía POST /carrier-payments. Paridad PlacePos.
+      if (carrierId && transportCostBig.gt(0)) {
+        const carrierCredit = manager.create(CarrierCredit, {
+          company_id: String(companyId),
+          carrier_id: String(carrierId),
+          purchase_id: savedPurchase.id,
+          total: transportCostRounded,
+          paid_amount: 0,
+          balance: transportCostRounded,
+          status: CarrierCreditStatus.PENDING,
+        });
+        try {
+          await manager.save(CarrierCredit, carrierCredit);
+        } catch (error) {
+          translatePurchaseConstraintError(error);
+          throw error;
+        }
+      }
+
       this.logger.log({
         event: 'purchase.created',
         companyId,
         purchaseId: Number(savedPurchase.id),
         purchaseNumber,
         supplierId: dto.supplier_id,
+        carrierId,
+        transportCost: transportCostRounded,
         total: totalRounded,
         actorId: createdBy.id,
       });

@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
-import { FindCreditNotesBySaleAction } from './actions/find-credit-notes-by-sale.action';
-import type { CreditNote } from './entities/credit-note.entity';
+import {
+  type CreditNoteAggregate,
+  FindCreditNotesBySaleAction,
+} from './actions/find-credit-notes-by-sale.action';
+
+export type { CreditNoteAggregate } from './actions/find-credit-notes-by-sale.action';
 
 /**
  * Facade del módulo `credit-notes`. ZERO lógica — solo delega.
@@ -16,7 +20,7 @@ import type { CreditNote } from './entities/credit-note.entity';
 export class CreditNotesService {
   constructor(private readonly findCreditNotesBySaleAction: FindCreditNotesBySaleAction) {}
 
-  findBySale(saleInvoiceId: number, companyId: number): Promise<CreditNote[]> {
+  findBySale(saleInvoiceId: number, companyId: number): Promise<CreditNoteAggregate[]> {
     return this.findCreditNotesBySaleAction.execute(saleInvoiceId, companyId);
   }
 }

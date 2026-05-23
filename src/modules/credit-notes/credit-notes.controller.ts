@@ -44,7 +44,9 @@ export class CreditNotesController {
     @Param('invoiceId', ParseIntPipe) invoiceId: number,
     @CurrentCompany() companyId: number,
   ): Promise<CreditNoteResponseDto[]> {
-    const notes = await this.creditNotesService.findBySale(invoiceId, companyId);
-    return notes.map((n) => toCreditNoteResponseDto(n, [], null));
+    const aggregates = await this.creditNotesService.findBySale(invoiceId, companyId);
+    return aggregates.map((agg) =>
+      toCreditNoteResponseDto(agg.note, agg.lines, agg.correctionSource),
+    );
   }
 }

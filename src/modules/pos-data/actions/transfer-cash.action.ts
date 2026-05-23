@@ -10,6 +10,7 @@ import Big from 'big.js';
 import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
+import { runSerializableWithRetry } from '@/common/utils/serializable-retry';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
@@ -95,7 +96,11 @@ export class TransferCashAction {
       throw new UnprocessableEntityException('El monto debe ser mayor a cero');
     }
 
-    return this.dataSource.transaction<TransferCashResult>(async (manager) => {
+    // Aislamiento SERIALIZABLE (CLAUDE.md §9.4): transferencias entre la
+    // caja del actor y bank/wallet combinan read+write y son susceptibles
+    // a write-skew con cobros concurrentes. PG aborta con 40001 si detecta
+    // anomalía; reintentamos hasta 2 veces.
+    return runSerializableWithRetry<TransferCashResult>(this.dataSource, async (manager) => {
       const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
       const destination = await this.loadDestination(
         manager,

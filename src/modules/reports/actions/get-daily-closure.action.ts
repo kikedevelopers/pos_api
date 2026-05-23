@@ -513,14 +513,28 @@ export class GetDailyClosureAction {
     return Number(rows[0]?.abonos_profit ?? 0);
   }
 
+  /**
+   * Total de egresos del día: `expenses` no archivados + abonos a transportistas
+   * (`carrier_payments`). Espejo PlacePos `fetchExpensesTotal`
+   * (`reports.routes.ts:253`): ambos restan al Saldo Líquido del cierre.
+   * Multi-tenant en ambas ramas.
+   */
   private async fetchExpensesTotal(cid: string, dateStart: Date, dateEnd: Date): Promise<number> {
     const rows = await this.dataSource.query<ExpensesRow[]>(
       `
       SELECT COALESCE(SUM(amount), 0)::float AS expenses_total
-      FROM expenses
-      WHERE company_id = $1
-        AND created_at BETWEEN $2 AND $3
-        AND is_archived = false
+      FROM (
+        SELECT e.amount
+        FROM expenses e
+        WHERE e.company_id = $1
+          AND e.created_at BETWEEN $2 AND $3
+          AND e.is_archived = false
+        UNION ALL
+        SELECT cp.amount
+        FROM carrier_payments cp
+        WHERE cp.company_id = $1
+          AND cp.created_at BETWEEN $2 AND $3
+      ) AS combined
       `,
       [cid, dateStart, dateEnd],
     );

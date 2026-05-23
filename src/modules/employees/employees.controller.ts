@@ -32,6 +32,7 @@ import {
   EmployeeResponseDto,
   toEmployeeDetailResponseDto,
   toEmployeeResponseDto,
+  toEmployeeResponseDtoFromEntity,
 } from './dto/employee-response.dto';
 import { SetCashBaseDto } from './dto/set-cash-base.dto';
 import { ToggleLoginDto } from './dto/toggle-login.dto';
@@ -114,7 +115,9 @@ export class EmployeesController {
       // `full_name` (concat de name+lastname).
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
-    return toEmployeeResponseDto(employee);
+    // En creación la caja siempre nace con balance/base = 0. Mapper sin
+    // lookup adicional para no añadir un round-trip post-INSERT.
+    return toEmployeeResponseDtoFromEntity(employee);
   }
 
   @Put(':id')
@@ -133,7 +136,10 @@ export class EmployeesController {
     @CurrentCompany() companyId: number,
   ): Promise<EmployeeResponseDto> {
     const employee = await this.employeesService.update(id, dto, companyId);
-    return toEmployeeResponseDto(employee);
+    // Re-lectura del detalle para incluir cash_balance/base_amount actuales
+    // (paridad PlacePos: `PUT /employees/:id` devuelve el employee + caja).
+    const detail = await this.employeesService.findOne(Number(employee.id), companyId);
+    return toEmployeeDetailResponseDto(detail);
   }
 
   @Put(':id/credentials')
@@ -173,7 +179,10 @@ export class EmployeesController {
       companyId,
       currentUser.user_id,
     );
-    return toEmployeeResponseDto(employee);
+    // Re-lectura del detalle para que el response incluya el resumen de
+    // caja (paridad PlacePos).
+    const detail = await this.employeesService.findOne(Number(employee.id), companyId);
+    return toEmployeeDetailResponseDto(detail);
   }
 
   @Put(':id/toggle-login')
@@ -205,7 +214,11 @@ export class EmployeesController {
       companyId,
       currentUser.user_id,
     );
-    return toEmployeeResponseDto(employee);
+    // Re-lectura del detalle: tras OFF→ON el employee acaba de obtener su
+    // User espejo y la caja recién creada; el cliente la espera en el
+    // response (paridad PlacePos).
+    const detail = await this.employeesService.findOne(Number(employee.id), companyId);
+    return toEmployeeDetailResponseDto(detail);
   }
 
   @Put(':id/cash-register/base')

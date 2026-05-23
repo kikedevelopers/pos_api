@@ -244,7 +244,8 @@ describe('CreateExpenseAction', () => {
       throw new Error('Expected record call');
     }
     expect(fmArgs.movement_type).toBe('EXPENSE');
-    expect(fmArgs.concept).toBe('EXPENSE');
+    // Paridad PlacePos `expenses.routes.ts`: concept = EXPENSE_PAYMENT.
+    expect(fmArgs.concept).toBe('EXPENSE_PAYMENT');
     expect(fmArgs.source_type).toBe('bank');
     expect(fmArgs.source_id).toBe(1);
     expect(fmArgs.amount).toBe(150);

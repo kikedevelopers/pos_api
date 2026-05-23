@@ -3,13 +3,16 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsDateString,
   IsInt,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -106,6 +109,11 @@ export class CreatePurchaseLineDto {
 
 /**
  * Payload de `POST /purchases`. Espejo PlacePos `CreatePurchaseBody`.
+ *
+ * Campos de transporte (`carrier_id`, `transport_cost`, `total_kilos`) son
+ * opt-in: si no llegan, la compra se crea sin asociación a transportista.
+ * Cuando `transport_cost > 0`, `carrier_id` se exige (validación en el
+ * action — DTO no puede expresar dependencia cruzada con `class-validator`).
  */
 export class CreatePurchaseDto {
   @ApiProperty({
@@ -129,4 +137,79 @@ export class CreatePurchaseDto {
   @ValidateNested({ each: true })
   @Type(() => CreatePurchaseLineDto)
   lines!: CreatePurchaseLineDto[];
+
+  @ApiPropertyOptional({
+    example: 7,
+    nullable: true,
+    description:
+      'ID del transportista. Obligatorio si `transport_cost > 0`. Se valida que pertenezca a la company.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'carrier_id debe ser entero' })
+  @Min(1, { message: 'carrier_id debe ser >= 1' })
+  carrier_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: 25.5,
+    nullable: true,
+    description: 'Costo total del flete. Genera `CarrierCredit` si > 0.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'transport_cost debe ser número con hasta 2 decimales' },
+  )
+  @Min(0, { message: 'transport_cost debe ser >= 0' })
+  transport_cost?: number | null;
+
+  @ApiPropertyOptional({
+    example: 1200.5,
+    nullable: true,
+    description: 'Peso total transportado en kg. Hasta 4 decimales.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 4 },
+    { message: 'total_kilos debe ser número con hasta 4 decimales' },
+  )
+  @Min(0, { message: 'total_kilos debe ser >= 0' })
+  total_kilos?: number | null;
+
+  @ApiPropertyOptional({
+    example: '2026-05-22T15:30:00.000Z',
+    nullable: true,
+    description:
+      'Fecha de la factura física del proveedor (ISO 8601). NULL si la compra entra como remisión sin factura formal. Paridad placepos.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsDateString({}, { message: 'invoice_date debe ser fecha ISO 8601' })
+  invoice_date?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'F-2025-00123',
+    maxLength: 64,
+    nullable: true,
+    description:
+      'Número de factura del proveedor. placepos permite duplicados intencionales (devoluciones); no aplicamos UNIQUE.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsString()
+  @MaxLength(64)
+  invoice_number?: string | null;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    nullable: true,
+    description:
+      'UUID v4 generado por el cliente para deduplicar reintentos. Aceptado por paridad placepos; la idempotencia server-side completa está pendiente. El cliente Electron lo genera al abrir el formulario y reusa la misma llave si hace doble-click.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID(4)
+  client_operation_id?: string | null;
 }

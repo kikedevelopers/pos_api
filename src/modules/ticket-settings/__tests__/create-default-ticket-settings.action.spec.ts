@@ -5,7 +5,7 @@ import { TicketSettingType, type TicketSetting } from '../entities/ticket-settin
 
 /**
  * Tests unitarios de `CreateDefaultTicketSettingsAction`. Cubrimos:
- *   - Crea exactamente 5 filas (una por TicketSettingType).
+ *   - Crea una fila por cada miembro de `TicketSettingType` (6 actualmente).
  *   - Cada fila tiene `current_number = 0` y `company_id` del input.
  *   - El action NO abre transacción propia — usa el `manager` que recibe.
  */
@@ -36,24 +36,17 @@ describe('CreateDefaultTicketSettingsAction', () => {
     action = module.get(CreateDefaultTicketSettingsAction);
   });
 
-  it('crea las 5 filas iniciales de TicketSettingType con current_number=0', async () => {
+  it('crea una fila por cada TicketSettingType con current_number=0', async () => {
     await action.execute(managerMock as never, {
       companyId: 42,
       createdBy: { id: 7, fullName: 'Kike Pacheco' },
     });
 
-    expect(createdRows).toHaveLength(5);
+    const expectedTypes = Object.values(TicketSettingType);
+    expect(createdRows).toHaveLength(expectedTypes.length);
 
     const types = createdRows.map((r) => r.ticket_type);
-    expect(types).toEqual(
-      expect.arrayContaining([
-        TicketSettingType.ORDER,
-        TicketSettingType.SALE,
-        TicketSettingType.CREDIT_NOTE,
-        TicketSettingType.DEBIT_NOTE,
-        TicketSettingType.PURCHASE,
-      ]),
-    );
+    expect(types).toEqual(expect.arrayContaining(expectedTypes));
 
     const EXPECTED_PREFIXES: Record<string, string> = {
       [TicketSettingType.ORDER]: 'PED',
@@ -61,6 +54,7 @@ describe('CreateDefaultTicketSettingsAction', () => {
       [TicketSettingType.CREDIT_NOTE]: 'NC',
       [TicketSettingType.DEBIT_NOTE]: 'ND',
       [TicketSettingType.PURCHASE]: 'COMP',
+      [TicketSettingType.PURCHASE_PAYMENT]: 'APC',
     };
 
     for (const row of createdRows) {

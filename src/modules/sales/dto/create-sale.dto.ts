@@ -163,8 +163,7 @@ export class CreateSaleLineDto {
 
   @ApiProperty({
     example: 14,
-    description:
-      'Ganancia de la línea ((price - cost) * quantity). Pre-calculada por el cliente.',
+    description: 'Ganancia de la línea ((price - cost) * quantity). Pre-calculada por el cliente.',
   })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })

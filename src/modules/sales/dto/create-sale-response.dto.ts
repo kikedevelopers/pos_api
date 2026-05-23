@@ -37,7 +37,10 @@ export class CreateSaleResponseDto {
   ticket_number!: string;
 }
 
-export function toCreateSaleResponseDto(invoiceId: number, ticketNumber: string): CreateSaleResponseDto {
+export function toCreateSaleResponseDto(
+  invoiceId: number,
+  ticketNumber: string,
+): CreateSaleResponseDto {
   return {
     success: true,
     message: 'Pedido registrado exitosamente',

@@ -154,7 +154,13 @@ export async function fetchNotesByDay(
 }
 
 /**
- * Gastos por día (filtra archivados). Filtro multi-tenant: `e.company_id = $1`.
+ * Gastos por día (incluye `expenses` no archivados Y abonos a transportistas).
+ * Filtro multi-tenant aplicado a ambas ramas.
+ *
+ * Espejo PlacePos `fetchExpensesByDay` (`dashboard.routes.ts:142`): los abonos
+ * a `carrier_payments` también salen de caja y deben restarse en el cálculo
+ * de Ganancia Real y de Saldo Líquido. Sin esta unión, el Excedente queda
+ * inflado en clientes con flota propia.
  */
 export async function fetchExpensesByDay(
   dataSource: DataSource,
@@ -165,12 +171,20 @@ export async function fetchExpensesByDay(
   return dataSource.query<ExpensesByDayRow[]>(
     `
     SELECT
-      TO_CHAR(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
-      COALESCE(SUM(e.amount), 0)::float AS expenses
-    FROM expenses e
-    WHERE e.company_id = $1
-      AND e.is_archived = false
-      AND e.created_at BETWEEN $2 AND $3
+      TO_CHAR(combined.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+      COALESCE(SUM(combined.amount), 0)::float AS expenses
+    FROM (
+      SELECT e.created_at, e.amount
+      FROM expenses e
+      WHERE e.company_id = $1
+        AND e.is_archived = false
+        AND e.created_at BETWEEN $2 AND $3
+      UNION ALL
+      SELECT cp.created_at, cp.amount
+      FROM carrier_payments cp
+      WHERE cp.company_id = $1
+        AND cp.created_at BETWEEN $2 AND $3
+    ) AS combined
     GROUP BY 1
     `,
     [String(companyId), dateStart, dateEnd],
@@ -431,7 +445,12 @@ export async function fetchProfitTotal(
 }
 
 /**
- * Total de gastos no archivados en el rango. Filtro multi-tenant `e.company_id = $1`.
+ * Total de gastos del rango: `expenses` no archivados + `carrier_payments`.
+ * Filtro multi-tenant aplicado a ambas ramas.
+ *
+ * Espejo PlacePos `fetchExpensesTotal` (`dashboard.routes.ts:531`): los abonos
+ * a transportistas también son egresos del día. Sin esto, la Ganancia Real
+ * queda sobre-estimada.
  */
 export async function fetchExpensesTotal(
   dataSource: DataSource,
@@ -441,11 +460,19 @@ export async function fetchExpensesTotal(
 ): Promise<number> {
   const rows = await dataSource.query<AmountRow[]>(
     `
-    SELECT COALESCE(SUM(e.amount), 0)::float AS amount
-    FROM expenses e
-    WHERE e.company_id = $1
-      AND e.is_archived = false
-      AND e.created_at BETWEEN $2 AND $3
+    SELECT COALESCE(SUM(amount), 0)::float AS amount
+    FROM (
+      SELECT e.amount
+      FROM expenses e
+      WHERE e.company_id = $1
+        AND e.is_archived = false
+        AND e.created_at BETWEEN $2 AND $3
+      UNION ALL
+      SELECT cp.amount
+      FROM carrier_payments cp
+      WHERE cp.company_id = $1
+        AND cp.created_at BETWEEN $2 AND $3
+    ) AS combined
     `,
     [String(companyId), dateStart, dateEnd],
   );
@@ -479,6 +506,101 @@ export async function fetchNewCredits(
     [String(companyId), dateStart, dateEnd],
   );
   return { count: Number(rows[0]?.count ?? 0), amount: Number(rows[0]?.amount ?? 0) };
+}
+
+/**
+ * Conteo de tickets V (SALE) del rango. Espejo PlacePos `fetchSalesCount`
+ * (`dashboard.routes.ts:569`). Solo se usa para mostrar "N° de ventas hoy"
+ * en `/dashboard/today` — no incluye notas ni abonos.
+ */
+export async function fetchSalesCount(
+  dataSource: DataSource,
+  companyId: number,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<number> {
+  const rows = await dataSource.query<{ count: string | number }[]>(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM sale_invoices si
+    WHERE si.company_id = $1
+      AND si.ticket_type = 'SALE'
+      AND si.is_deleted = false
+      AND si.created_at BETWEEN $2 AND $3
+    `,
+    [String(companyId), dateStart, dateEnd],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * Conteo + total de compras realizadas en el rango.
+ * Espejo PlacePos `fetchPurchasesToday` (`dashboard.routes.ts:584`).
+ * Multi-tenant: `purchases.company_id = $1`.
+ */
+export async function fetchPurchasesToday(
+  dataSource: DataSource,
+  companyId: number,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<{ count: number; amount: number }> {
+  const rows = await dataSource.query<{ count: string | number; amount: number }[]>(
+    `
+    SELECT
+      COUNT(*) AS count,
+      COALESCE(SUM(total), 0)::float AS amount
+    FROM purchases
+    WHERE company_id = $1
+      AND created_at BETWEEN $2 AND $3
+    `,
+    [String(companyId), dateStart, dateEnd],
+  );
+  return { count: Number(rows[0]?.count ?? 0), amount: Number(rows[0]?.amount ?? 0) };
+}
+
+/**
+ * Pagos a compras del rango agrupados por método. Espejo PlacePos
+ * `fetchPurchasePaymentsToday` (`dashboard.routes.ts:602`). Multi-tenant.
+ */
+export async function fetchPurchasePaymentsToday(
+  dataSource: DataSource,
+  companyId: number,
+  method: 'CASH' | 'TRANSFER',
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<number> {
+  const rows = await dataSource.query<AmountRow[]>(
+    `
+    SELECT COALESCE(SUM(amount), 0)::float AS amount
+    FROM purchase_payments
+    WHERE company_id = $1
+      AND payment_method = $2::payment_method
+      AND created_at BETWEEN $3 AND $4
+    `,
+    [String(companyId), method, dateStart, dateEnd],
+  );
+  return Number(rows[0]?.amount ?? 0);
+}
+
+/**
+ * Deuda viva con proveedores: saldo pendiente de TODOS los créditos de
+ * compra sin importar la fecha (cartera). Espejo PlacePos
+ * `fetchSupplierDebt` (`dashboard.routes.ts:622`). Multi-tenant.
+ */
+export async function fetchSupplierDebt(
+  dataSource: DataSource,
+  companyId: number,
+): Promise<number> {
+  const rows = await dataSource.query<AmountRow[]>(
+    `
+    SELECT COALESCE(SUM(balance), 0)::float AS amount
+    FROM purchase_credits
+    WHERE company_id = $1
+      AND status <> 'PAID'
+    `,
+    [String(companyId)],
+  );
+  return Number(rows[0]?.amount ?? 0);
 }
 
 /**

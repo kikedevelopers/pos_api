@@ -10,10 +10,7 @@ import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line
 import { SaleCreditStatus, type SaleCredit } from '../entities/sale-credit.entity';
 import { type SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { TicketType, type SaleInvoice } from '../entities/sale-invoice.entity';
-import {
-  SalePaymentMethod,
-  type SalePayment,
-} from '../entities/sale-payment.entity';
+import { SalePaymentMethod, type SalePayment } from '../entities/sale-payment.entity';
 
 /**
  * Shape de respuesta de `GET /sales/:id` — espejo byte-por-byte del

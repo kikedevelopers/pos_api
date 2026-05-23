@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { AlertConfigsModule } from '@/modules/alert-configs/alert-configs.module';
 import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { EmployeesModule } from '@/modules/employees/employees.module';
@@ -53,6 +54,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     WalletsModule,
     TicketSettingsModule,
     AppSettingsModule,
+    AlertConfigsModule,
   ],
   controllers: [AuthController],
   providers: [

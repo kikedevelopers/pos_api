@@ -24,7 +24,7 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import type { CreateSaleDto } from './dto/create-sale.dto';
 import type { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import type { SaleListItemDto } from './dto/sale-list-item.dto';
-import type { UpdateSaleDto } from './dto/update-sale.dto';
+import type { SaleCorrectionSourceDto, UpdateSaleDto } from './dto/update-sale.dto';
 import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
 
 export type { SaleCreator } from './actions/create-sale.action';
@@ -104,7 +104,8 @@ export class SalesService {
     companyId: number,
     actor: VoidSaleActor,
     reason?: string | null,
+    refundSource?: SaleCorrectionSourceDto | null,
   ): Promise<VoidSaleActionResult> {
-    return this.voidSaleAction.execute(id, companyId, actor, reason);
+    return this.voidSaleAction.execute(id, companyId, actor, reason, refundSource ?? null);
   }
 }

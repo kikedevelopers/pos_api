@@ -1,0 +1,88 @@
+# =============================================================================
+# Nginx reverse proxy → POS API (puerto interno ${API_PORT}).
+#
+# El contenedor nginx (imagen oficial) procesa los archivos en
+# /etc/nginx/templates/*.template haciendo envsubst antes de arrancar.
+# Solo se sustituyen las variables listadas en NGINX_ENVSUBST_TEMPLATE_VARS.
+# =============================================================================
+
+# ---------- HTTP 80 ----------
+# Sirve los challenges ACME y redirige todo lo demás a HTTPS.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # ACME challenge — certbot escribe aquí los tokens via webroot.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Health del proxy en plano para checks externos (load balancer, monitor).
+    location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------- HTTPS 443 ----------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    # --- TLS ---
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/${DOMAIN}/chain.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    resolver_timeout 5s;
+
+    # --- Security headers ---
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # --- Límites del request body (uploads, imports) ---
+    client_max_body_size 25m;
+    client_body_buffer_size 128k;
+
+    # --- Timeouts (acordes a operaciones POS que pueden tardar) ---
+    proxy_connect_timeout 10s;
+    proxy_send_timeout    60s;
+    proxy_read_timeout    60s;
+
+    # --- ACME challenge también en HTTPS (por si certbot lo pide así) ---
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # --- Reverse proxy hacia el API ---
+    location / {
+        proxy_pass http://api:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Request-Id      $request_id;
+        proxy_set_header Connection        "";
+        proxy_buffering on;
+    }
+}

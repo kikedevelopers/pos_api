@@ -28,24 +28,18 @@ export class UpsertAlertConfigAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(type: string, dto: UpsertAlertConfigDto, companyId: number): Promise<AlertConfig> {
-    // TypeORM espera `QueryDeepPartialEntity<AlertConfig>` para `update()`.
-    // El campo `config` es jsonb (`Record<string, unknown>`) y TypeORM lo
-    // expresa como `() => string | QueryDeepPartialEntity<...>` para soportar
-    // expresiones SQL. Para un payload jsonb literal, casteamos al alias del
-    // tipo público para que TS lo acepte sin perder la garantía estructural.
+    // El cliente PlacePos manda `is_enabled`, `check_time`, `params`. Para
+    // mantener el shape multi-tenant de pos_api (jsonb único `config`),
+    // combinamos check_time + params dentro del mismo jsonb. El response
+    // mapper los vuelve a separar al servir.
+    const mergedConfig: Record<string, unknown> = {
+      ...dto.params,
+      check_time: dto.check_time,
+    };
+
     const patch: QueryDeepPartialEntity<AlertConfig> = {
-      enabled: dto.enabled,
-      // `threshold` undefined ≠ null. Si no viene en el DTO, no lo seteamos
-      // (preserva el valor existente al UPDATE). Si viene `null` explícito,
-      // lo limpiamos.
-      ...(Object.prototype.hasOwnProperty.call(dto, 'threshold')
-        ? { threshold: dto.threshold ?? null }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(dto, 'config')
-        ? {
-            config: (dto.config ?? {}) as QueryDeepPartialEntity<AlertConfig>['config'],
-          }
-        : {}),
+      enabled: dto.is_enabled,
+      config: mergedConfig as QueryDeepPartialEntity<AlertConfig>['config'],
     };
 
     return this.dataSource.transaction<AlertConfig>(async (manager) => {
@@ -68,9 +62,9 @@ export class UpsertAlertConfigAction {
         await manager.insert(AlertConfig, {
           company_id: String(companyId),
           type,
-          enabled: patch.enabled ?? true,
-          threshold: patch.threshold ?? null,
-          config: patch.config ?? {},
+          enabled: dto.is_enabled,
+          threshold: null,
+          config: mergedConfig as QueryDeepPartialEntity<AlertConfig>['config'],
         });
       } catch (error) {
         if (isUniqueViolation(error)) {

@@ -2,6 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
+import {
+  computeChildStockDisplay,
+  computeStockDisplay,
+} from '@/modules/products/internal/compute-stock-display';
 
 /**
  * Shape de respuesta de packaging anidado dentro de Product. Espejo PlacePos:
@@ -150,9 +154,26 @@ export class ProductResponseDto {
 /**
  * Mapper Product → ProductResponseDto. Único punto donde la entidad cruda
  * (con relaciones cargadas) se proyecta a respuesta.
+ *
+ * `parentStock` (opcional): cuando el producto es una presentación
+ * (`parent_id != null`), el caller debe pasar el `stock` del padre para que
+ * `stock_display` se calcule como `parentStock / childPackagingValue`
+ * (espejo PlacePos `normalizeChildProduct`). Si no se pasa o es null, se cae
+ * al stock crudo del propio hijo.
+ *
+ * Para productos base (sin parent), el cálculo es
+ * `stock / packaging.value` (PlacePos `normalizeProduct`).
  */
-export function toProductResponseDto(p: Product): ProductResponseDto {
+export function toProductResponseDto(
+  p: Product,
+  parentStock: number | null = null,
+): ProductResponseDto {
   const stock = Number(p.stock);
+  const packagingValue = p.packaging ? Number(p.packaging.value) : null;
+  const isChild = p.parent_id !== null && p.parent_id !== undefined;
+  const stockDisplay = isChild
+    ? computeChildStockDisplay(parentStock, stock, packagingValue)
+    : computeStockDisplay(stock, packagingValue);
   return {
     id: Number(p.id),
     name: p.name,
@@ -161,11 +182,7 @@ export function toProductResponseDto(p: Product): ProductResponseDto {
     description: p.description ?? null,
     cost: Number(p.cost),
     stock,
-    // `stock_display` debe derivarse contra `packaging.value` cuando aplique.
-    // En este momento el cliente acepta cualquier número y lo recalcula en
-    // su lado para mostrarlo. Devolvemos `stock` plano para no romper
-    // contrato; el cálculo final puede moverse aquí sin cambios de API.
-    stock_display: stock,
+    stock_display: stockDisplay,
     product_type: p.product_type,
     parent_id: p.parent_id === null ? null : Number(p.parent_id),
     packaging_id: p.packaging_id === null ? null : Number(p.packaging_id),

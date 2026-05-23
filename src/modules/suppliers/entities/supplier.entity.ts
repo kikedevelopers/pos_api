@@ -46,6 +46,20 @@ import { Company } from '@/modules/companies/entities/company.entity';
  *   El create en Fase 4 inicializa ambos a 0; el DTO de update NO los acepta.
  *   CHECK constraints garantizan no-negatividad en DB (defensa en profundidad).
  */
+/**
+ * Cuenta a la cual se le puede consignar al proveedor. Paridad placepos
+ * (`entities/Supplier.ts → SupplierPaymentAccount`). Se persiste embebida
+ * dentro de `payment_accounts` (JSONB), no en tabla separada.
+ */
+export interface SupplierPaymentAccount {
+  entity_name: string;
+  account_type: string;
+  account_number: string;
+  document_type: 'CC' | 'NIT';
+  document_number: string;
+  agreement_number: string | null;
+}
+
 @Entity('suppliers')
 @Check('chk_suppliers_legal_name_not_empty', 'length(btrim(legal_name)) > 0')
 @Check('chk_suppliers_accumulated_debt_non_negative', 'accumulated_debt >= 0')
@@ -120,6 +134,14 @@ export class Supplier {
     transformer: NumericTransformer,
   })
   credit_balance!: number;
+
+  /**
+   * Cuentas bancarias / billeteras a las que se le puede consignar al
+   * proveedor. JSONB array — paridad placepos. El cliente las envía en el
+   * payload de create/update y las recibe en GET.
+   */
+  @Column({ type: 'jsonb', nullable: false, default: () => "'[]'::jsonb" })
+  payment_accounts!: SupplierPaymentAccount[];
 
   /**
    * Soft-delete convención PlacePos. Listados activos filtran

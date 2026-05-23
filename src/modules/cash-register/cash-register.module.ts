@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { GetCashRegisterBalanceAction } from './actions/get-balance.action';
 import { ListCashRegisterLogsAction } from './actions/list-cash-register-logs.action';
+import { RecordCashRegisterLogAction } from './actions/record-cash-register-log.action';
 import { CashRegisterController } from './cash-register.controller';
 import { CashRegisterService } from './cash-register.service';
 import { CashRegisterLog } from './entities/cash-register-log.entity';
@@ -16,6 +17,10 @@ import { CashRegister } from './entities/cash-register.entity';
  * directamente como parte de sus transacciones, resolviendo la caja con el
  * helper `getOrCreateCashRegisterForUser`.
  *
+ * `RecordCashRegisterLogAction` se expone vía `CashRegisterService.record`
+ * para que módulos externos (accounts, sales, etc.) inserten logs +
+ * actualización de balance en UNA sola llamada dentro de su transacción.
+ *
  * Tip: el helper `getOrCreateCashRegisterForUser` se exporta como función
  * pura desde `internal/get-or-create-cash-register-for-user.helper.ts`; no
  * requiere inyección DI.
@@ -23,7 +28,12 @@ import { CashRegister } from './entities/cash-register.entity';
 @Module({
   imports: [TypeOrmModule.forFeature([CashRegister, CashRegisterLog])],
   controllers: [CashRegisterController],
-  providers: [CashRegisterService, GetCashRegisterBalanceAction, ListCashRegisterLogsAction],
+  providers: [
+    CashRegisterService,
+    GetCashRegisterBalanceAction,
+    ListCashRegisterLogsAction,
+    RecordCashRegisterLogAction,
+  ],
   exports: [CashRegisterService, TypeOrmModule],
 })
 export class CashRegisterModule {}

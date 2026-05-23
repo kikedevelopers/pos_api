@@ -42,6 +42,7 @@ import {
   toVoidSaleResponseDto,
 } from './dto/update-sale-response.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
+import { VoidSaleDto } from './dto/void-sale.dto';
 import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
 import { SalesService } from './sales.service';
 
@@ -296,7 +297,7 @@ export class SalesController {
   })
   async void(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { reason?: string } | undefined,
+    @Body() body: VoidSaleDto | undefined,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<VoidSaleResponseDto> {
@@ -309,6 +310,7 @@ export class SalesController {
         type: currentUser.type,
       },
       body?.reason ?? null,
+      body?.refund_source ?? null,
     );
     return toVoidSaleResponseDto(result);
   }

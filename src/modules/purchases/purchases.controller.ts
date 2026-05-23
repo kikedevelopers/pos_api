@@ -27,6 +27,7 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { ArchivePurchaseDto } from './dto/archive-purchase.dto';
 import { BulkPurchasePaymentsDto } from './dto/bulk-purchase-payments.dto';
 import {
   BulkPurchasePaymentsResponseDto,
@@ -196,11 +197,12 @@ export class PurchasesController {
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
   @ApiOperation({
-    summary: 'Archivar (anular) una compra sin pagos aplicados. Paridad PlacePos.',
+    summary: 'Archivar (anular) una compra. Reembolsa pagos a la caja indicada. Paridad PlacePos.',
     description:
-      'Marca is_deleted = true y revierte la deuda acumulada del proveedor. Rechaza si hay pagos aplicados. Paridad PlacePos: NO se usa DELETE.',
+      'Marca is_deleted=true, revierte deuda del proveedor y, si hay pagos aplicados a la compra o al transportista, los reembolsa a la caja indicada en refund_source_*. Si la compra estaba RECEIVED, revierte stock (usar force_stock_adjustment=true para clampear a 0). Todo dentro de una transacción SERIALIZABLE.',
   })
   @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: ArchivePurchaseDto, required: false })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Payload `{ archived: true }` espejando PlacePos.',
@@ -208,14 +210,20 @@ export class PurchasesController {
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Compra no encontrada' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
-    description: 'Compra tiene pagos aplicados',
+    description:
+      'Falta refund_source cuando hay pagos, o reversa de stock dejaría inventario negativo.',
   })
   async archive(
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ArchivePurchaseDto,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<{ archived: true }> {
-    await this.purchasesService.archive(id, companyId, currentUser.user_id);
+    await this.purchasesService.archive(id, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      type: currentUser.type ?? null,
+    });
     return { archived: true };
   }
 

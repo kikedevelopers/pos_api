@@ -134,9 +134,14 @@ describe('TransferCashAction', () => {
       ),
     };
 
-    transactionSpy = jest.fn(async <T>(cb: (m: typeof managerMock) => Promise<T>) =>
-      cb(managerMock),
-    );
+    // Stub `dataSource.transaction(...)`: el action ahora invoca con
+    // `transaction('SERIALIZABLE', cb)` vía `runSerializableWithRetry`,
+    // así que el primer argumento puede ser el nivel de aislamiento
+    // (string) o el callback. Tomamos siempre el último arg como callback.
+    transactionSpy = jest.fn(async (...args: unknown[]) => {
+      const cb = args[args.length - 1] as (m: typeof managerMock) => Promise<unknown>;
+      return cb(managerMock);
+    });
     recordSpy = jest.fn().mockResolvedValue(undefined);
 
     const dataSourceMock = { transaction: transactionSpy };

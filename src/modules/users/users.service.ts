@@ -2,30 +2,32 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
+import { ChangePasswordAction } from './actions/change-password.action';
+import { FindMeAction } from './actions/find-me.action';
+import { UpdateMeAction } from './actions/update-me.action';
+import type { ChangePasswordDto } from './dto/change-password.dto';
+import type { UpdateMeDto } from './dto/update-me.dto';
 import { User } from './entities/user.entity';
 
 /**
- * Servicio mínimo para Fase 1.
+ * Servicio del dominio `users`.
  *
- * Solo expone los lookups que `AuthService` necesita:
- *   - `findByEmail`: para `POST /auth/user` (login). Se busca SIN filtrar
- *     por `company_id` porque el email es UNIQUE global y el usuario aún no
- *     está autenticado. **Devuelve TODAS las columnas**, incluida `password`,
- *     porque el AuthService necesita compararlo con `argon2.verify`.
+ * Composición:
+ *   - Lookups planos (`findByEmail`, `findByIdInCompany`) usados por
+ *     `AuthService` para el flujo de login y `GET /auth/me`.
+ *   - Facade de las actions del controller propio (`/users/me`, password).
  *
- *   - `findByIdInCompany`: para `GET /auth/me` y `GET /auth/profile`. Filtra
- *     por `id` + `company_id` (lookup multi-tenant correcto). Devuelve `null`
- *     si no existe o si pertenece a otra company (404 cross-tenant).
- *
- * Cuando se cree `UsersController`, este service se ampliará con métodos
- * tipo `updateProfile`, `changePassword`, `list`, etc. Hoy ese código no
- * existe y NO debe forzarse.
+ * El service no contiene lógica de negocio: cada operación se delega a una
+ * action dedicada (§3.1 CLAUDE.md).
  */
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    private readonly findMeAction: FindMeAction,
+    private readonly updateMeAction: UpdateMeAction,
+    private readonly changePasswordAction: ChangePasswordAction,
   ) {}
 
   /**
@@ -49,5 +51,26 @@ export class UsersService {
     return this.usersRepo.findOne({
       where: { id: String(id), company_id: String(companyId) },
     });
+  }
+
+  /**
+   * Resuelve el perfil propio del owner (`GET /users/me`).
+   */
+  findMe(userId: number, companyId: number): Promise<User> {
+    return this.findMeAction.execute(userId, companyId);
+  }
+
+  /**
+   * Actualiza el perfil del usuario autenticado (`PUT /users/me`).
+   */
+  updateMe(userId: number, companyId: number, dto: UpdateMeDto): Promise<User> {
+    return this.updateMeAction.execute(userId, companyId, dto);
+  }
+
+  /**
+   * Cambia la contraseña del usuario autenticado (`PUT /users/me/password`).
+   */
+  changePassword(userId: number, companyId: number, dto: ChangePasswordDto): Promise<void> {
+    return this.changePasswordAction.execute(userId, companyId, dto);
   }
 }

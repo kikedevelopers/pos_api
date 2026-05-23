@@ -33,15 +33,15 @@ export interface CreateDefaultTicketSettingsInput {
  * Si el owner quiere personalizar (ej. agregar sufijo de sede), lo hace
  * vía `PUT /ticket-settings/:ticket_type` después del registro.
  */
-const DEFAULT_PREFIXES: Record<
-  TicketSettingType,
-  { prefix: string; suffix: string | null }
-> = {
+const DEFAULT_PREFIXES: Record<TicketSettingType, { prefix: string; suffix: string | null }> = {
   [TicketSettingType.ORDER]: { prefix: 'PED', suffix: null },
   [TicketSettingType.SALE]: { prefix: 'VTA', suffix: null },
   [TicketSettingType.CREDIT_NOTE]: { prefix: 'NC', suffix: null },
   [TicketSettingType.DEBIT_NOTE]: { prefix: 'ND', suffix: null },
   [TicketSettingType.PURCHASE]: { prefix: 'COMP', suffix: null },
+  // Folio de abonos a compras (Abono Pagado a Compra). Paridad placepos
+  // (`seedEssentials.ts → APC-MAC`).
+  [TicketSettingType.PURCHASE_PAYMENT]: { prefix: 'APC', suffix: null },
 };
 
 /**

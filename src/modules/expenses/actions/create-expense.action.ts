@@ -106,12 +106,15 @@ export class CreateExpenseAction {
       //    al sistema y los CHECKs `chk_financial_movements_*_consistency`
       //    exigen que (type, id) sean ambos NULL o ambos NOT NULL. El CHECK
       //    `chk_financial_movements_has_endpoint` se satisface con el source.
+      //
+      //    `concept = EXPENSE_PAYMENT` (paridad PlacePos `expenses.routes.ts`).
+      //    El enum lo añadió la migración 1747010800000.
       if (dto.source_type !== 'cash_register') {
         await this.financialMovementsService.record(manager, {
           companyId,
           amount,
           movement_type: MovementType.EXPENSE,
-          concept: MovementConcept.EXPENSE,
+          concept: MovementConcept.EXPENSE_PAYMENT,
           description: `Gasto: ${dto.description.trim()}`,
           source_type: dto.source_type,
           source_id: resolvedSourceId,

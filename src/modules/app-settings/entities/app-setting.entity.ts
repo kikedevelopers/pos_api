@@ -24,6 +24,7 @@ export const APP_SETTING_KEYS = {
   APP_COLOR_MODE: 'app_color_mode',
   POS_MARGINS_ENABLED: 'pos_margins_enabled',
   POS_MARGINS: 'pos_margins',
+  STRICT_INVENTORY_CONTROL: 'strict_inventory_control',
 } as const;
 
 export type AppSettingKey = (typeof APP_SETTING_KEYS)[keyof typeof APP_SETTING_KEYS];

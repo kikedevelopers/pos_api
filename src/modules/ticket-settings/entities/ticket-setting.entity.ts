@@ -25,6 +25,7 @@ export enum TicketSettingType {
   CREDIT_NOTE = 'CREDIT_NOTE',
   DEBIT_NOTE = 'DEBIT_NOTE',
   PURCHASE = 'PURCHASE',
+  PURCHASE_PAYMENT = 'PURCHASE_PAYMENT',
 }
 
 /**

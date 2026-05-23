@@ -12,6 +12,11 @@ import { DataSource, In, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import {
+  CarrierCredit,
+  CarrierCreditStatus,
+} from '@/modules/carriers/entities/carrier-credit.entity';
+import { Carrier } from '@/modules/carriers/entities/carrier.entity';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
@@ -148,6 +153,28 @@ export class UpdatePurchaseAction {
     }
     const invoiceNumber = dto.invoice_number?.trim() ? dto.invoice_number.trim() : null;
 
+    // 1.b Normalización temprana de los flags de carrier/transport — la
+    //     validación cruzada `transport_cost > 0 ⇒ carrier_id` se hace antes
+    //     de tocar la DB (class-validator no la cubre).
+    const newCarrierId =
+      dto.carrier_id !== null && dto.carrier_id !== undefined && dto.carrier_id > 0
+        ? Number(dto.carrier_id)
+        : null;
+    const newTransportCostBig: Big = toBig(dto.transport_cost ?? 0);
+    const newTotalKilosBig: Big | null =
+      dto.total_kilos === null || dto.total_kilos === undefined ? null : toBig(dto.total_kilos);
+    if (newTransportCostBig.lt(0)) {
+      throw new BadRequestException('El costo de transporte no puede ser negativo');
+    }
+    if (newTotalKilosBig !== null && newTotalKilosBig.lt(0)) {
+      throw new BadRequestException('El peso total no puede ser negativo');
+    }
+    if (newTransportCostBig.gt(0) && !newCarrierId) {
+      throw new UnprocessableEntityException(
+        'Debe seleccionarse un transportista para registrar costo de flete',
+      );
+    }
+
     // 2. Lock + lectura de la compra.
     const purchase = await manager
       .createQueryBuilder(Purchase, 'p')
@@ -177,6 +204,33 @@ export class UpdatePurchaseAction {
         companyId: String(companyId),
       })
       .getOne();
+
+    // Lock del CarrierCredit (si existe) para serializar contra POST
+    // /carrier-payments concurrentes durante la edición de transport_cost.
+    const carrierCredit = await manager
+      .createQueryBuilder(CarrierCredit, 'cc')
+      .setLock('pessimistic_write')
+      .where('cc.purchase_id = :id AND cc.company_id = :companyId', {
+        id: String(purchase.id),
+        companyId: String(companyId),
+      })
+      .getOne();
+
+    // 2.b Validar carrier nuevo (si llega). Multi-tenant + no archivado.
+    let newCarrierName: string | null = null;
+    if (newCarrierId) {
+      const carrier = await manager.findOne(Carrier, {
+        where: {
+          id: String(newCarrierId),
+          company_id: String(companyId),
+          is_archived: false,
+        },
+      });
+      if (!carrier) {
+        throw new UnprocessableEntityException('Transportista no encontrado o archivado');
+      }
+      newCarrierName = carrier.name;
+    }
 
     // 3. Validar productos/packagings de las nuevas líneas.
     const { productById, packagingById } = await this.validateRefs(manager, dto.lines, companyId);
@@ -274,11 +328,22 @@ export class UpdatePurchaseAction {
 
     // 7. Ajuste de inventario diferencial solo si la compra está RECEIVED.
     if (purchase.status === PurchaseStatus.RECEIVED) {
-      await this.applyInventoryDelta(manager, companyId, oldLines, linesData);
+      await this.applyInventoryDelta(
+        manager,
+        companyId,
+        oldLines,
+        linesData,
+        Number(purchase.id),
+        purchase.purchase_number,
+        actor,
+      );
     }
 
-    // 8. UPDATE Purchase con nuevos totales + invoice metadata.
+    // 8. UPDATE Purchase con nuevos totales + invoice metadata + carrier.
     const totalRounded = preciseNumber(totalGrand, 2);
+    const newTransportCostRounded = preciseNumber(newTransportCostBig, 2);
+    const newTotalKilosRounded =
+      newTotalKilosBig === null ? null : preciseNumber(newTotalKilosBig, 4);
     try {
       await manager.update(
         Purchase,
@@ -289,6 +354,10 @@ export class UpdatePurchaseAction {
           total: totalRounded,
           invoice_date: invoiceDate,
           invoice_number: invoiceNumber,
+          carrier_id: newCarrierId === null ? null : String(newCarrierId),
+          carrier_name: newCarrierName,
+          transport_cost: newTransportCostRounded,
+          total_kilos: newTotalKilosRounded,
         },
       );
     } catch (error) {
@@ -309,6 +378,19 @@ export class UpdatePurchaseAction {
         actor,
       );
     }
+
+    // 9.b Reconciliar CarrierCredit + transport_cost.
+    await this.reconcileCarrierCredit(
+      manager,
+      companyId,
+      purchase,
+      carrierCredit,
+      newCarrierId,
+      newTransportCostBig,
+      dto.refund_carrier_source_type ?? null,
+      dto.refund_carrier_source_id ?? null,
+      actor,
+    );
 
     this.logger.log({
       event: 'purchase.updated',
@@ -394,21 +476,20 @@ export class UpdatePurchaseAction {
   }
 
   /**
-   * Aplica el delta de stock al inventario via `adjustInventory` (STUB hasta
-   * que `Product.stock` exista en el esquema). Cada línea aporta
-   * `unit_qty × packaging_value` al stock del padre. Aquí componemos las
-   * "líneas equivalentes" en cantidad neta (positiva = RETURN, negativa =
-   * DEDUCT).
-   *
-   * Implementación segura mientras el helper es STUB: el cálculo del delta
-   * funciona contra los datos persistidos; cuando `Product.stock` aterrice,
-   * el helper aplicará el UPDATE real sin que la action cambie.
+   * Aplica el delta de stock al inventario via `adjustInventory`. Cada línea
+   * aporta `unit_qty × packaging_value` al stock del padre. Aquí componemos
+   * las "líneas equivalentes" en cantidad neta (positiva = RETURN, negativa
+   * = DEDUCT). Cada UPDATE persiste una fila en `inventory_movements` con
+   * reason=PURCHASE_EDIT.
    */
   private async applyInventoryDelta(
     manager: EntityManager,
     companyId: number,
     oldLines: PurchaseLine[],
     newLinesData: Array<{ product_id: string; unit_qty: number }>,
+    purchaseId: number,
+    purchaseNumber: string,
+    actor: { id: number; fullName: string },
   ): Promise<void> {
     const totals = new Map<number, Big>();
     // OUT (vieja contribución): sumamos lo que la compra anterior aportó al
@@ -439,11 +520,20 @@ export class UpdatePurchaseAction {
         deduct.push({ item_id: productId, quantity: Number(deltaBig.abs().toFixed(4)) });
       }
     }
+    const ctx = {
+      reason: 'PURCHASE_EDIT' as const,
+      referenceType: 'purchase' as const,
+      referenceId: purchaseId,
+      referenceCode: purchaseNumber,
+      description: `Edición de compra ${purchaseNumber}`,
+      actorName: actor.fullName,
+      actorUserId: actor.id,
+    };
     if (ret.length > 0) {
-      await adjustInventory(manager, companyId, ret, 'RETURN');
+      await adjustInventory(manager, companyId, ret, 'RETURN', ctx);
     }
     if (deduct.length > 0) {
-      await adjustInventory(manager, companyId, deduct, 'DEDUCT');
+      await adjustInventory(manager, companyId, deduct, 'DEDUCT', ctx);
     }
   }
 
@@ -698,5 +788,143 @@ export class UpdatePurchaseAction {
       created_by_id: String(actor.id),
     });
     await manager.save(CashRegisterLog, log);
+  }
+
+  /**
+   * Reconcilia el `CarrierCredit` 1:1 con la compra tras un cambio de
+   * `transport_cost` y/o `carrier_id`. Escenarios:
+   *
+   *   1. No existía y nuevo flete = 0       → no-op.
+   *   2. No existía y nuevo flete > 0       → INSERT CarrierCredit PENDING.
+   *   3. Existía y nuevo flete = 0          → reembolso de `paid_amount` (si > 0)
+   *                                            + borrar el CarrierCredit. Espejo
+   *                                            de PlacePos `editPurchase`.
+   *   4. Existía y carrier cambió           → trata como caso 3 + 2 atómicamente.
+   *   5. Existía y carrier mismo, cambio    → ajustar total/balance/status.
+   *      de monto                              Si newTotal < paid → reembolso
+   *                                            del excedente al transportista.
+   */
+  private async reconcileCarrierCredit(
+    manager: EntityManager,
+    companyId: number,
+    purchase: Purchase,
+    existingCredit: CarrierCredit | null,
+    newCarrierId: number | null,
+    newTransportCost: Big,
+    refundSourceType: PurchasePaymentSource | null,
+    refundSourceId: number | null,
+    actor: UpdatePurchaseActor,
+  ): Promise<void> {
+    const newTransportRounded = preciseNumber(newTransportCost, 2);
+    const carrierChanged =
+      existingCredit !== null && Number(existingCredit.carrier_id) !== newCarrierId;
+
+    // Caso 1: no había credit y no hay flete nuevo.
+    if (!existingCredit && newTransportCost.lte(0)) {
+      return;
+    }
+
+    // Caso 2: no había credit y nace uno nuevo.
+    if (!existingCredit && newTransportCost.gt(0) && newCarrierId !== null) {
+      const credit = manager.create(CarrierCredit, {
+        company_id: String(companyId),
+        carrier_id: String(newCarrierId),
+        purchase_id: purchase.id,
+        total: newTransportRounded,
+        paid_amount: 0,
+        balance: newTransportRounded,
+        status: CarrierCreditStatus.PENDING,
+      });
+      await manager.save(CarrierCredit, credit);
+      return;
+    }
+
+    // existingCredit !== null en los casos restantes.
+    if (!existingCredit) {
+      return;
+    }
+
+    const paid = toBig(existingCredit.paid_amount);
+
+    // Caso 3 y 4: flete se elimina o el carrier cambió. Reembolsamos lo
+    // pagado (si hay) y eliminamos el credit. En el caso 4 además creamos
+    // uno nuevo abajo.
+    if (newTransportCost.lte(0) || carrierChanged) {
+      if (paid.gt(0)) {
+        await this.refundExcess(
+          manager,
+          companyId,
+          purchase,
+          refundSourceType,
+          refundSourceId,
+          paid,
+          actor,
+          'Reembolso al transportista por edición de compra',
+        );
+      }
+      await manager.delete(CarrierCredit, {
+        id: existingCredit.id,
+        company_id: String(companyId),
+      });
+
+      // Caso 4 continuación: nace el credit con el nuevo carrier.
+      if (carrierChanged && newTransportCost.gt(0) && newCarrierId !== null) {
+        const credit = manager.create(CarrierCredit, {
+          company_id: String(companyId),
+          carrier_id: String(newCarrierId),
+          purchase_id: purchase.id,
+          total: newTransportRounded,
+          paid_amount: 0,
+          balance: newTransportRounded,
+          status: CarrierCreditStatus.PENDING,
+        });
+        await manager.save(CarrierCredit, credit);
+      }
+      return;
+    }
+
+    // Caso 5: mismo carrier, monto cambia.
+    if (newTransportCost.lt(paid)) {
+      // Excedente: el transportista cobró más de lo que ahora se debe.
+      const excess = paid.minus(newTransportCost);
+      await this.refundExcess(
+        manager,
+        companyId,
+        purchase,
+        refundSourceType,
+        refundSourceId,
+        excess,
+        actor,
+        'Reembolso al transportista por edición de compra',
+      );
+      await manager.update(
+        CarrierCredit,
+        { id: existingCredit.id, company_id: String(companyId) },
+        {
+          total: newTransportRounded,
+          paid_amount: newTransportRounded,
+          balance: 0,
+          status: CarrierCreditStatus.PAID,
+        },
+      );
+      return;
+    }
+
+    // newTransportCost >= paid → ajuste regular.
+    const newBalance = newTransportCost.minus(paid);
+    const newStatus = newBalance.lte(0)
+      ? CarrierCreditStatus.PAID
+      : paid.gt(0)
+        ? CarrierCreditStatus.PARTIAL
+        : CarrierCreditStatus.PENDING;
+    await manager.update(
+      CarrierCredit,
+      { id: existingCredit.id, company_id: String(companyId) },
+      {
+        total: newTransportRounded,
+        balance: preciseNumber(newBalance, 2),
+        status: newStatus,
+      },
+    );
   }
 }

@@ -3,6 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { BanksModule } from '@/modules/banks/banks.module';
+import { CarrierPayment } from '@/modules/carrier-payments/entities/carrier-payment.entity';
+import { CarrierCredit } from '@/modules/carriers/entities/carrier-credit.entity';
+import { Carrier } from '@/modules/carriers/entities/carrier.entity';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
@@ -58,6 +61,9 @@ import { PurchasesService } from './purchases.service';
       Packaging,
       Bank,
       Wallet,
+      Carrier,
+      CarrierCredit,
+      CarrierPayment,
     ]),
     BanksModule,
     WalletsModule,

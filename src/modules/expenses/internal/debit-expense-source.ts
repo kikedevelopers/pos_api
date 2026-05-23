@@ -162,7 +162,11 @@ export async function debitExpenseSource(
  * - bank/wallet: UPDATE balance += amount, requiriendo que la cuenta siga
  *   activa (rechazo si fue archivada después del gasto — el usuario debe
  *   reactivarla primero, paridad PlacePos).
- * - cash_register: UPDATE register.balance += amount + INSERT log VOID_EXPENSE.
+ * - cash_register: UPDATE register.balance += amount + INSERT log VOID_EXPENSE
+ *   contra la **caja original que registró el gasto** (I-10). NO la del
+ *   actor que anula: el dinero debe regresar a su origen real. Si la caja
+ *   ya no existe (eliminación física del usuario), se lanza 422
+ *   NO_ORIGINAL_REGISTER para forzar conciliación manual.
  */
 export async function creditExpenseSource(
   manager: EntityManager,
@@ -221,19 +225,36 @@ export async function creditExpenseSource(
   }
 
   // sourceType === 'cash_register'
-  // La reversión se hace contra la caja del actor que ANULA (no la del actor
-  // que creó originalmente el gasto). Esa es la semántica de PlacePos: el
-  // efectivo regresa a la caja del owner que dispara la anulación.
-  const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
-  const newBalance = preciseNumber(toBig(register.balance).plus(amountBig), 2);
+  // I-10: la reversión se hace contra la caja ORIGINAL que registró el
+  // gasto (`expense.source_id`), no la del actor que anula. El dinero
+  // debe regresar al lugar de donde salió.
+  //
+  // - Si la caja original ya no existe (user archivado / row borrado), no
+  //   podemos elegir un destino arbitrario sin descuadrar la conciliación
+  //   — lanzamos 422 NO_ORIGINAL_REGISTER.
+  // - El log se firma con el actor que anula (created_by) para auditoría;
+  //   la fila apunta a la caja original via `cash_register_id`.
+  const originalRegister = await manager.findOne(CashRegister, {
+    where: { id: String(sourceId), company_id: String(companyId) },
+    lock: { mode: 'pessimistic_write' },
+  });
+  if (!originalRegister) {
+    throw new UnprocessableEntityException({
+      message:
+        'No se puede anular el gasto: la caja registradora original ya no existe. ' +
+        'Reconcilia manualmente.',
+      payload: { code: 'NO_ORIGINAL_REGISTER' },
+    });
+  }
+  const newBalance = preciseNumber(toBig(originalRegister.balance).plus(amountBig), 2);
   await manager.update(
     CashRegister,
-    { id: register.id, company_id: String(companyId) },
+    { id: originalRegister.id, company_id: String(companyId) },
     { balance: newBalance },
   );
   const log = manager.create(CashRegisterLog, {
     company_id: String(companyId),
-    cash_register_id: register.id,
+    cash_register_id: originalRegister.id,
     type: CashRegisterLogType.VOID_EXPENSE,
     direction: 'IN',
     amount,

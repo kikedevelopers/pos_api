@@ -3,12 +3,20 @@ import {
   Body,
   Controller,
   Headers,
-  HttpCode,
   HttpStatus,
   Post,
+  Res,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiHeader,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
@@ -52,7 +60,6 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
-  @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
@@ -61,7 +68,8 @@ export class PaymentsController {
   @ApiBody({ type: ProcessPaymentDto })
   @ApiHeader({
     name: 'Idempotency-Key',
-    description: 'UUID v4 opcional. Si llega, dos requests idénticas devuelven el mismo SalePayment sin duplicar cobro.',
+    description:
+      'UUID v4 opcional. Si llega, dos requests idénticas devuelven el mismo SalePayment sin duplicar cobro.',
     required: false,
   })
   @ApiResponse({
@@ -81,11 +89,17 @@ export class PaymentsController {
     @Body() dto: ProcessPaymentDto,
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
+    @Res({ passthrough: true }) res: Response,
     @Headers('idempotency-key') idempotencyKeyHeader?: string,
   ): Promise<ProcessPaymentResult> {
     // HIGH-3: validamos formato UUID v4 ANTES de tocar el service. Reintento
     // legítimo de cliente PlacePos envía v4 generado server-side; cualquier
     // otra cosa es bug de cliente y debe rechazarse temprano.
+    //
+    // Paridad cliente PlacePos: el cliente Electron envía la llave dentro del
+    // body como `client_operation_id`. Si el caller HTTP genérico prefiere el
+    // header, ese gana. El DTO ya valida formato UUID v4 sobre el body field,
+    // así que aquí solo validamos el header.
     let idempotencyKey: string | null = null;
     if (idempotencyKeyHeader !== undefined && idempotencyKeyHeader !== '') {
       if (!UUID_V4_REGEX.test(idempotencyKeyHeader)) {
@@ -95,6 +109,8 @@ export class PaymentsController {
         });
       }
       idempotencyKey = idempotencyKeyHeader;
+    } else if (dto.client_operation_id) {
+      idempotencyKey = dto.client_operation_id;
     }
 
     const result = await this.paymentsService.process(
@@ -118,7 +134,22 @@ export class PaymentsController {
       });
     }
 
-    // 201 + ResponseWrapperInterceptor → `{ success: true, payload: result }`.
-    return result;
+    // Idempotencia: si la action detectó que este uuid ya fue procesado
+    // (`result.replay === true`), devolvemos 200 OK con el pago existente
+    // — paridad con la regla del brief: "si llega un uuid ya procesado,
+    // devolver 200 con el pago existente (no 409)". El primer procesamiento
+    // sigue devolviendo 201 CREATED.
+    if (result.replay === true) {
+      res.status(HttpStatus.OK);
+    } else {
+      res.status(HttpStatus.CREATED);
+    }
+
+    // Limpiamos la marca interna `replay` antes de devolver — no forma parte
+    // del contrato HTTP. ResponseWrapperInterceptor envuelve con
+    // `{ success: true, payload }`.
+    const { replay: _replay, ...publicResult } = result;
+    void _replay;
+    return publicResult;
   }
 }

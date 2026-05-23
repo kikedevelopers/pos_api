@@ -135,14 +135,42 @@ describe('RegisterPurchasePaymentAction', () => {
           return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
         },
       ),
-      // Mock QueryBuilder para `nextPaymentNumber` → folio inicia en ABO-001.
-      createQueryBuilder: jest.fn(() => ({
-        select: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        getRawOne: jest.fn().mockResolvedValue(null),
-      })),
+      // Mock QueryBuilder para dos usos:
+      //   1. `nextPaymentNumber` → select + where + orderBy + limit + getRawOne.
+      //   2. lock + lectura de `PurchaseCredit` → setLock + where + getOne.
+      // El mock retorna un chain neutral que soporta ambas APIs; getOne resuelve
+      // a partir del Map `credits` cuando el entity es PurchaseCredit.
+      createQueryBuilder: jest.fn((entity?: { name?: string } | string) => {
+        const entityName = typeof entity === 'string' ? entity : (entity?.name ?? 'Unknown');
+        let whereParams: Record<string, unknown> = {};
+        const chain: Record<string, jest.Mock> = {
+          select: jest.fn().mockReturnThis(),
+          setLock: jest.fn().mockReturnThis(),
+          where: jest.fn((_clause: string, params?: Record<string, unknown>) => {
+            if (params) {
+              whereParams = { ...whereParams, ...params };
+            }
+            return chain;
+          }),
+          andWhere: jest.fn((_clause: string, params?: Record<string, unknown>) => {
+            if (params) {
+              whereParams = { ...whereParams, ...params };
+            }
+            return chain;
+          }),
+          orderBy: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockReturnThis(),
+          getRawOne: jest.fn().mockResolvedValue(null),
+          getOne: jest.fn(() => {
+            if (entityName === 'PurchaseCredit') {
+              const purchaseId = String(whereParams.id ?? whereParams.purchase_id ?? '');
+              return Promise.resolve(credits.get(purchaseId) ?? null);
+            }
+            return Promise.resolve(null);
+          }),
+        };
+        return chain;
+      }),
       query: jest.fn().mockResolvedValue([]),
     };
 

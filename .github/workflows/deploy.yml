@@ -1,0 +1,119 @@
+# =============================================================================
+# Build, push & deploy
+#
+# 1. Construye la imagen Docker y la publica en GHCR
+#    (ghcr.io/<owner>/<repo>:latest, :sha-<sha>, :<semver>).
+# 2. Si el push fue a `main`, hace SSH a la VM y corre `./deploy.sh`.
+#
+# Secrets requeridos en el repo (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST          IP o dominio de la VM (ej: 34.58.27.179)
+#   DEPLOY_USER          Usuario SSH (ej: kike)
+#   DEPLOY_SSH_KEY       Contenido COMPLETO de la clave privada SSH
+#                        (lo que está en ~/.ssh/gcloud — incluye headers)
+#   DEPLOY_PATH          Ruta absoluta donde está clonado el repo en la VM
+#                        (ej: /opt/pos_api)
+#   GHCR_DEPLOY_TOKEN    PAT clásico de GitHub con scope `read:packages`.
+#                        Lo usa la VM para `docker login ghcr.io` y poder
+#                        pullear la imagen privada.
+# =============================================================================
+
+name: Build, push & deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # ghcr.io/<owner>/<repo>. Lower-cased automáticamente.
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build & push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VM
+    needs: build-push
+    runs-on: ubuntu-latest
+    # Solo despliega cuando el push fue al branch por defecto o un tag.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Variables que se pasan al script remoto.
+          envs: GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            # Sincroniza el repo (compose, nginx, deploy.sh).
+            git fetch --all
+            git reset --hard "$GITHUB_SHA_FOR_DEPLOY"
+
+            # Lanza el deploy. `deploy.sh` se encarga de:
+            #   - docker login ghcr.io (usa GHCR_USERNAME + GHCR_TOKEN)
+            #   - bootstrap SSL si aún no hay certs
+            #   - pull + up -d
+            ./deploy.sh
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_DEPLOY_TOKEN }}
+          # Tag de la imagen recién construida (no se usa hoy en deploy.sh,
+          # pero queda disponible si más adelante quieres pinear el deploy
+          # a un sha-<sha> exacto en lugar de :latest).
+          IMAGE_TAG: ${{ needs.build-push.outputs.version }}
+          GITHUB_SHA_FOR_DEPLOY: ${{ github.sha }}

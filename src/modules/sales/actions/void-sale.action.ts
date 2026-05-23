@@ -1,7 +1,14 @@
-import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import Big from 'big.js';
 import { DataSource, type EntityManager } from 'typeorm';
 
-import { toBig } from '@/common/utils/precision';
+import { preciseNumber, toBig } from '@/common/utils/precision';
+import { Bank } from '@/modules/banks/entities/bank.entity';
 import {
   CashRegisterLog,
   CashRegisterLogType,
@@ -14,10 +21,18 @@ import {
   NoteType,
   OperationType,
 } from '@/modules/credit-notes/entities/credit-note.entity';
+import {
+  AccountReference,
+  MovementConcept,
+  MovementType,
+} from '@/modules/financial-movements/entities/financial-movement.entity';
+import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
+import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
+import type { SaleCorrectionSourceDto } from '../dto/update-sale.dto';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
@@ -64,6 +79,7 @@ export class VoidSaleAction {
   constructor(
     private readonly dataSource: DataSource,
     private readonly incrementTicketNumberAction: IncrementTicketNumberAction,
+    private readonly financialMovementsService: FinancialMovementsService,
   ) {}
 
   async execute(
@@ -71,6 +87,7 @@ export class VoidSaleAction {
     companyId: number,
     actor: VoidSaleActor,
     reason?: string | null,
+    refundSource?: SaleCorrectionSourceDto | null,
   ): Promise<VoidSaleActionResult> {
     return this.dataSource.transaction<VoidSaleActionResult>('SERIALIZABLE', async (manager) => {
       const sale = await findSaleInCompany(manager, id, companyId, {
@@ -92,7 +109,7 @@ export class VoidSaleAction {
         return this.voidOrder(manager, sale, companyId, actor);
       }
 
-      return this.voidSale(manager, sale, companyId, actor, reason);
+      return this.voidSale(manager, sale, companyId, actor, reason, refundSource ?? null);
     });
   }
 
@@ -134,6 +151,7 @@ export class VoidSaleAction {
     companyId: number,
     actor: VoidSaleActor,
     reason?: string | null,
+    refundSource?: SaleCorrectionSourceDto | null,
   ): Promise<VoidSaleActionResult> {
     // Idempotencia: una sola FULL_VOID activa por venta.
     const existingFullVoid = await manager.findOne(CreditNote, {
@@ -157,18 +175,35 @@ export class VoidSaleAction {
       order: { id: 'ASC' },
     });
 
-    // Paridad PlacePos: solo se busca el pago CASH para reversar. Los pagos
-    // TRANSFER NO generan reversa automática aquí — si existen, la
-    // conciliación del banco se hace manualmente o vía PUT /sales/:id con
-    // correction_source explícito.
-    const cashPayment = await manager.findOne(SalePayment, {
+    // I-7: TODOS los pagos de la venta deben generar reversa, no solo CASH.
+    //  - CASH  → CashRegisterLog(CREDIT_NOTE_FULL_VOID, OUT) en la caja del
+    //            actor que anula (paridad PlacePos).
+    //  - TRANSFER → FinancialMovement(EXPENSE, CREDIT_NOTE_REFUND) desde la
+    //            cuenta bank/wallet indicada en `refund_source`.
+    // Si hay pagos TRANSFER y no llega `refund_source` → 422.
+    const allPayments = await manager.find(SalePayment, {
       where: {
         sale_invoice_id: sale.id,
         company_id: String(companyId),
-        payment_method: SalePaymentMethod.CASH,
       },
-      select: { id: true, amount: true },
+      order: { created_at: 'ASC' },
     });
+    const transferPayments = allPayments.filter(
+      (p) => p.payment_method === SalePaymentMethod.TRANSFER,
+    );
+    const cashPayments = allPayments.filter((p) => p.payment_method === SalePaymentMethod.CASH);
+
+    if (
+      transferPayments.length > 0 &&
+      transferPayments.some((p) => toBig(p.amount).gt(0)) &&
+      !refundSource
+    ) {
+      throw new UnprocessableEntityException({
+        message:
+          'La venta tiene cobros por transferencia. Indica refund_source para reembolsar la NC.',
+        payload: { code: 'MISSING_REFUND_SOURCE' },
+      });
+    }
 
     // Folio CN.
     const cnTicket = await this.incrementTicketNumberAction.execute(
@@ -221,6 +256,15 @@ export class VoidSaleAction {
         quantity: Number(l.quantity),
       })),
       'RETURN',
+      {
+        reason: 'SALE_VOID',
+        referenceType: 'credit_note',
+        referenceId: Number(savedNote.id),
+        referenceCode: savedNote.note_number,
+        description: `Anulación total de venta — ${savedNote.note_number}`,
+        actorName: actor.fullName,
+        actorUserId: actor.id,
+      },
     );
 
     await manager.update(
@@ -229,17 +273,47 @@ export class VoidSaleAction {
       { is_deleted: true },
     );
 
-    // Reversa CASH si hubo pago en efectivo y monto > 0 (paridad PlacePos
-    // `registerCreditNoteFullVoid`).
-    if (cashPayment && toBig(cashPayment.amount).gt(0)) {
+    // Reversa CASH: por cada pago CASH (puede haber más de uno) descuento
+    // de la caja del actor + log CREDIT_NOTE_FULL_VOID. Paridad PlacePos
+    // `registerCreditNoteFullVoid`.
+    let cashRefunded = new Big(0);
+    for (const cashPayment of cashPayments) {
+      const amt = toBig(cashPayment.amount);
+      if (amt.lte(0)) {
+        continue;
+      }
       await this.reverseCashPayment(
         manager,
         companyId,
         actor,
         Number(sale.id),
         Number(savedNote.id),
-        Number(cashPayment.amount),
+        preciseNumber(amt, 2),
       );
+      cashRefunded = cashRefunded.plus(amt);
+    }
+
+    // Reversa TRANSFER: por cada pago TRANSFER, registramos un
+    // FinancialMovement(EXPENSE, CREDIT_NOTE_REFUND) que descuenta el saldo
+    // del bank/wallet destino. Un movimiento por pago original — así el
+    // rastro contable coincide con los INCOMEs generados al cobrar.
+    let transferRefunded = new Big(0);
+    if (transferPayments.length > 0 && refundSource) {
+      const target = await this.resolveRefundTarget(manager, companyId, refundSource);
+      for (const transfer of transferPayments) {
+        const amt = toBig(transfer.amount);
+        if (amt.lte(0)) {
+          continue;
+        }
+        await this.reverseTransferPayment(manager, companyId, actor, {
+          target,
+          amount: amt,
+          noteNumber: savedNote.note_number,
+          invoiceId: Number(sale.id),
+          paymentId: Number(transfer.id),
+        });
+        transferRefunded = transferRefunded.plus(amt);
+      }
     }
 
     this.logger.log({
@@ -248,7 +322,10 @@ export class VoidSaleAction {
       saleId: Number(sale.id),
       creditNoteId: Number(savedNote.id),
       creditNoteNumber: savedNote.note_number,
-      cashRefunded: cashPayment ? Number(cashPayment.amount) : 0,
+      cashRefunded: preciseNumber(cashRefunded, 2),
+      transferRefunded: preciseNumber(transferRefunded, 2),
+      refundSourceType: refundSource?.type ?? null,
+      refundSourceId: refundSource?.id ?? null,
       actorId: actor.id,
     });
 
@@ -305,5 +382,113 @@ export class VoidSaleAction {
       is_credit_related: false,
     });
     await manager.save(CashRegisterLog, log);
+  }
+
+  /**
+   * Resuelve y lockea la cuenta destino del reembolso TRANSFER. Solo
+   * acepta bank/wallet — `cash_register` se rechaza con 422 porque
+   * conceptualmente un cobro TRANSFER no puede reembolsarse a efectivo
+   * sin un retiro físico (PlacePos no lo soporta tampoco).
+   */
+  private async resolveRefundTarget(
+    manager: EntityManager,
+    companyId: number,
+    source: SaleCorrectionSourceDto,
+  ): Promise<{ type: 'bank' | 'wallet'; id: number; balance: Big }> {
+    if (source.type === 'cash_register') {
+      throw new UnprocessableEntityException({
+        message:
+          'No se puede reembolsar una venta TRANSFER a una caja de efectivo. Selecciona un banco o billetera.',
+        payload: { code: 'INVALID_REFUND_DESTINATION' },
+      });
+    }
+    if (source.type === 'wallet') {
+      const wallet = await manager.findOne(Wallet, {
+        where: {
+          id: String(source.id),
+          company_id: String(companyId),
+          is_archived: false,
+        },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!wallet) {
+        throw new NotFoundException('Billetera destino no encontrada');
+      }
+      return { type: 'wallet', id: Number(wallet.id), balance: toBig(wallet.balance) };
+    }
+    const bank = await manager.findOne(Bank, {
+      where: {
+        id: String(source.id),
+        company_id: String(companyId),
+        is_archived: false,
+      },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!bank) {
+      throw new NotFoundException('Banco destino no encontrado');
+    }
+    return { type: 'bank', id: Number(bank.id), balance: toBig(bank.balance) };
+  }
+
+  /**
+   * Descuenta `amount` de la cuenta bank/wallet destino + emite
+   * FinancialMovement(EXPENSE, CREDIT_NOTE_REFUND). Lanza 422
+   * INSUFFICIENT_BALANCE si la cuenta no tiene saldo suficiente.
+   */
+  private async reverseTransferPayment(
+    manager: EntityManager,
+    companyId: number,
+    actor: VoidSaleActor,
+    params: {
+      target: { type: 'bank' | 'wallet'; id: number; balance: Big };
+      amount: Big;
+      noteNumber: string;
+      invoiceId: number;
+      paymentId: number;
+    },
+  ): Promise<void> {
+    const newBalance = params.target.balance.minus(params.amount);
+    if (newBalance.lt(0)) {
+      throw new UnprocessableEntityException({
+        message:
+          'El saldo de la cuenta no alcanza para reversar el cobro por transferencia. Selecciona otra cuenta o reconcilia manualmente.',
+        payload: {
+          code: 'INSUFFICIENT_BALANCE',
+          required: preciseNumber(params.amount, 2),
+          available: preciseNumber(params.target.balance, 2),
+        },
+      });
+    }
+    const newBalanceNum = preciseNumber(newBalance, 2);
+    if (params.target.type === 'wallet') {
+      await manager.update(
+        Wallet,
+        { id: String(params.target.id), company_id: String(companyId) },
+        { balance: newBalanceNum },
+      );
+    } else {
+      await manager.update(
+        Bank,
+        { id: String(params.target.id), company_id: String(companyId) },
+        { balance: newBalanceNum },
+      );
+    }
+    params.target.balance = newBalance;
+
+    const destinationAccountRef: AccountReference = params.target.type;
+    await this.financialMovementsService.record(manager, {
+      companyId,
+      amount: preciseNumber(params.amount, 2),
+      movement_type: MovementType.EXPENSE,
+      concept: MovementConcept.CREDIT_NOTE_REFUND,
+      description: `Reembolso por anulación de venta — NC ${params.noteNumber} (venta #${params.invoiceId})`,
+      source_type: destinationAccountRef,
+      source_id: params.target.id,
+      destination_type: null,
+      destination_id: null,
+      reference_code: `SALE-VOID-${params.noteNumber}-PAY-${params.paymentId}`,
+      created_by: actor.fullName,
+      created_by_id: actor.id,
+    });
   }
 }

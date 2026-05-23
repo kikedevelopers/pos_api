@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { CreateDefaultAlertConfigsAction } from './actions/create-default-alert-configs.action';
 import { FindAlertConfigByTypeAction } from './actions/find-alert-config-by-type.action';
 import { FindAllAlertConfigsAction } from './actions/find-all-alert-configs.action';
 import { UpsertAlertConfigAction } from './actions/upsert-alert-config.action';
@@ -20,7 +21,8 @@ import { AlertConfig } from './entities/alert-config.entity';
     FindAllAlertConfigsAction,
     FindAlertConfigByTypeAction,
     UpsertAlertConfigAction,
+    CreateDefaultAlertConfigsAction,
   ],
-  exports: [AlertConfigsService, TypeOrmModule],
+  exports: [AlertConfigsService, CreateDefaultAlertConfigsAction, TypeOrmModule],
 })
 export class AlertConfigsModule {}

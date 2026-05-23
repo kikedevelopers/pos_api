@@ -2,6 +2,7 @@ import { NotFoundException, UnprocessableEntityException } from '@nestjs/common'
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
+import { CashRegisterService } from '@/modules/cash-register/cash-register.service';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 
 import { TransferAction } from '../actions/transfer.action';
@@ -22,12 +23,16 @@ describe('TransferAction', () => {
   let action: TransferAction;
   let transactionSpy: jest.Mock;
   let recordSpy: jest.Mock;
+  let cashRecordSpy: jest.Mock;
   let updates: Array<{
     entity: string;
     where: Record<string, string>;
     patch: Record<string, unknown>;
   }>;
-  let accounts: Map<string, { id: number; name: string; balance: number }>;
+  let accounts: Map<
+    string,
+    { id: number; name: string; balance: number; type?: string; lastname?: string }
+  >;
 
   beforeEach(async () => {
     updates = [];
@@ -67,19 +72,44 @@ describe('TransferAction', () => {
       ),
     };
 
-    transactionSpy = jest.fn(async <T>(cb: (m: typeof managerMock) => Promise<T>) =>
-      cb(managerMock),
-    );
+    // El action invoca `dataSource.transaction('SERIALIZABLE', cb)` vía
+    // `runSerializableWithRetry`. Tomamos siempre el último arg como cb.
+    transactionSpy = jest.fn(async (...args: unknown[]) => {
+      const cb = args[args.length - 1] as (m: typeof managerMock) => Promise<unknown>;
+      return cb(managerMock);
+    });
     recordSpy = jest.fn().mockResolvedValue(undefined);
+    cashRecordSpy = jest.fn().mockImplementation(async (_manager, input) => ({
+      cashRegisterId: 999,
+      log: {
+        id: '1',
+        cash_register_id: '999',
+        amount: input.amount,
+        direction: input.direction,
+        type: input.type,
+        affects_balance: input.affects_balance,
+        description: input.description,
+        created_at: new Date(),
+        created_by: input.created_by,
+        created_by_id: input.created_by_id ? String(input.created_by_id) : null,
+        company_id: String(input.companyId),
+        invoice_id: null,
+        payment_id: null,
+        credit_note_id: null,
+        is_credit_related: false,
+      },
+    }));
 
     const dataSourceMock = { transaction: transactionSpy };
     const financialMovementsServiceMock = { record: recordSpy };
+    const cashRegisterServiceMock = { record: cashRecordSpy };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TransferAction,
         { provide: DataSource, useValue: dataSourceMock },
         { provide: FinancialMovementsService, useValue: financialMovementsServiceMock },
+        { provide: CashRegisterService, useValue: cashRegisterServiceMock },
       ],
     }).compile();
 
@@ -91,6 +121,35 @@ describe('TransferAction', () => {
   }
   function seedBank(id: number, balance: number, companyId: number, name = `B${id}`): void {
     accounts.set(`Bank|${String(id)}|${String(companyId)}`, { id, name, balance });
+  }
+  function seedUser(
+    id: number,
+    companyId: number,
+    name = 'Juan',
+    lastname = 'Pérez',
+    type = 'employee',
+  ): void {
+    accounts.set(`User|${String(id)}|${String(companyId)}`, {
+      id,
+      name,
+      lastname,
+      type,
+      balance: 0,
+    });
+  }
+  function seedCashRegisterForLookup(
+    cashRegisterId: number,
+    companyId: number,
+    balance: number,
+  ): void {
+    // El TransferAction relee la caja por id después del UPDATE para devolver
+    // el balance final. Como el mock de cashRegisterService.record usa id 999,
+    // sembramos esa fila aquí.
+    accounts.set(`CashRegister|${String(cashRegisterId)}|${String(companyId)}`, {
+      id: cashRegisterId,
+      name: 'cash',
+      balance,
+    });
   }
 
   it('rechaza amount <= 0 con 422 antes de tocar DB', async () => {
@@ -111,15 +170,14 @@ describe('TransferAction', () => {
     expect(transactionSpy).not.toHaveBeenCalled();
   });
 
-  it('rechaza destinationType="user" con 422 + code UNSUPPORTED_DESTINATION', async () => {
-    seedWallet(1, 100, 1);
+  it('rechaza destinationType="user" cuando source es bank con 422 + code INVALID_DESTINATION_FOR_SOURCE', async () => {
+    seedBank(1, 100, 1);
     let caught: unknown = null;
     try {
       await action.execute(
         {
-          sourceType: 'wallet',
+          sourceType: 'bank',
           sourceId: 1,
-          // Cast porque el DTO acepta 'user' pero el action lo rechaza.
           destinationType: 'user',
           destinationId: 7,
           amount: 10,
@@ -134,9 +192,94 @@ describe('TransferAction', () => {
     const response = (caught as UnprocessableEntityException).getResponse() as {
       payload?: { code?: string };
     };
-    expect(response.payload?.code).toBe('UNSUPPORTED_DESTINATION');
-    // No debe haberse iniciado ninguna transacción.
+    expect(response.payload?.code).toBe('INVALID_DESTINATION_FOR_SOURCE');
     expect(transactionSpy).not.toHaveBeenCalled();
+  });
+
+  it('camino feliz wallet → user: debita wallet, acredita caja del user, 2 FM + 1 CashRegisterLog', async () => {
+    seedWallet(1, 100, 42, 'Caja Efectivo');
+    seedUser(7, 42, 'Juan', 'Pérez', 'employee');
+    seedCashRegisterForLookup(999, 42, 30); // balance final esperado tras el +30
+
+    const result = await action.execute(
+      {
+        sourceType: 'wallet',
+        sourceId: 1,
+        destinationType: 'user',
+        destinationId: 7,
+        amount: 30,
+      },
+      42,
+      { id: 9, fullName: 'Owner Boss' },
+    );
+
+    // El UPDATE de balance de la wallet ocurre dentro del action (no del mock
+    // de cashRegisterService.record).
+    const walletUpdate = updates.find((u) => u.entity === 'Wallet');
+    expect(walletUpdate?.patch.balance).toBe(70);
+
+    // CashRegisterService.record fue llamado UNA vez con CASH_TRANSFER_IN.
+    expect(cashRecordSpy).toHaveBeenCalledTimes(1);
+    const cashCall = cashRecordSpy.mock.calls[0]?.[1] as {
+      type: string;
+      direction: string;
+      affects_balance: boolean;
+      userId: number;
+      amount: number;
+    };
+    expect(cashCall.type).toBe('CASH_TRANSFER_IN');
+    expect(cashCall.direction).toBe('IN');
+    expect(cashCall.affects_balance).toBe(true);
+    expect(cashCall.userId).toBe(7);
+
+    // Dos FinancialMovement con destination_type='cash_register' y mismo
+    // reference_code.
+    expect(recordSpy).toHaveBeenCalledTimes(2);
+    const fmCalls = recordSpy.mock.calls as Array<
+      [
+        unknown,
+        {
+          movement_type: string;
+          destination_type: string;
+          destination_id: number;
+          reference_code: string;
+        },
+      ]
+    >;
+    const fmFirst = fmCalls[0]?.[1];
+    const fmSecond = fmCalls[1]?.[1];
+    if (!fmFirst || !fmSecond) {
+      throw new Error('Expected two financial movement record calls');
+    }
+    expect(fmFirst.movement_type).toBe('EXPENSE');
+    expect(fmSecond.movement_type).toBe('INCOME');
+    expect(fmFirst.destination_type).toBe('cash_register');
+    expect(fmSecond.destination_type).toBe('cash_register');
+    expect(fmFirst.destination_id).toBe(999);
+    expect(fmFirst.reference_code).toBe(fmSecond.reference_code);
+
+    expect(result.destination.type).toBe('user');
+    expect(result.destination.id).toBe(7);
+    expect(result.message).toContain('Juan Pérez');
+  });
+
+  it('lanza 404 si el user destino no pertenece a la company', async () => {
+    seedWallet(1, 100, 42, 'Caja Efectivo');
+    // No sembramos User|7|42 — distinto company_id.
+
+    await expect(
+      action.execute(
+        {
+          sourceType: 'wallet',
+          sourceId: 1,
+          destinationType: 'user',
+          destinationId: 7,
+          amount: 10,
+        },
+        42,
+        { id: 9, fullName: 'Owner Boss' },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('rechaza source === destination con 422', async () => {

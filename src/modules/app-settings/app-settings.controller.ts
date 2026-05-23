@@ -11,8 +11,17 @@ import {
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
+import { GetPosMarginsAction } from './actions/get-pos-margins.action';
+import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
+import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
+import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
+import { PosMarginsConfigDto, UpdatePosMarginsDto } from './dto/pos-margins.dto';
+import {
+  StrictInventoryConfigDto,
+  UpdateStrictInventoryDto,
+} from './dto/strict-inventory.dto';
 import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
 
 /**
@@ -24,19 +33,104 @@ import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
  * payload nunca incluye `company_id` ni `key` en el body (la `key` va por
  * URL).
  *
- * Divergencia vs PlacePos local:
- *   - PlacePos expone endpoints específicos (`/color-mode`, `/pos-margins`)
- *     con shape custom. Aquí se ofrece el genérico clave-valor por defecto.
- *     Los endpoints específicos de PlacePos pueden añadirse en una fase
- *     posterior si el frontend cloud los requiere literalmente — para el
- *     MVP el cliente cloud puede usar `GET /app-settings/app_color_mode`
- *     y `PUT /app-settings/app_color_mode` con `{ value: 'dark' }`.
+ * Endpoints específicos paridad PlacePos:
+ *   - `GET/PUT /app-settings/pos-margins`     → `{ enabled, margins[] }`.
+ *   - `GET/PUT /app-settings/strict-inventory` → `{ enabled }` (PUT solo
+ *     `owner|superadmin`).
+ *
+ * Convivencia con el endpoint genérico:
+ *   - El cliente cloud puede seguir usando `GET /app-settings/app_color_mode`
+ *     y `PUT /app-settings/app_color_mode` con `{ value: 'dark' }` para
+ *     settings simples clave-valor.
+ *   - Los endpoints específicos DEBEN declararse antes del `@Get(':key')`
+ *     genérico — el orden importa en NestJS y un `:key='pos-margins'`
+ *     genérico devolvería NOT_FOUND.
  */
 @ApiTags('app-settings')
 @ApiBearerAuth('bearer')
 @Controller('app-settings')
 export class AppSettingsController {
-  constructor(private readonly appSettingsService: AppSettingsService) {}
+  constructor(
+    private readonly appSettingsService: AppSettingsService,
+    private readonly getPosMarginsAction: GetPosMarginsAction,
+    private readonly upsertPosMarginsAction: UpsertPosMarginsAction,
+    private readonly getStrictInventoryAction: GetStrictInventoryAction,
+    private readonly upsertStrictInventoryAction: UpsertStrictInventoryAction,
+  ) {}
+
+  // ----------------------------------------------------------------------
+  // Endpoints específicos — paridad PlacePos. Declarados ANTES del
+  // `@Get(':key')` genérico: el router los matchea por path exacto y
+  // descarta el wildcard. Si se mueven, romperán con NOT_FOUND.
+  // ----------------------------------------------------------------------
+
+  @Get('pos-margins')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Configuración de márgenes POS',
+    description:
+      'Lee `pos_margins_enabled` + `pos_margins` y devuelve `{ enabled, margins }`.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: PosMarginsConfigDto })
+  async getPosMargins(@CurrentCompany() companyId: number): Promise<PosMarginsConfigDto> {
+    return this.getPosMarginsAction.execute(companyId);
+  }
+
+  @Put('pos-margins')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Set configuración de márgenes POS',
+    description:
+      'Upsert atómico de `pos_margins_enabled` + `pos_margins`. Reglas: si `enabled=true` debe haber ≥1 margen; orden ascendente estricto.',
+  })
+  @ApiBody({ type: UpdatePosMarginsDto })
+  @ApiResponse({ status: HttpStatus.OK, type: PosMarginsConfigDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  async upsertPosMargins(
+    @Body() dto: UpdatePosMarginsDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<PosMarginsConfigDto> {
+    return this.upsertPosMarginsAction.execute(dto, companyId);
+  }
+
+  @Get('strict-inventory')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Flag global de control estricto de inventario',
+    description: 'Devuelve `{ enabled }` desde la key `strict_inventory_control`.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: StrictInventoryConfigDto })
+  async getStrictInventory(
+    @CurrentCompany() companyId: number,
+  ): Promise<StrictInventoryConfigDto> {
+    return this.getStrictInventoryAction.execute(companyId);
+  }
+
+  @Put('strict-inventory')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin')
+  @ApiOperation({
+    summary: 'Set flag global de control estricto de inventario',
+    description:
+      'Solo `owner` o `superadmin` pueden modificar este flag — afecta toda la operación del comercio.',
+  })
+  @ApiBody({ type: UpdateStrictInventoryDto })
+  @ApiResponse({ status: HttpStatus.OK, type: StrictInventoryConfigDto })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Solo un administrador puede modificar esta configuración',
+  })
+  async upsertStrictInventory(
+    @Body() dto: UpdateStrictInventoryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<StrictInventoryConfigDto> {
+    return this.upsertStrictInventoryAction.execute(dto, companyId);
+  }
+
+  // ----------------------------------------------------------------------
+  // Endpoints genéricos clave-valor (DESPUÉS de los específicos).
+  // ----------------------------------------------------------------------
 
   @Get()
   @Roles('owner', 'manager')

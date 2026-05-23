@@ -167,8 +167,35 @@ export class PurchaseResponseDto {
   @ApiProperty({ enum: PurchaseStatus, example: PurchaseStatus.PENDING })
   status!: PurchaseStatus;
 
+  @ApiPropertyOptional({ example: 7, nullable: true })
+  carrier_id!: number | null;
+
   @ApiPropertyOptional({ example: 'Transportes Express', nullable: true })
   carrier_name!: string | null;
+
+  @ApiProperty({ example: 25.5, description: 'Costo del flete. 0 si no aplica.' })
+  transport_cost!: number;
+
+  @ApiPropertyOptional({
+    example: 1200.5,
+    nullable: true,
+    description: 'Peso total transportado en kg. NULL si no se reportó.',
+  })
+  total_kilos!: number | null;
+
+  @ApiPropertyOptional({
+    example: '2026-05-12',
+    nullable: true,
+    description: 'Fecha de la factura física del proveedor. NULL si entró como remisión.',
+  })
+  invoice_date!: string | null;
+
+  @ApiPropertyOptional({
+    example: 'F-2025-00123',
+    nullable: true,
+    description: 'Número de factura del proveedor. NULL si entró como remisión.',
+  })
+  invoice_number!: string | null;
 
   @ApiPropertyOptional({ example: 'Juan Pérez', nullable: true })
   received_by!: string | null;
@@ -270,7 +297,19 @@ export function toPurchaseResponseDto(
     total: Number(purchase.total),
     notes: purchase.notes,
     status: purchase.status,
+    carrier_id: purchase.carrier_id === null ? null : Number(purchase.carrier_id),
     carrier_name: purchase.carrier_name,
+    transport_cost: Number(purchase.transport_cost ?? 0),
+    total_kilos:
+      purchase.total_kilos === null || purchase.total_kilos === undefined
+        ? null
+        : Number(purchase.total_kilos),
+    invoice_date: purchase.invoice_date
+      ? purchase.invoice_date instanceof Date
+        ? purchase.invoice_date.toISOString()
+        : String(purchase.invoice_date)
+      : null,
+    invoice_number: purchase.invoice_number,
     received_by: purchase.received_by,
     received_at: purchase.received_at ? purchase.received_at.toISOString() : null,
     created_by: purchase.created_by,

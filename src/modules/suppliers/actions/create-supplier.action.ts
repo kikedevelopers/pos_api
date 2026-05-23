@@ -60,6 +60,9 @@ export class CreateSupplierAction {
         email: dto.email?.trim() || null,
         accumulated_debt: 0,
         credit_balance: 0,
+        // Paridad placepos: el cliente envía un array (posiblemente vacío);
+        // si no llega el campo, persistimos `[]`.
+        payment_accounts: dto.payment_accounts ?? [],
         is_archived: false,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),

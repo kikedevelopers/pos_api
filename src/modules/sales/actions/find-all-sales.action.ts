@@ -8,7 +8,7 @@ import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line
 
 import type { ListSalesQueryDto } from '../dto/list-sales-query.dto';
 import { SaleListItemDto } from '../dto/sale-list-item.dto';
-import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
+import { SaleInvoice } from '../entities/sale-invoice.entity';
 
 /**
  * Lista ventas del feed del día. Espejo byte-por-byte de
@@ -85,7 +85,9 @@ export class FindAllSalesAction {
     }
 
     const invoices = await qb.getMany();
-    if (invoices.length === 0) return [];
+    if (invoices.length === 0) {
+      return [];
+    }
 
     // Batch fetch de las credit_notes (CN + ND) asociadas a las ventas del
     // listado, con sus líneas, para consolidar totales.
@@ -156,7 +158,7 @@ function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemD
   const consolidated = consolidate(invoice, notes);
   return {
     id: Number(invoice.id),
-    ticketType: invoice.ticket_type as TicketType,
+    ticketType: invoice.ticket_type,
     ticketNumber: invoice.ticket_number,
     saleNumber: invoice.sale_number,
     total: consolidated.total,

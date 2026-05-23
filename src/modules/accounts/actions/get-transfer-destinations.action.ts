@@ -3,30 +3,35 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
+import { User, UserType } from '@/modules/users/entities/user.entity';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
 import type { TransferAccountType } from '../dto/transfer.dto';
 
 /**
- * Item de destino disponible para una transferencia.
+ * Item de destino disponible para una transferencia. Discriminado por `type`.
  */
 export interface TransferDestinationItem {
   id: number;
   name: string;
   balance: number;
-  type: 'bank' | 'wallet';
+  type: 'bank' | 'wallet' | 'user';
 }
 
 /**
  * Construye la lista de cuentas destino disponibles cuando se especifica
  * una fuente. Espeja `accounts.routes.ts` de PlacePos:
  *
- *   - Si source = wallet → destinos: other wallets + all banks.
- *   - Si source = bank → destinos: other banks + all wallets.
+ *   - Si source = wallet → destinos: otras wallets + bancos + usuarios con
+ *     caja registradora (`cash_register`) en la misma company.
+ *   - Si source = bank → destinos: otros bancos + wallets.
  *
- * No incluye destinos tipo `user` — el modelo cloud no tiene "caja
- * personal de usuario" (la caja es por turno, no por usuario). Documentado
- * como divergencia.
+ * Multi-tenant: todo se filtra por `company_id`. Los usuarios destino se
+ * obtienen vía un INNER JOIN con `cash_registers` para garantizar que ya
+ * tienen caja (PlacePos hace lo mismo); usuarios `superadmin` no aparecen
+ * porque no tienen `company_id`. El `owner` no se autoexcluye — el owner
+ * también tiene caja y puede recibir traslados.
  */
 @Injectable()
 export class GetTransferDestinationsAction {
@@ -35,6 +40,8 @@ export class GetTransferDestinationsAction {
     private readonly walletRepo: Repository<Wallet>,
     @InjectRepository(Bank)
     private readonly bankRepo: Repository<Bank>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {}
 
   async execute(
@@ -73,6 +80,29 @@ export class GetTransferDestinationsAction {
           name: b.name,
           balance: Number(b.balance),
           type: 'bank',
+        });
+      }
+
+      // Solo se listan usuarios con caja registrada (modelo PlacePos: el
+      // INNER JOIN garantiza que la caja existe; el balance mostrado es el
+      // de la caja, no el `balance` personal del User). Cualquier user-type
+      // dentro de la company es candidato (owner + employees con login
+      // habilitado han creado fila espejo en `users`).
+      const usersWithRegister = await this.userRepo
+        .createQueryBuilder('u')
+        .innerJoin(CashRegister, 'cr', 'cr.user_id = u.id AND cr.company_id = u.company_id')
+        .where('u.company_id = :companyId', { companyId: String(companyId) })
+        .andWhere('u.type != :superadmin', { superadmin: UserType.SUPERADMIN })
+        .select(['u.id AS id', 'u.name AS name', 'u.lastname AS lastname', 'cr.balance AS balance'])
+        .orderBy('u.name', 'ASC')
+        .getRawMany<{ id: string; name: string; lastname: string; balance: string | number }>();
+
+      for (const u of usersWithRegister) {
+        destinations.push({
+          id: Number(u.id),
+          name: `${u.name ?? ''} ${u.lastname ?? ''}`.trim() || 'Usuario',
+          balance: Number(u.balance),
+          type: 'user',
         });
       }
     } else {

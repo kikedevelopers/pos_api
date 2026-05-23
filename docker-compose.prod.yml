@@ -1,0 +1,120 @@
+# =============================================================================
+# POS API - Docker Compose de PRODUCCIÓN (full stack con TLS).
+#
+# Stack:
+#   - postgres : DB con volumen persistente, sin puerto expuesto al host.
+#   - api      : imagen pulleada del registry (${IMAGE_NAME}), corre migraciones
+#                en su entrypoint, escucha en red interna.
+#   - nginx    : reverse proxy 80/443 → api, con HSTS/headers de seguridad.
+#                Reload periódico cada 6h para tomar nuevos certs.
+#   - certbot  : renueva certificados Let's Encrypt cada 12h vía webroot.
+#
+# Usado por `./deploy.sh`. NO se invoca directamente salvo para debugging:
+#   docker compose -f docker-compose.prod.yml ps
+#   docker compose -f docker-compose.prod.yml logs -f nginx
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pos_api_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pos_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME} -d ${DB_NAME}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - pos_network
+
+  api:
+    image: ${IMAGE_NAME:-ghcr.io/CHANGEME/pos_api:latest}
+    container_name: pos_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-3010}
+      API_PREFIX: ${API_PREFIX:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SYNCHRONIZE: 'false'
+      DB_LOGGING: ${DB_LOGGING:-false}
+      DB_SSL: 'false'
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      THROTTLE_TTL: ${THROTTLE_TTL:-60000}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-100}
+      # tras nginx (1 hop): X-Forwarded-For real.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_OWNER: ${JWT_EXPIRES_OWNER:-7d}
+      JWT_EXPIRES_EMPLOYEE: ${JWT_EXPIRES_EMPLOYEE:-1d}
+    # Sin `ports:` — el acceso externo solo va por nginx (80/443).
+    expose:
+      - '${PORT:-3010}'
+    networks:
+      - pos_network
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: pos_api_nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN}
+      API_PORT: ${PORT:-3010}
+      # Limita envsubst a estas variables — el resto de `$var` en el config
+      # nginx (ej: $host, $request_uri) NO se intentan sustituir.
+      NGINX_ENVSUBST_TEMPLATE_VARS: 'DOMAIN,API_PORT'
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/templates:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    # Recarga nginx cada 6h para tomar el cert recién renovado por certbot.
+    # `daemon off` mantiene el contenedor vivo en foreground.
+    command: >
+      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+    networks:
+      - pos_network
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: pos_api_certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    # Intenta renovar cada 12h. Let's Encrypt solo renueva si quedan <30 días
+    # de validez, así que la mayoría de las veces es un no-op barato.
+    entrypoint: >
+      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;"
+    networks:
+      - pos_network
+
+volumes:
+  pos_postgres_data:
+    name: pos_api_postgres_data
+
+networks:
+  pos_network:
+    name: pos_api_network
+    driver: bridge

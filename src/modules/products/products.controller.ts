@@ -81,7 +81,22 @@ export class ProductsController {
     @CurrentCompany() companyId: number,
   ): Promise<ProductResponseDto[]> {
     const products = await this.productsService.findAll(companyId, query);
-    return products.map(toProductResponseDto);
+    // Construimos un mapa parent_id -> stock para que los hijos resuelvan
+    // su `stock_display` contra el stock del padre (espejo PlacePos
+    // `normalizeChildProduct`). Los padres ya están en el listado.
+    const parentStockById = new Map<string, number>();
+    for (const product of products) {
+      if (product.parent_id === null || product.parent_id === undefined) {
+        parentStockById.set(product.id, Number(product.stock));
+      }
+    }
+    return products.map((p) => {
+      const parentStock =
+        p.parent_id !== null && p.parent_id !== undefined
+          ? (parentStockById.get(p.parent_id) ?? null)
+          : null;
+      return toProductResponseDto(p, parentStock);
+    });
   }
 
   /**
@@ -199,7 +214,14 @@ export class ProductsController {
     if (!product) {
       throw new NotFoundException('Producto no encontrado.');
     }
-    return toProductResponseDto(product);
+    // Si es presentación, resolvemos el stock del padre para que el
+    // `stock_display` derive correctamente (espejo PlacePos).
+    let parentStock: number | null = null;
+    if (product.parent_id !== null && product.parent_id !== undefined) {
+      const parent = await this.productsService.findById(Number(product.parent_id), companyId);
+      parentStock = parent ? Number(parent.stock) : null;
+    }
+    return toProductResponseDto(product, parentStock);
   }
 
   @Get(':id/sales-history')

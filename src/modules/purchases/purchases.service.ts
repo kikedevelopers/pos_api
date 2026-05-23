@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
-import { ArchivePurchaseAction } from './actions/archive-purchase.action';
+import {
+  ArchivePurchaseAction,
+  type ArchivePurchaseActor,
+} from './actions/archive-purchase.action';
 import { CreatePurchaseAction, type PurchaseCreator } from './actions/create-purchase.action';
 import { FindAllPurchasesAction, type PurchaseListItem } from './actions/find-all-purchases.action';
 import { FindPurchaseAction, type PurchaseAggregate } from './actions/find-purchase.action';
@@ -16,6 +19,7 @@ import {
   type RegisterPurchasePaymentResult,
 } from './actions/register-purchase-payment.action';
 import { UpdatePurchaseAction, type UpdatePurchaseActor } from './actions/update-purchase.action';
+import type { ArchivePurchaseDto } from './dto/archive-purchase.dto';
 import type { BulkPurchasePaymentsDto } from './dto/bulk-purchase-payments.dto';
 import type { CreatePurchasePaymentDto } from './dto/create-purchase-payment.dto';
 import type { CreatePurchaseDto } from './dto/create-purchase.dto';
@@ -23,6 +27,7 @@ import type { ReceivePurchaseDto } from './dto/receive-purchase.dto';
 import type { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import type { Purchase } from './entities/purchase.entity';
 
+export type { ArchivePurchaseActor } from './actions/archive-purchase.action';
 export type { PurchaseCreator } from './actions/create-purchase.action';
 export type {
   PurchasePaymentActor,
@@ -91,8 +96,13 @@ export class PurchasesService {
     return this.markPurchaseReceivedAction.execute(id, dto, companyId, actorId);
   }
 
-  archive(id: number, companyId: number, actorId: number): Promise<void> {
-    return this.archivePurchaseAction.execute(id, companyId, actorId);
+  archive(
+    id: number,
+    dto: ArchivePurchaseDto,
+    companyId: number,
+    actor: ArchivePurchaseActor,
+  ): Promise<void> {
+    return this.archivePurchaseAction.execute(id, dto, companyId, actor);
   }
 
   registerPayment(

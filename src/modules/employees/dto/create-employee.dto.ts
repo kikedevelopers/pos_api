@@ -56,13 +56,16 @@ export class CreateEmployeeDto {
   @MaxLength(500)
   address?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: EmployeeRole.EMPLOYEE,
     enum: EmployeeRole,
-    description: 'Rol operativo del empleado dentro de la company.',
+    default: EmployeeRole.EMPLOYEE,
+    description:
+      'Rol operativo del empleado. Opcional — paridad cliente PlacePos: el formulario no lo expone y el backend asume `employee` por defecto. El owner puede promover a `manager` luego vía PUT.',
   })
+  @IsOptional()
   @IsEnum(EmployeeRole, { message: 'role debe ser uno de: manager, employee' })
-  role!: EmployeeRole;
+  role?: EmployeeRole;
 
   @ApiProperty({
     example: false,

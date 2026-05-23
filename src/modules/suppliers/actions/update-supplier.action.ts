@@ -57,6 +57,12 @@ export class UpdateSupplierAction {
       if (dto.email !== undefined) {
         patch.email = dto.email?.trim() || null;
       }
+      // Paridad placepos: el cliente envía SIEMPRE el array completo (no hay
+      // PATCH item-por-item de cuentas). Si llega definido, reemplazamos todo
+      // el JSONB con el nuevo contenido.
+      if (dto.payment_accounts !== undefined) {
+        patch.payment_accounts = dto.payment_accounts;
+      }
 
       if (Object.keys(patch).length === 0) {
         return existing;

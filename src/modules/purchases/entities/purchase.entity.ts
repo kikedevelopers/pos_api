@@ -13,6 +13,7 @@ import {
 } from 'typeorm';
 
 import { NumericTransformer } from '@/common/utils/numeric-transformer';
+import { Carrier } from '@/modules/carriers/entities/carrier.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Supplier } from '@/modules/suppliers/entities/supplier.entity';
 
@@ -85,6 +86,12 @@ export enum PurchaseStatus {
      AND length(btrim(coalesce(carrier_name, ''))) > 0
      AND length(btrim(coalesce(received_by, ''))) > 0
    )`,
+)
+@Check('chk_purchases_transport_cost_non_negative', 'transport_cost >= 0')
+@Check('chk_purchases_total_kilos_non_negative', 'total_kilos IS NULL OR total_kilos >= 0')
+@Check(
+  'chk_purchases_carrier_required_when_transport',
+  `transport_cost = 0 OR carrier_id IS NOT NULL`,
 )
 export class Purchase {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -162,6 +169,51 @@ export class Purchase {
 
   @Column({ type: 'text', nullable: true })
   carrier_name!: string | null;
+
+  /**
+   * Transportista al que se asoció la compra. NULL si la compra no usó
+   * carrier registrado. Snapshot del nombre vive en `carrier_name`.
+   *
+   * Validación multi-tenant: la action exige `carrier.company_id = company_id`
+   * antes de asignar — Postgres no admite cross-row CHECK.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  carrier_id!: string | null;
+
+  @ManyToOne(() => Carrier, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'carrier_id' })
+  carrier!: Carrier | null;
+
+  /**
+   * Costo de flete pagado al transportista. Se persiste como NUMERIC(15,2).
+   * Si `> 0` exige `carrier_id` (CHECK) y genera `CarrierCredit` en la
+   * misma transacción de creación.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  transport_cost!: number;
+
+  /**
+   * Peso total transportado en kg. NULL si no aplica. NUMERIC(15,4) para
+   * permitir precisión sub-gramo en caso necesario.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 4,
+    nullable: true,
+    transformer: NumericTransformer,
+  })
+  total_kilos!: number | null;
 
   @Column({ type: 'text', nullable: true })
   received_by!: string | null;

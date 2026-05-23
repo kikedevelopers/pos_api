@@ -140,7 +140,13 @@ export class ProcessCarrierPaymentAction {
         throw new NotFoundException('Compra asociada no encontrada');
       }
 
-      const description = `Abono transportista ${carrier.name} - Compra Nº ${purchase.purchase_number}`;
+      // Description canónica con prioridad al texto del usuario (paridad
+      // PlacePos `carrierPaymentOperations.ts`): si el usuario envía
+      // `description` no vacío, ése es el texto definitivo que va al FM, al
+      // log de caja y al CarrierPayment — los tres deben coincidir para que
+      // los reportes crucen contra la misma cadena.
+      const canonicalDescription = `Abono transportista ${carrier.name} - Compra Nº ${purchase.purchase_number}`;
+      const description = dto.description?.trim() || canonicalDescription;
 
       // 3. Debitar fuente + crear FM. Devuelve el FM id para enlazar.
       const { financialMovementId } = await this.debitSourceAndRecordFm(
@@ -151,7 +157,6 @@ export class ProcessCarrierPaymentAction {
         companyId,
         actor,
         description,
-        Number(carrier.id),
       );
 
       // 4. Insertar CarrierPayment.
@@ -169,7 +174,7 @@ export class ProcessCarrierPaymentAction {
             ? String(dto.wallet_id)
             : null,
         financial_movement_id: String(financialMovementId),
-        description: dto.description?.trim() || description,
+        description,
         created_by: actor.fullName,
         created_by_id: String(actor.id),
       });
@@ -251,7 +256,6 @@ export class ProcessCarrierPaymentAction {
     companyId: number,
     actor: CarrierPaymentActor,
     description: string,
-    carrierId: number,
   ): Promise<{ financialMovementId: number }> {
     if (dto.payment_method === CarrierPaymentMethod.BANK) {
       const bank = await manager.findOne(Bank, {
@@ -276,16 +280,22 @@ export class ProcessCarrierPaymentAction {
         { id: bank.id, company_id: String(companyId) },
         { balance: preciseNumber(balance.minus(amountBig), 2) },
       );
+      // Paridad PlacePos (`carrierPaymentOperations.ts` → `registerMovement`):
+      // concept=CARRIER_PAYMENT y destination NULL (el carrier no es una
+      // "cuenta" del sistema — es contraparte externa, pero PlacePos no la
+      // referencia en el FM porque el `carrier_payments.financial_movement_id`
+      // ya enlaza el FM con el pago, que a su vez referencia al carrier vía
+      // carrier_credit_id).
       const fm = await this.financialMovementsService.record(manager, {
         companyId,
         amount,
         movement_type: MovementType.EXPENSE,
-        concept: MovementConcept.EXPENSE,
+        concept: MovementConcept.CARRIER_PAYMENT,
         description,
         source_type: 'bank',
         source_id: Number(bank.id),
-        destination_type: 'external',
-        destination_id: carrierId,
+        destination_type: null,
+        destination_id: null,
         created_by: actor.fullName,
         created_by_id: actor.id,
       });
@@ -315,16 +325,18 @@ export class ProcessCarrierPaymentAction {
         { id: wallet.id, company_id: String(companyId) },
         { balance: preciseNumber(balance.minus(amountBig), 2) },
       );
+      // Ver bloque BANK arriba para justificación de concept=CARRIER_PAYMENT y
+      // destination=null. Paridad PlacePos `carrierPaymentOperations.ts`.
       const fm = await this.financialMovementsService.record(manager, {
         companyId,
         amount,
         movement_type: MovementType.EXPENSE,
-        concept: MovementConcept.EXPENSE,
+        concept: MovementConcept.CARRIER_PAYMENT,
         description,
         source_type: 'wallet',
         source_id: Number(wallet.id),
-        destination_type: 'external',
-        destination_id: carrierId,
+        destination_type: null,
+        destination_id: null,
         created_by: actor.fullName,
         created_by_id: actor.id,
       });
@@ -347,33 +359,49 @@ export class ProcessCarrierPaymentAction {
     );
 
     // El log documenta la mutación que YA se hizo sobre register.balance.
-    // `affects_balance=true` indica que la operación afectó balance — pero NO
-    // se re-aplica al leer; el balance ya vive en la columna.
+    //
+    // Paridad PlacePos (`carrierPaymentOperations.ts` → `registerMovement`):
+    // `affects_balance = false`. PlacePos justifica: "el saldo de caja ya se
+    // descontó en `deductFromMethod`; este log es informativo (rastro de
+    // auditoría para reportes de actividad de caja), no debe sumarse al
+    // recálculo del balance. Marcarlo true generaría doble contabilización
+    // en cualquier script que sume los logs con affects_balance=true."
+    //
+    // Esta es la convención canónica PlacePos para el caso "balance ya
+    // descontado por UPDATE directo": el log queda con affects_balance=false.
     const log = manager.create(CashRegisterLog, {
       company_id: String(companyId),
       cash_register_id: register.id,
       type: CashRegisterLogType.CARRIER_PAYMENT,
       direction: 'OUT',
       amount,
-      affects_balance: true,
+      affects_balance: false,
       description,
       created_by: actor.fullName,
       created_by_id: String(actor.id),
     });
     await manager.save(CashRegisterLog, log);
 
-    // FM con source apuntando a la caja del actor (auditoría + enlace para
-    // carrier_payments.financial_movement_id).
+    // FM "marcador" con source_type='cash_register' y source_id=NULL.
+    // Paridad PlacePos (`carrierPaymentOperations.ts` → `registerMovement`,
+    // rama CASH): "FM marcador: source/destination null porque el log de caja
+    // ya describe el flujo. Sirve para satisfacer la FK NOT NULL [de
+    // carrier_payments.financial_movement_id]."
+    //
+    // El CHECK `chk_financial_movements_source_consistency` ya fue relajado
+    // (migración 1747010220000) para permitir source_type='cash_register' con
+    // source_id NULL. El CHECK `chk_financial_movements_has_endpoint` se
+    // satisface porque source_type es NOT NULL (aunque source_id sea NULL).
     const fm = await this.financialMovementsService.record(manager, {
       companyId,
       amount,
       movement_type: MovementType.EXPENSE,
-      concept: MovementConcept.EXPENSE,
+      concept: MovementConcept.CARRIER_PAYMENT,
       description,
       source_type: 'cash_register',
-      source_id: Number(register.id),
-      destination_type: 'external',
-      destination_id: carrierId,
+      source_id: null,
+      destination_type: null,
+      destination_id: null,
       created_by: actor.fullName,
       created_by_id: actor.id,
     });

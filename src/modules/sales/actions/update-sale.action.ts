@@ -575,6 +575,15 @@ export class UpdateSaleAction {
       params.companyId,
       params.lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
       'RETURN',
+      {
+        reason: 'SALE_EDIT_CREDIT',
+        referenceType: 'credit_note',
+        referenceId: Number(saved.id),
+        referenceCode: saved.note_number,
+        description: `NC por edición — ${saved.note_number}`,
+        actorName: params.actor.fullName,
+        actorUserId: params.actor.id,
+      },
     );
 
     if (params.isFullVoidEdit) {
@@ -665,6 +674,18 @@ export class UpdateSaleAction {
       params.companyId,
       params.lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
       'DEDUCT',
+      {
+        reason: 'SALE_EDIT_DEBIT',
+        referenceType: 'credit_note',
+        referenceId: Number(saved.id),
+        referenceCode: saved.note_number,
+        description: `ND por edición — ${saved.note_number}`,
+        actorName: params.actor.fullName,
+        actorUserId: params.actor.id,
+        // El override de stock viene de update-sale `dto.override_margin` y
+        // se inyecta vía params en el caller superior. Si en el futuro se
+        // añade `override_stock` independiente, propagarlo aquí.
+      },
     );
 
     const debitTotal = preciseNumber(total, 2);
@@ -773,9 +794,15 @@ export class UpdateSaleAction {
     }
 
     // bank / wallet → FinancialMovement.
+    // I-6: el caso DEBIT (cobro adicional por edición) debe usar
+    // `SALE_PAYMENT` — el concept `SALE` es para la creación inicial de la
+    // venta, no para cobros incrementales. CREDIT (reembolso por NC)
+    // mantiene `CREDIT_NOTE_REFUND`.
     const movementType = params.direction === 'CREDIT' ? MovementType.EXPENSE : MovementType.INCOME;
     const concept =
-      params.direction === 'CREDIT' ? MovementConcept.CREDIT_NOTE_REFUND : MovementConcept.SALE;
+      params.direction === 'CREDIT'
+        ? MovementConcept.CREDIT_NOTE_REFUND
+        : MovementConcept.SALE_PAYMENT;
 
     await this.financialMovementsService.record(manager, {
       companyId: params.companyId,

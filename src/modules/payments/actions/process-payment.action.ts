@@ -67,6 +67,14 @@ export interface ProcessPaymentResult {
    */
   sale_number?: string | null;
   code?: string;
+  /**
+   * Marca interna: `true` cuando el resultado proviene del fast-path
+   * idempotente (la request es un reintento, no un nuevo procesamiento).
+   * El controller usa esta marca para devolver 200 OK en lugar de 201
+   * CREATED. NO forma parte del contrato HTTP — `JSON.stringify` con un
+   * mapeo en el controller la elimina antes de devolver al cliente.
+   */
+  replay?: boolean;
 }
 
 /**
@@ -288,9 +296,11 @@ export class ProcessPaymentAction {
       },
     );
 
-    // 8. Ajuste de inventario sobre líneas. El helper hoy es stub pero el
-    //    contrato del caller queda idéntico para cuando aterrice
-    //    `Product.stock` (Fase 3+).
+    // 8. Ajuste de inventario sobre líneas. Decrementa Product.stock y
+    //    persiste una fila en inventory_movements por cada producto afectado
+    //    (reason=SALE, reference_type=sale_invoice). El helper aborta con
+    //    InsufficientStockError (422) si el descuento dejaría stock negativo
+    //    y no llegó override.
     const lines = await manager.find(SaleInvoiceLine, {
       where: {
         sale_invoice_id: sale.id,
@@ -298,15 +308,26 @@ export class ProcessPaymentAction {
       },
     });
     if (lines.length > 0) {
-      // PlacePos hace `adjustInventory(manager, lines, 'DEDUCT')` — el helper
-      // espejo expone (manager, companyId, lines, 'DEDUCT'). Mapeamos el
-      // shape `{item_id, quantity}` desde `product_id`/`quantity` de las
-      // líneas (en pos_api la columna se llama `product_id`, no `item_id`).
       const inventoryLines = lines.map((l) => ({
         item_id: Number(l.product_id),
         quantity: Number(l.quantity),
       }));
-      await this.deductInventory(manager, companyId, inventoryLines);
+      // Paridad PlacePos: el override_stock solo lo concede el rol del actor.
+      // Si un employee/manager envía la flag, se ignora silenciosamente — el
+      // adjustInventory entonces fallará con InsufficientStockError si el
+      // stock no alcanza, igual que en placepos.
+      const allowOverrideStock =
+        dto.override_stock === true && (actor.type === 'owner' || actor.type === 'superadmin');
+      await adjustInventory(manager, companyId, inventoryLines, 'DEDUCT', {
+        reason: 'SALE',
+        referenceType: 'sale_invoice',
+        referenceId: Number(sale.id),
+        referenceCode: folio.formatted,
+        description: `Venta ${folio.formatted}`,
+        overrideStock: allowOverrideStock,
+        actorName: actor.fullName,
+        actorUserId: actor.id,
+      });
     }
 
     // 9. SalePayment + side effects (solo si amount_paid > 0).
@@ -643,16 +664,6 @@ export class ProcessPaymentAction {
     await manager.save(CashRegisterLog, log);
   }
 
-  private async deductInventory(
-    manager: EntityManager,
-    companyId: number,
-    lines: Array<{ item_id: number; quantity: number }>,
-  ): Promise<void> {
-    // El helper actual es stub (Fase 3 no añadió Product.stock). Mantiene la
-    // firma para que cuando aterrice `Product.stock` el caller no cambie.
-    await adjustInventory(manager, companyId, lines, 'DEDUCT');
-  }
-
   /**
    * Fast-path Idempotency-Key (HIGH-3): si la company ya procesó un pago con
    * este uuid, devolvemos el mismo `ProcessPaymentResult` sin abrir nueva
@@ -701,6 +712,7 @@ export class ProcessPaymentAction {
       payment_id: Number(payment.id),
       credit_id: credit ? Number(credit.id) : null,
       sale_number: sale?.sale_number ?? null,
+      replay: true,
     };
   }
 

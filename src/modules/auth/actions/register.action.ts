@@ -3,6 +3,7 @@ import * as argon2 from 'argon2';
 import { DataSource, QueryFailedError } from 'typeorm';
 
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
+import { CreateDefaultAlertConfigsAction } from '@/modules/alert-configs/actions/create-default-alert-configs.action';
 import { CreateDefaultAppSettingsAction } from '@/modules/app-settings/actions/create-default-app-settings.action';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
@@ -40,6 +41,7 @@ export class RegisterAction {
     private readonly createDefaultWalletAction: CreateDefaultWalletAction,
     private readonly createDefaultTicketSettingsAction: CreateDefaultTicketSettingsAction,
     private readonly createDefaultAppSettingsAction: CreateDefaultAppSettingsAction,
+    private readonly createDefaultAlertConfigsAction: CreateDefaultAlertConfigsAction,
   ) {}
 
   async execute(dto: RegisterDto): Promise<AuthResponseDto> {
@@ -129,6 +131,11 @@ export class RegisterAction {
       //      pos_margins_enabled='false'. El cliente lee estos valores en
       //      el primer login y aplica la UI correspondiente.
       await this.createDefaultAppSettingsAction.execute(manager, { companyId, createdBy });
+
+      // 4.4. AlertConfigs defaults: INACTIVE_CUSTOMER deshabilitado por
+      //      defecto. Paridad placepos (`seeds/alertConfigs.ts`). El dueño
+      //      lo activa cuando quiera recibir el resumen diario.
+      await this.createDefaultAlertConfigsAction.execute(manager, { companyId, createdBy });
 
       return saved;
     });

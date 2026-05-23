@@ -10,6 +10,7 @@ import Big from 'big.js';
 import { DataSource, Like, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
+import { runSerializableWithRetry } from '@/common/utils/serializable-retry';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
@@ -178,7 +179,12 @@ export class CloseCashAction {
       }
     }
 
-    return this.dataSource.transaction<CloseCashResult>(async (manager) => {
+    // Aislamiento SERIALIZABLE (CLAUDE.md §9.4): cierre de caja lee/escribe
+    // balance de caja + bank/wallet destino + emite log y FMs. Sin
+    // SERIALIZABLE, dos cierres concurrentes podrían mover el mismo dinero
+    // dos veces (write-skew). PG aborta con 40001 si detecta anomalía;
+    // reintentamos hasta 2 veces.
+    return runSerializableWithRetry<CloseCashResult>(this.dataSource, async (manager) => {
       const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
       const systemBalanceBig = toBig(register.balance);
       const baseBig = toBig(register.base_amount);

@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import { Supplier } from '@/modules/suppliers/entities/supplier.entity';
+import { Supplier, type SupplierPaymentAccount } from '@/modules/suppliers/entities/supplier.entity';
 
 /**
  * Shape de respuesta del módulo suppliers. Espejo byte-por-byte de
@@ -47,6 +47,24 @@ export class SupplierResponseDto {
   })
   credit_balance!: number;
 
+  @ApiProperty({
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        entity_name: { type: 'string' },
+        account_type: { type: 'string' },
+        account_number: { type: 'string' },
+        document_type: { type: 'string', enum: ['CC', 'NIT'] },
+        document_number: { type: 'string' },
+        agreement_number: { type: 'string', nullable: true },
+      },
+    },
+    description:
+      'Cuentas bancarias del proveedor. Array vacío si no se han configurado.',
+  })
+  payment_accounts!: SupplierPaymentAccount[];
+
   @ApiProperty({ example: false })
   is_archived!: boolean;
 
@@ -72,6 +90,7 @@ export function toSupplierResponseDto(supplier: Supplier): SupplierResponseDto {
     email: supplier.email,
     accumulated_debt: supplier.accumulated_debt,
     credit_balance: supplier.credit_balance,
+    payment_accounts: supplier.payment_accounts ?? [],
     is_archived: supplier.is_archived,
     created_by: supplier.created_by,
     created_at: supplier.created_at.toISOString(),

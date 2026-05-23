@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   Min,
   ValidateIf,
 } from 'class-validator';
@@ -148,4 +149,22 @@ export class ProcessPaymentDto {
   @IsOptional()
   @IsBoolean()
   override_margin?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Si `true` y el actor es owner/superadmin, permite vender aunque el stock no alcance. El inventario quedará en negativo (clampeado a 0 si la diferencia sería negativa). Ignorado en otros roles. Paridad cliente PlacePos.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  override_stock?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'UUID v4 generado por el cliente para la intención de pago. Mismo propósito que el header `Idempotency-Key`. Si llega ambos, prevalece el header. Paridad cliente PlacePos (que lo envía en el body).',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsOptional()
+  @IsUUID(4)
+  client_operation_id?: string;
 }

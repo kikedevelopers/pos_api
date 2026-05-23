@@ -24,13 +24,14 @@ export class CashRegisterController {
 
   @Get('balance')
   @Roles('owner', 'manager', 'employee')
-  @ApiOperation({ summary: 'Balance corriente de la caja del actor. Espejo PlacePos.' })
+  @ApiOperation({ summary: 'Balance + base + updatedAt de la caja del actor. Espejo PlacePos.' })
   @ApiResponse({ status: HttpStatus.OK })
   async getBalance(
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<{
     balance: number;
+    baseAmount: number;
     updatedAt: string;
   }> {
     return this.cashRegisterService.getBalance(companyId, currentUser.user_id);

@@ -14,6 +14,7 @@ import { FindSupplierHistoryAction } from './actions/find-supplier-history.actio
 import { GetProductSalesHistoryAction } from './actions/get-product-sales-history.action';
 import { QuickCreateProductAction } from './actions/quick-create-product.action';
 import { UpdateProductAction } from './actions/update-product.action';
+import { InventoryMovement } from './entities/inventory-movement.entity';
 import { Product } from './entities/product.entity';
 import { ProductPrice } from './entities/product-price.entity';
 import { ProductsController } from './products.controller';
@@ -35,7 +36,7 @@ import { ProductsService } from './products.service';
  * las actions de create/update/quick (vía SQL raw — ver `product-lookups.ts`).
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Product, ProductPrice]), PackagingsModule],
+  imports: [TypeOrmModule.forFeature([Product, ProductPrice, InventoryMovement]), PackagingsModule],
   controllers: [ProductsController],
   providers: [
     ProductsService,

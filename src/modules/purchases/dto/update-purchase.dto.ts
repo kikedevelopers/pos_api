@@ -7,6 +7,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
@@ -96,4 +97,72 @@ export class UpdatePurchaseDto {
   @IsInt({ message: 'refund_source_id debe ser entero' })
   @Min(1, { message: 'refund_source_id debe ser >= 1' })
   refund_source_id?: number | null;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Carrier / transport (B-1)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  @ApiPropertyOptional({
+    example: 7,
+    nullable: true,
+    description: 'ID del transportista. Si `transport_cost > 0` es obligatorio.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'carrier_id debe ser entero' })
+  @Min(1, { message: 'carrier_id debe ser >= 1' })
+  carrier_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: 25.5,
+    nullable: true,
+    description: 'Costo total del flete. Genera/reconcilia `CarrierCredit`.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'transport_cost debe ser número con hasta 2 decimales' },
+  )
+  @Min(0, { message: 'transport_cost debe ser >= 0' })
+  transport_cost?: number | null;
+
+  @ApiPropertyOptional({
+    example: 1200.5,
+    nullable: true,
+    description: 'Peso total transportado en kg. Hasta 4 decimales.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 4 },
+    { message: 'total_kilos debe ser número con hasta 4 decimales' },
+  )
+  @Min(0, { message: 'total_kilos debe ser >= 0' })
+  total_kilos?: number | null;
+
+  @ApiPropertyOptional({
+    enum: PURCHASE_PAYMENT_SOURCE_TYPES,
+    example: 'bank',
+    description:
+      'Tipo de cuenta destino del reembolso al transportista cuando el nuevo transport_cost queda por debajo de lo ya pagado al carrier. Obligatorio si hay excedente.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn([...PURCHASE_PAYMENT_SOURCE_TYPES], {
+    message: 'Fuente del reembolso al transportista inválida. Usa wallet, bank o cash_register.',
+  })
+  refund_carrier_source_type?: PurchasePaymentSource | null;
+
+  @ApiPropertyOptional({
+    example: 1,
+    nullable: true,
+    description: 'ID de la cuenta destino del reembolso al transportista.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'refund_carrier_source_id debe ser entero' })
+  @Min(1, { message: 'refund_carrier_source_id debe ser >= 1' })
+  refund_carrier_source_id?: number | null;
 }

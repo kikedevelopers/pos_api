@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import { Employee, EmployeeRole } from '@/modules/employees/entities/employee.entity';
 
+import type { EmployeeWithCashSummary } from '../actions/find-all-employees.action';
 import type { EmployeeWithCashRegister } from '../actions/find-employee-by-id.action';
 
 /**
@@ -69,6 +70,28 @@ export class EmployeeResponseDto {
 
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   created_at!: string;
+
+  @ApiPropertyOptional({
+    example: 42,
+    nullable: true,
+    description:
+      'ID del `User` espejo (paridad PlacePos). NULL hasta que el employee se materializa (toggle-login ON o creación con login).',
+  })
+  user_id!: number | null;
+
+  @ApiProperty({
+    example: 75000,
+    description:
+      'Balance corriente de la caja PERMANENTE del empleado. 0 si no tiene caja (login no habilitado).',
+  })
+  cash_balance!: number;
+
+  @ApiProperty({
+    example: 50000,
+    description:
+      'Fondo fijo (`base_amount`) de la caja PERMANENTE del empleado. 0 si no tiene caja.',
+  })
+  base_amount!: number;
 }
 
 /**
@@ -81,7 +104,16 @@ export class EmployeeResponseDto {
  * `auth.service.ts` para no inyectar un logger en una función pura; en
  * práctica los ids de employees no se aproximan a `MAX_SAFE_INTEGER`.
  */
-export function toEmployeeResponseDto(employee: Employee): EmployeeResponseDto {
+/**
+ * Mapper base de `Employee` → respuesta SIN datos de caja (uso interno).
+ *
+ * Los endpoints que devuelven el listado o el detalle deben usar el mapper
+ * con caja, NO este. `cash_balance` y `base_amount` son obligatorios en el
+ * contrato PlacePos: omitirlos rompe paridad.
+ */
+function toEmployeeBaseResponse(
+  employee: Employee,
+): Omit<EmployeeResponseDto, 'cash_balance' | 'base_amount' | 'user_id'> {
   return {
     id: Number(employee.id),
     name: employee.name,
@@ -99,34 +131,54 @@ export function toEmployeeResponseDto(employee: Employee): EmployeeResponseDto {
 }
 
 /**
- * Shape de `GET /employees/:id` — extiende `EmployeeResponseDto` con los
- * datos de la caja del empleado. Espejo PlacePos: `cash_balance` y
- * `base_amount` como campos top-level.
- *
- * Si el empleado no tiene caja, ambos valores son 0.
+ * Mapper del listado `GET /employees`. Espejo PlacePos: cada item incluye
+ * `cash_balance`, `base_amount` y `user_id` (resueltos en bulk para evitar
+ * N+1 — ver `FindAllEmployeesAction`).
  */
-export class EmployeeDetailResponseDto extends EmployeeResponseDto {
-  @ApiProperty({
-    example: 75000,
-    description:
-      'Balance corriente de la caja PERMANENTE (`cash_registers.balance`). 0 si el empleado no tiene caja.',
-  })
-  cash_balance!: number;
-
-  @ApiProperty({
-    example: 50000,
-    description:
-      'Fondo fijo (`base_amount`) de la caja PERMANENTE del empleado. 0 si no tiene caja.',
-  })
-  base_amount!: number;
+export function toEmployeeResponseDto(result: EmployeeWithCashSummary): EmployeeResponseDto {
+  return {
+    ...toEmployeeBaseResponse(result.employee),
+    user_id: result.employee.user_id !== null ? Number(result.employee.user_id) : null,
+    cash_balance: result.cash_balance,
+    base_amount: result.base_amount,
+  };
 }
+
+/**
+ * Shape de `GET /employees/:id` — alias del response del listado para
+ * mantener tipado explícito en el controller. Mismo shape que
+ * `EmployeeResponseDto`.
+ */
+export class EmployeeDetailResponseDto extends EmployeeResponseDto {}
 
 export function toEmployeeDetailResponseDto(
   result: EmployeeWithCashRegister,
 ): EmployeeDetailResponseDto {
   return {
-    ...toEmployeeResponseDto(result.employee),
+    ...toEmployeeBaseResponse(result.employee),
+    user_id: result.employee.user_id !== null ? Number(result.employee.user_id) : null,
     cash_balance: result.cash_balance,
     base_amount: result.base_amount,
+  };
+}
+
+/**
+ * Mapper para endpoints de mutación (`POST`/`PUT`) que devuelven un
+ * `Employee` sin re-leer la caja (el action no la consulta). En esos
+ * endpoints el frontend ya tiene el cash_balance del último `GET` y no se
+ * espera que cambie por la mutación de perfil.
+ *
+ * PlacePos en sus endpoints POST/PUT también re-consulta la caja y devuelve
+ * `cash_balance`/`base_amount`. Para mantener paridad sin obligar al action
+ * a hacer una query extra, resolvemos a 0/0 cuando el employee no tiene
+ * `user_id` (caso común en creación/edición de perfil). Para mutaciones
+ * sobre employees con user_id, el cliente puede refrescar con GET /:id.
+ */
+export function toEmployeeResponseDtoFromEntity(employee: Employee): EmployeeResponseDto {
+  return {
+    ...toEmployeeBaseResponse(employee),
+    user_id: employee.user_id !== null ? Number(employee.user_id) : null,
+    cash_balance: 0,
+    base_amount: 0,
   };
 }

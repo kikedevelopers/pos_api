@@ -1,5 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+
+import { SupplierPaymentAccountDto } from './payment-account.dto';
 
 /**
  * Payload de `POST /suppliers`.
@@ -60,4 +73,16 @@ export class CreateSupplierDto {
   @IsEmail({}, { message: 'email debe ser una dirección de correo válida' })
   @MaxLength(255)
   email?: string;
+
+  @ApiPropertyOptional({
+    type: [SupplierPaymentAccountDto],
+    description:
+      'Cuentas bancarias / billeteras del proveedor. Array vacío si no se conocen. Paridad placepos: persistido como JSONB en la columna `payment_accounts`.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => SupplierPaymentAccountDto)
+  payment_accounts?: SupplierPaymentAccountDto[];
 }

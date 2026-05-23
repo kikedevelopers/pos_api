@@ -50,9 +50,9 @@ export class AccountsController {
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
   @ApiOperation({
-    summary: 'Transferir dinero entre dos cuentas (bank/wallet) de la company.',
+    summary: 'Transferir dinero entre cuentas (bank/wallet/user) de la company.',
     description:
-      'En UNA transacción: valida balances, debita el origen, acredita el destino y genera DOS FinancialMovement (EXPENSE + INCOME) con el mismo reference_code.',
+      'En UNA transacción: valida balances, debita el origen, acredita el destino y genera DOS FinancialMovement (EXPENSE + INCOME) con el mismo reference_code. Si destino=user, también INSERT CashRegisterLog en la caja del destinatario.',
   })
   @ApiBody({ type: TransferDto })
   @ApiResponse({ status: HttpStatus.OK, description: '{ message, source, destination }' })

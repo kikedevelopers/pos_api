@@ -37,6 +37,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
+import { FixedExpensesModule } from './modules/fixed-expenses/fixed-expenses.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PosDataModule } from './modules/pos-data/pos-data.module';
@@ -197,6 +198,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CarrierPaymentsModule,
     // Fase 9 — Gastos y agregadores (credits/payments dependen de Sales+Purchases).
     ExpensesModule,
+    // Ola 2B — Gastos fijos (catálogo + cortes vencidos). Depende
+    // conceptualmente de `companies` y `app_alerts` (FK opcional).
+    FixedExpensesModule,
     CreditsModule,
     PaymentsModule,
     // Fase 10 — Settings y alertas.

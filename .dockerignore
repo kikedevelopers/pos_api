@@ -3,6 +3,7 @@ dist
 coverage
 .git
 .gitignore
+.github
 .env
 .env.*
 !.env.example
@@ -11,8 +12,14 @@ coverage
 *.log
 README.md
 docker-compose.yml
+docker-compose.dev.yml
+docker-compose.*.yml
 Dockerfile
 .dockerignore
 .eslintcache
 .DS_Store
 test
+nginx
+certbot
+deploy.sh
+init-letsencrypt.sh

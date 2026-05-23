@@ -8,23 +8,31 @@ import {
   fetchNewCredits,
   fetchPaymentsTotal,
   fetchProfitTotal,
+  fetchPurchasePaymentsToday,
+  fetchPurchasesToday,
+  fetchSalesCount,
   fetchSalesNotesAdjustment,
+  fetchSupplierDebt,
   round2,
 } from '../internal/aggregations';
+import { fetchCashAccounts, type CashAccountsResult } from '../internal/cash-accounts';
 import { parseDateRange, todayUtc } from '../internal/date-range';
 
 /**
- * Output del endpoint `GET /dashboard/today`. Resumen consolidado del día
- * (espejo PlacePos byte-por-byte).
+ * Output del endpoint `GET /dashboard/today`. Resumen consolidado del día.
+ * Espejo PlacePos `TodaySummaryPayload` (`dashboard.routes.ts:660`).
  *
- * Convenciones:
+ * Convenciones (paridad PlacePos):
  *   - `cashSales` / `transferSales` = pagos a ventas REGULARES (no crédito)
  *     ajustados por notas (NC resta, ND suma) del mismo día.
  *   - `creditPaymentsCash` / `creditPaymentsTransfer` = abonos recibidos a
  *     invoices a crédito (Activos del día).
  *   - `newCredits` = créditos GENERADOS (Pasivos): conteo + total.
- *   - `realProfit` = `profit - expenses`.
- *   - `surplus` = `totalCollected - profit` (excedente sobre la ganancia).
+ *   - `realProfit` = `profit - expenses` (gastos NUNCA tocan recaudo).
+ *   - `surplus` = `totalCollected - profit` (excedente / reinversión).
+ *   - `purchases.*` = compras del día + abonos a proveedores +
+ *     `supplierDebt` (cartera).
+ *   - `cashAccounts` = balances actuales de cajas, bancos y billeteras.
  */
 export interface TodayResult {
   date: string;
@@ -38,13 +46,24 @@ export interface TodayResult {
   surplus: number;
   expenses: number;
   realProfit: number;
+  salesCount: number;
   newCredits: { count: number; total: number };
+  purchases: {
+    count: number;
+    total: number;
+    paymentsCash: number;
+    paymentsTransfer: number;
+    paymentsTotal: number;
+    supplierDebt: number;
+  };
+  cashAccounts: CashAccountsResult;
 }
 
 /**
  * `GET /dashboard/today?date=YYYY-MM-DD`.
  *
- * Multi-tenancy: cada helper en `aggregations.ts` filtra `company_id = $1`.
+ * Multi-tenancy: cada helper en `aggregations.ts` y `cash-accounts.ts` filtra
+ * `company_id = $1`. SELECT puro — no requiere transacción.
  */
 @Injectable()
 export class GetTodayAction {
@@ -67,6 +86,12 @@ export class GetTodayAction {
       profitTotal,
       expensesTotal,
       newCredits,
+      salesCount,
+      purchasesToday,
+      purchasePaymentsCashAmt,
+      purchasePaymentsTransferAmt,
+      supplierDebt,
+      cashAccounts,
     ] = await Promise.all([
       fetchPaymentsTotal(this.dataSource, companyId, 'CASH', false, range.dateStart, range.dateEnd),
       fetchPaymentsTotal(
@@ -121,6 +146,24 @@ export class GetTodayAction {
       fetchProfitTotal(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchExpensesTotal(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchNewCredits(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchSalesCount(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchPurchasesToday(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchPurchasePaymentsToday(
+        this.dataSource,
+        companyId,
+        'CASH',
+        range.dateStart,
+        range.dateEnd,
+      ),
+      fetchPurchasePaymentsToday(
+        this.dataSource,
+        companyId,
+        'TRANSFER',
+        range.dateStart,
+        range.dateEnd,
+      ),
+      fetchSupplierDebt(this.dataSource, companyId),
+      fetchCashAccounts(this.dataSource, companyId),
     ]);
 
     const cashSales = round2(toBig(salesCash).minus(toBig(ncCash)).plus(toBig(ndCash)).toNumber());
@@ -146,6 +189,12 @@ export class GetTodayAction {
     const surplus = round2(toBig(totalCollected).minus(toBig(profit)).toNumber());
     const realProfit = round2(toBig(profit).minus(toBig(expenses)).toNumber());
 
+    const purchasePaymentsCash = round2(purchasePaymentsCashAmt);
+    const purchasePaymentsTransfer = round2(purchasePaymentsTransferAmt);
+    const purchasePaymentsTotal = round2(
+      toBig(purchasePaymentsCash).plus(toBig(purchasePaymentsTransfer)).toNumber(),
+    );
+
     return {
       date: today,
       cashSales,
@@ -158,10 +207,20 @@ export class GetTodayAction {
       surplus,
       expenses,
       realProfit,
+      salesCount,
       newCredits: {
         count: newCredits.count,
         total: round2(newCredits.amount),
       },
+      purchases: {
+        count: purchasesToday.count,
+        total: round2(purchasesToday.amount),
+        paymentsCash: purchasePaymentsCash,
+        paymentsTransfer: purchasePaymentsTransfer,
+        paymentsTotal: purchasePaymentsTotal,
+        supplierDebt: round2(supplierDebt),
+      },
+      cashAccounts,
     };
   }
 }

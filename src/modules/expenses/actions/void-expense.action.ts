@@ -75,14 +75,19 @@ export class VoidExpenseAction {
       );
 
       // 3. Financial movement reversal (solo para bank/wallet — cash_register
-      //    ya tiene su CashRegisterLog de CASH_IN).
+      //    ya tiene su CashRegisterLog de VOID_EXPENSE/IN).
+      //
+      //    `concept = REFUND` (paridad PlacePos `expenses.routes.ts`).
+      //    Descripción "Anulación de gasto: ..." replica byte-a-byte el
+      //    texto que graba PlacePos para que cualquier reporte cruzado se
+      //    vea idéntico.
       if (expense.source_type !== 'cash_register') {
         await this.financialMovementsService.record(manager, {
           companyId,
           amount: Number(expense.amount),
           movement_type: MovementType.INCOME,
-          concept: MovementConcept.ADJUSTMENT,
-          description: `Reversión de gasto: ${expense.description}`,
+          concept: MovementConcept.REFUND,
+          description: `Anulación de gasto: ${expense.description}`,
           // El "ingreso" entra a la misma cuenta de la que salió. PlacePos
           // pone source=NULL+destination=cuenta. Mismo patrón aquí.
           destination_type: expense.source_type,

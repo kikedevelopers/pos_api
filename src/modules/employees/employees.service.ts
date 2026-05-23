@@ -6,7 +6,10 @@ import {
   type AdjustEmployeeCashResult,
 } from './actions/adjust-employee-cash.action';
 import { CreateEmployeeAction, type EmployeeCreator } from './actions/create-employee.action';
-import { FindAllEmployeesAction } from './actions/find-all-employees.action';
+import {
+  FindAllEmployeesAction,
+  type EmployeeWithCashSummary,
+} from './actions/find-all-employees.action';
 import {
   FindEmployeeByIdAction,
   type EmployeeWithCashRegister,
@@ -25,6 +28,7 @@ import type { UpdateEmployeeDto } from './dto/update-employee.dto';
 import type { Employee } from './entities/employee.entity';
 
 export type { EmployeeCreator } from './actions/create-employee.action';
+export type { EmployeeWithCashSummary } from './actions/find-all-employees.action';
 export type { EmployeeWithCashRegister } from './actions/find-employee-by-id.action';
 export type {
   AdjustEmployeeCashActor,
@@ -54,7 +58,7 @@ export class EmployeesService {
     private readonly adjustEmployeeCashAction: AdjustEmployeeCashAction,
   ) {}
 
-  findAll(companyId: number): Promise<Employee[]> {
+  findAll(companyId: number): Promise<EmployeeWithCashSummary[]> {
     return this.findAllEmployeesAction.execute(companyId);
   }
 

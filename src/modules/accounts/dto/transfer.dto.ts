@@ -15,11 +15,11 @@ export type TransferSourceType = (typeof TRANSFER_SOURCE_TYPES)[number];
  * Tipos válidos de destino. Espeja `DestinationType` de PlacePos:
  * 'wallet' | 'bank' | 'user'.
  *
- * En cloud `'user'` se acepta a nivel de DTO (paridad byte-por-byte del
- * payload) PERO `TransferAction` lo rechaza con `422 UNSUPPORTED_DESTINATION`
- * porque el modelo cloud no expone "caja personal por usuario" (los turnos
- * de caja están atados a `company_id`, no a `user_id`). Si en el futuro se
- * habilita per-user cash registers, basta con quitar el guard en el action.
+ * `'user'` representa la "caja personal" (cash_register) del usuario
+ * destinatario en la misma company. Solo se permite combinarse con
+ * `sourceType='wallet'` (paridad PlacePos `accounts.routes.ts ->
+ * buildDestinationList`); el action rechaza otras combinaciones con
+ * `422 INVALID_DESTINATION_FOR_SOURCE`.
  */
 export const TRANSFER_DESTINATION_TYPES = ['wallet', 'bank', 'user'] as const;
 export type TransferDestinationType = (typeof TRANSFER_DESTINATION_TYPES)[number];

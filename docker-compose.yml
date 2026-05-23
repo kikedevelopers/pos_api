@@ -1,7 +1,23 @@
 # =============================================================================
-# Docker Compose - SOLO entorno de desarrollo local.
-# Levanta PostgreSQL (y Adminer) para que el desarrollador corra `pnpm start:dev`
-# contra ellos. NO incluye el servicio de la API a propósito.
+# POS API - Docker Compose de DESPLIEGUE (producción/staging single-host).
+#
+# Levanta:
+#   - postgres: Postgres 16 con volumen persistente + healthcheck.
+#   - api:      la API NestJS (build local del Dockerfile), depende de postgres
+#               sano, corre migraciones en su entrypoint y expone el puerto.
+#
+# Variables: este compose lee las variables del archivo `.env` (mismo dir).
+# Usar `.env.production.example` como referencia. NO comitear el `.env` real.
+#
+# Operación:
+#   docker compose up -d --build      # primera vez (compila imagen y arranca)
+#   docker compose logs -f api        # ver logs
+#   docker compose pull && docker compose up -d --build   # redeploy
+#   docker compose exec api sh        # entrar al contenedor
+#
+# Migraciones manuales (con RUN_MIGRATIONS=false):
+#   docker compose exec api node node_modules/typeorm/cli.js \
+#     -d dist/database/data-source.js migration:run
 # =============================================================================
 
 services:
@@ -10,15 +26,19 @@ services:
     container_name: pos_api_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USERNAME:-pos_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-pos_password}
-      POSTGRES_DB: ${DB_NAME:-pos_db}
-    ports:
-      - '${DB_PORT:-5432}:5432'
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    # NO publicar el puerto al host en producción a menos que sea estrictamente
+    # necesario: la API se conecta vía red interna. Si necesitas un cliente
+    # externo (psql/dbeaver) puntual, usa `docker compose exec postgres psql`
+    # o levanta un túnel SSH. Para desbloquear acceso externo, descomenta:
+    # ports:
+    #   - '${DB_PORT:-5432}:5432'
     volumes:
       - pos_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-pos_user} -d ${DB_NAME:-pos_db}']
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME} -d ${DB_NAME}']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,18 +46,48 @@ services:
     networks:
       - pos_network
 
-  adminer:
-    image: adminer:latest
-    container_name: pos_api_adminer
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pos_api:latest
+    container_name: pos_api
     restart: unless-stopped
-    ports:
-      - '8080:8080'
-    environment:
-      ADMINER_DEFAULT_SERVER: postgres
-      ADMINER_DESIGN: pepa-linha
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      # --- App ---
+      NODE_ENV: production
+      PORT: ${PORT:-3010}
+      API_PREFIX: ${API_PREFIX:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # --- DB (el host es el nombre del servicio compose) ---
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SYNCHRONIZE: 'false'
+      DB_LOGGING: ${DB_LOGGING:-false}
+      DB_SSL: 'false'
+      # --- Migraciones automáticas al arrancar (puede desactivarse) ---
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      # --- Throttling ---
+      THROTTLE_TTL: ${THROTTLE_TTL:-60000}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-100}
+      # --- Trust proxy (tras Nginx/Cloudflare = 1) ---
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # --- Swagger ---
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      # --- CORS (lista separada por coma) ---
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      # --- JWT ---
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_OWNER: ${JWT_EXPIRES_OWNER:-7d}
+      JWT_EXPIRES_EMPLOYEE: ${JWT_EXPIRES_EMPLOYEE:-1d}
+    ports:
+      - '${PORT:-3010}:${PORT:-3010}'
     networks:
       - pos_network
 

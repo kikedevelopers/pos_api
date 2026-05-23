@@ -25,15 +25,18 @@ import { AlertConfigResponseDto, toAlertConfigResponseDto } from './dto/alert-co
 import { UpsertAlertConfigDto } from './dto/upsert-alert-config.dto';
 
 /**
- * Validador inline del path param `:type` — snake_case (sin espacios,
- * caracteres acotados). Centralizado para reusar entre GET y PUT.
+ * Validador inline del path param `:type`. Aceptamos UPPER_SNAKE_CASE
+ * (`INACTIVE_CUSTOMER`) y lower_snake_case (`low_stock`) porque placepos
+ * persiste sus types en uppercase (`alertConfigs.ts → 'INACTIVE_CUSTOMER'`)
+ * y el cliente Electron los consulta tal cual. La regex permite ambos —
+ * caracteres acotados, sin espacios, primera letra.
  */
-const TYPE_RE = /^[a-z][a-z0-9_]{0,49}$/;
+const TYPE_RE = /^[a-zA-Z][a-zA-Z0-9_]{0,49}$/;
 
 function assertValidType(rawType: string): string {
   if (!TYPE_RE.test(rawType)) {
     throw new BadRequestException(
-      'type debe ser snake_case (a-z, 0-9, _), comenzando con letra (max 50)',
+      'type debe ser letras/dígitos/guion bajo (max 50), comenzando con letra',
     );
   }
   return rawType;

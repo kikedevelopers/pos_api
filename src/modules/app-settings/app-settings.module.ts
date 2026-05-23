@@ -4,7 +4,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateDefaultAppSettingsAction } from './actions/create-default-app-settings.action';
 import { FindAllAppSettingsAction } from './actions/find-all-app-settings.action';
 import { FindAppSettingByKeyAction } from './actions/find-app-setting-by-key.action';
+import { GetPosMarginsAction } from './actions/get-pos-margins.action';
+import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
 import { UpsertAppSettingAction } from './actions/upsert-app-setting.action';
+import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
+import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsController } from './app-settings.controller';
 import { AppSettingsService } from './app-settings.service';
 import { AppSetting } from './entities/app-setting.entity';
@@ -22,6 +26,10 @@ import { AppSetting } from './entities/app-setting.entity';
     FindAppSettingByKeyAction,
     UpsertAppSettingAction,
     CreateDefaultAppSettingsAction,
+    GetPosMarginsAction,
+    UpsertPosMarginsAction,
+    GetStrictInventoryAction,
+    UpsertStrictInventoryAction,
   ],
   exports: [AppSettingsService, CreateDefaultAppSettingsAction, TypeOrmModule],
 })

@@ -5,7 +5,7 @@ import { DataSource } from 'typeorm';
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
 
 import type { CreateEmployeeDto } from '../dto/create-employee.dto';
-import { Employee } from '../entities/employee.entity';
+import { Employee, EmployeeRole } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
 import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
 
@@ -73,7 +73,10 @@ export class CreateEmployeeAction {
         phone: dto.phone ?? null,
         email: dto.email ?? null,
         address: dto.address ?? null,
-        role: dto.role,
+        // Default `employee` cuando el cliente no envía role (paridad PlacePos
+        // — su formulario no expone el campo). El owner puede promoverlo
+        // a `manager` después vía PUT.
+        role: dto.role ?? EmployeeRole.EMPLOYEE,
         login_enabled: dto.login_enabled,
         // Si login_enabled = false, NO persistimos credenciales aunque vengan
         // en el DTO. Coherente con la regla de PlacePos y con el CHECK.
