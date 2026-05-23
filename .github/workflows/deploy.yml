@@ -106,8 +106,10 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          # Variables que se pasan al script remoto.
-          envs: GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG
+          # Variables que se pasan al script remoto. OJO: appleboy/ssh-action
+          # NO propaga las del bloque `env:` por defecto — hay que listarlas
+          # aquí explícitamente o el script las verá como unbound.
+          envs: GHCR_USERNAME,GHCR_TOKEN,IMAGE_TAG,GITHUB_SHA_FOR_DEPLOY
           script_stop: true
           script: |
             set -euo pipefail
