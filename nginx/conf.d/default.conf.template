@@ -58,6 +58,26 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
+    # --- Compresión gzip ---
+    # Activada solo para respuestas >1KB (bajo ese umbral el overhead del header
+    # supera el ahorro). Nivel 4 = balance CPU/ratio razonable para JSON de API.
+    # `gzip_proxied any` permite comprimir aunque la respuesta venga proxieada
+    # del upstream (el caso por defecto de este vhost) y aunque el request traiga
+    # cabeceras Via.
+    # `gzip_vary on` agrega "Vary: Accept-Encoding" para que CDNs cacheen
+    # variantes correctas.
+    gzip on;
+    gzip_comp_level 4;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_types
+        application/json
+        application/javascript
+        text/css
+        text/plain
+        text/xml;
+
     # --- Límites del request body (uploads, imports) ---
     client_max_body_size 25m;
     client_body_buffer_size 128k;
