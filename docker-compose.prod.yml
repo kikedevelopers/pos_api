@@ -91,8 +91,14 @@ services:
       - ./certbot/www:/var/www/certbot:ro
     # Recarga nginx cada 6h para tomar el cert recién renovado por certbot.
     # `daemon off` mantiene el contenedor vivo en foreground.
+    #
+    # OJO: llamamos a `/docker-entrypoint.sh` explícitamente porque sólo corre
+    # los scripts de /docker-entrypoint.d/ (incluyendo `envsubst-on-templates`)
+    # cuando $1 == "nginx". Si pusiéramos directamente `/bin/sh -c ...` como
+    # antes, los templates NO se procesan y nginx arranca con la config default
+    # de la imagen → 404 en todo, incluido el challenge ACME.
     command: >
-      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+      /bin/sh -c "/docker-entrypoint.sh nginx -g 'daemon off;' & NGINX_PID=$$!; (while :; do sleep 6h & wait $${!}; nginx -s reload 2>/dev/null || true; done) & wait $$NGINX_PID"
     networks:
       - pos_network
 
