@@ -11,7 +11,9 @@
 FROM node:20-alpine AS deps
 
 RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# pnpm pineado: 11.x requiere Node 22 (usa `node:sqlite` built-in). 9.15.4 es
+# la última 9.x estable y coincide con lockfileVersion 9.0 del repo.
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 WORKDIR /app
 
@@ -22,7 +24,7 @@ RUN pnpm install --frozen-lockfile --prod=false
 # ---------- Stage 2: build (compila TS → JS en dist/) ----------
 FROM node:20-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 WORKDIR /app
 
