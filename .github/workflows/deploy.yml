@@ -113,6 +113,11 @@ jobs:
             set -euo pipefail
             cd "${{ secrets.DEPLOY_PATH }}"
 
+            # El repo fue clonado por un usuario distinto al que entra ahora
+            # por SSH (típicamente root vs DEPLOY_USER). Sin esta línea git
+            # aborta con "dubious ownership".
+            git config --global --add safe.directory "${{ secrets.DEPLOY_PATH }}"
+
             # Sincroniza el repo (compose, nginx, deploy.sh).
             git fetch --all
             git reset --hard "$GITHUB_SHA_FOR_DEPLOY"
