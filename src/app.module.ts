@@ -38,6 +38,7 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { FixedExpensesModule } from './modules/fixed-expenses/fixed-expenses.module';
+import { MigrationImportModule } from './modules/migration-import/migration-import.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PosDataModule } from './modules/pos-data/pos-data.module';
@@ -217,6 +218,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     PosDataModule,
     // Fase 12 — Backup stub (paridad de contrato; siempre 503).
     BackupModule,
+    // Migración cloud (altivopos Mongo → pos_api). Dev-only: el módulo NO se
+    // registra cuando `NODE_ENV === 'production'`. La contraparte placepos
+    // vive en `src/main/cloudMigration/` del repo placepos.
+    ...(process.env.NODE_ENV !== 'production' ? [MigrationImportModule] : []),
     // Auth al final (depende de Wallets/TicketSettings/AppSettings para
     // sembrar valores iniciales al crear una company).
     AuthModule,
