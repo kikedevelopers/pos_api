@@ -84,6 +84,11 @@ jobs:
     name: Deploy to VM
     needs: build-push
     runs-on: ubuntu-latest
+    # Los secrets (DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PATH,
+    # GHCR_DEPLOY_TOKEN) viven en el environment "PLACEPOS". Sin esta línea
+    # GitHub los inyecta como cadena vacía y appleboy/ssh-action falla con
+    # "missing server host".
+    environment: PLACEPOS
     # Solo despliega cuando el push fue al branch por defecto o un tag.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v')
     steps:
