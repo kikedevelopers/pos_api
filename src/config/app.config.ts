@@ -14,6 +14,16 @@ export interface AppConfig {
     ttl: number;
     limit: number;
   };
+  /**
+   * Autenticación por firma asimétrica para endpoints `/admin/*` consumidos
+   * por paneles externos (p.ej. kdevs-admin). El panel firma cada request con
+   * su clave privada Ed25519; aquí guardamos la clave pública (SPKI en base64)
+   * para verificar. `publicKey` vacío = endpoints firmados deshabilitados.
+   */
+  adminSigning: {
+    publicKey: string;
+    maxSkewMs: number;
+  };
 }
 
 export default registerAs<AppConfig>('app', () => ({
@@ -32,5 +42,9 @@ export default registerAs<AppConfig>('app', () => ({
   throttle: {
     ttl: parseInt(process.env.THROTTLE_TTL ?? '60000', 10),
     limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),
+  },
+  adminSigning: {
+    publicKey: process.env.ADMIN_SIGNING_PUBLIC_KEY ?? '',
+    maxSkewMs: parseInt(process.env.ADMIN_SIGNATURE_MAX_SKEW_MS ?? '300000', 10),
   },
 }));

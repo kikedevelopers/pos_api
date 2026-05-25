@@ -6,12 +6,14 @@ import {
   HttpStatus,
   Post,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { Public } from '@/common/decorators/public.decorator';
+import { AdminSignatureGuard } from '@/common/guards/admin-signature.guard';
 
 import { MigrationImportDto } from './dto/migration-import.dto';
 import { MigrationSummaryDto } from './dto/migration-summary.dto';
@@ -19,17 +21,18 @@ import { parseMigrationZip } from './internal/zip-reader';
 import { MigrationImportService } from './migration-import.service';
 
 /**
- * Endpoint dev-only para importar el ZIP generado por el migrador placepos
- * (`cloudMigration/buildZip.ts`). Toma un ZIP + lista de módulos y reconstruye
- * el tenant en este API multi-tenant.
+ * Endpoint para importar el ZIP generado por el migrador (kdevs-admin /
+ * placepos `cloudMigration/buildZip.ts`). Toma un ZIP + lista de módulos y
+ * reconstruye el tenant en este API multi-tenant.
  *
- * NO se monta en producción — `AppModule` lo importa condicionalmente bajo
- * `process.env.NODE_ENV !== 'production'`.
- *
- * Sin auth (`@Public()`) porque corre en environments de desarrollo donde
- * el operador inyecta directo el ZIP.
+ * Autenticación por FIRMA asimétrica: `@Public()` salta el JWT global y
+ * `AdminSignatureGuard` exige una firma Ed25519 válida (clave pública en
+ * `ADMIN_SIGNING_PUBLIC_KEY`). Así el panel kdevs-admin lo invoca con su
+ * clave privada, igual que el resto de endpoints firmados.
  */
 @ApiTags('migration-import')
+@Public()
+@UseGuards(AdminSignatureGuard)
 @Controller('migration-import')
 export class MigrationImportController {
   // Límite de tamaño del ZIP: 50 MB. Suficiente para tenants medianos

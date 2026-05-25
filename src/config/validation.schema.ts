@@ -69,4 +69,10 @@ export const validationSchema = Joi.object({
     }),
   JWT_EXPIRES_OWNER: Joi.string().default('7d'),
   JWT_EXPIRES_EMPLOYEE: Joi.string().default('1d'),
+
+  // Firma asimétrica para endpoints /admin/* (paneles externos, p.ej.
+  // kdevs-admin). Clave pública Ed25519 en base64 (SPKI). Vacío = deshabilita
+  // esos endpoints firmados. `ADMIN_SIGNATURE_MAX_SKEW_MS` = ventana anti-replay.
+  ADMIN_SIGNING_PUBLIC_KEY: Joi.string().allow('').default(''),
+  ADMIN_SIGNATURE_MAX_SKEW_MS: Joi.number().integer().min(1000).default(300000),
 });

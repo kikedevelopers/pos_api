@@ -748,8 +748,13 @@ export class ImportZipAction {
 
   private async insertProductPrices(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(ProductPrice);
+    // Máximo de precios por producto que acepta el POS (el configurador topa en 5).
+    const MAX_PRODUCT_PRICES = 5;
+    const pricesByProduct = new Map<string, number>();
     let count = 0;
     let skipped = 0;
+    let skippedInvalid = 0;
+    let skippedCap = 0;
     for (const row of rows) {
       const localId = asString(row.id);
       const localProductId = asNullableString(row.product_id);
@@ -762,13 +767,27 @@ export class ImportZipAction {
         skipped++;
         continue;
       }
+      // Ignora precios en 0 o negativos: es regla de negocio y, además, el
+      // CHECK `sale_price >= 0` abortaría toda la TX del import ante un negativo.
+      const salePrice = asNumber(row.sale_price);
+      if (salePrice <= 0) {
+        skippedInvalid++;
+        continue;
+      }
+      // Topa en MAX_PRODUCT_PRICES por producto (defensa ante ZIPs antiguos; el
+      // transform de placepos ya recorta en origen).
+      const current = pricesByProduct.get(productIdReal) ?? 0;
+      if (current >= MAX_PRODUCT_PRICES) {
+        skippedCap++;
+        continue;
+      }
       const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
           product_id: productIdReal,
           name: asString(row.name) || 'Base',
-          sale_price: asNumber(row.sale_price),
+          sale_price: salePrice,
           profit: Math.max(0, asNumber(row.profit)),
           margin: Math.max(0, asNumber(row.margin)),
           iva_percentage: asNumber(row.iva_percentage),
@@ -780,10 +799,19 @@ export class ImportZipAction {
         }),
       );
       ctx.remapper.set('product_prices', localId, saved.id);
+      pricesByProduct.set(productIdReal, current + 1);
       count++;
     }
     if (skipped > 0) {
       ctx.warnings.push(`product_prices: ${skipped} filas descartadas por product_id no resoluble`);
+    }
+    if (skippedInvalid > 0) {
+      ctx.warnings.push(`product_prices: ${skippedInvalid} precios descartados por sale_price <= 0`);
+    }
+    if (skippedCap > 0) {
+      ctx.warnings.push(
+        `product_prices: ${skippedCap} precios descartados por exceder el máximo de ${MAX_PRODUCT_PRICES} por producto`,
+      );
     }
     return count;
   }

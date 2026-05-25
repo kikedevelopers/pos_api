@@ -218,10 +218,11 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     PosDataModule,
     // Fase 12 — Backup stub (paridad de contrato; siempre 503).
     BackupModule,
-    // Migración cloud (altivopos Mongo → pos_api). Dev-only: el módulo NO se
-    // registra cuando `NODE_ENV === 'production'`. La contraparte placepos
-    // vive en `src/main/cloudMigration/` del repo placepos.
-    ...(process.env.NODE_ENV !== 'production' ? [MigrationImportModule] : []),
+    // Migración cloud (altivopos Mongo → pos_api). Protegido por firma
+    // asimétrica (`AdminSignatureGuard`), por lo que se monta en todos los
+    // entornos. Lo consume el panel kdevs-admin (genera el ZIP y lo sube
+    // firmado). El generador de ZIP vive ahora en kdevs-admin.
+    MigrationImportModule,
     // Auth al final (depende de Wallets/TicketSettings/AppSettings para
     // sembrar valores iniciales al crear una company).
     AuthModule,

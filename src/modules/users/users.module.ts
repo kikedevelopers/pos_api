@@ -1,9 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AdminSignatureGuard } from '@/common/guards/admin-signature.guard';
+
 import { ChangePasswordAction } from './actions/change-password.action';
 import { FindMeAction } from './actions/find-me.action';
+import { ListOwnersAction } from './actions/list-owners.action';
 import { UpdateMeAction } from './actions/update-me.action';
+import { AdminUsersController } from './admin-users.controller';
 import { User } from './entities/user.entity';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -23,8 +27,15 @@ import { UsersService } from './users.service';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([User])],
-  controllers: [UsersController],
-  providers: [UsersService, FindMeAction, UpdateMeAction, ChangePasswordAction],
+  controllers: [UsersController, AdminUsersController],
+  providers: [
+    UsersService,
+    FindMeAction,
+    UpdateMeAction,
+    ChangePasswordAction,
+    ListOwnersAction,
+    AdminSignatureGuard,
+  ],
   exports: [UsersService, TypeOrmModule],
 })
 export class UsersModule {}

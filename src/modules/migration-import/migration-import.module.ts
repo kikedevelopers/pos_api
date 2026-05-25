@@ -28,20 +28,22 @@ import { User } from '@/modules/users/entities/user.entity';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
+import { AdminSignatureGuard } from '@/common/guards/admin-signature.guard';
+
 import { ImportZipAction } from './actions/import-zip.action';
 import { MigrationImportController } from './migration-import.controller';
 import { MigrationImportService } from './migration-import.service';
 
 /**
- * Módulo dev-only que importa ZIPs generados por el migrador placepos.
+ * Módulo que importa ZIPs generados por el migrador (kdevs-admin / placepos).
  *
  * Importa los módulos de seeds (`Wallets`, `TicketSettings`, `AppSettings`,
  * `AlertConfigs`) para reutilizar sus `CreateDefault*Action`. Registra las
  * entities con `TypeOrmModule.forFeature` para que TypeORM exponga sus
  * repositorios al `EntityManager` dentro de la transacción.
  *
- * El gate de "no producción" se aplica en `app.module.ts` — el módulo solo
- * se importa si `NODE_ENV !== 'production'`.
+ * El endpoint está protegido por firma asimétrica (`AdminSignatureGuard`), por
+ * lo que se monta en todos los entornos (incluido producción) de forma segura.
  */
 @Module({
   imports: [
@@ -76,6 +78,6 @@ import { MigrationImportService } from './migration-import.service';
     AlertConfigsModule,
   ],
   controllers: [MigrationImportController],
-  providers: [ImportZipAction, MigrationImportService],
+  providers: [ImportZipAction, MigrationImportService, AdminSignatureGuard],
 })
 export class MigrationImportModule {}
