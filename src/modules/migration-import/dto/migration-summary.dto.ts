@@ -12,6 +12,17 @@ export class MigrationSummaryDto {
   user_id_real!: string;
 
   @ApiProperty({
+    description:
+      'Si el negocio ya existía y sus datos fueron reemplazados, el company_id ' +
+      '(estable: coincide con company_id_real, no se rota). null en una carga ' +
+      'nueva.',
+    example: '7',
+    nullable: true,
+    type: String,
+  })
+  replaced_company_id!: string | null;
+
+  @ApiProperty({
     description: 'Conteo de filas insertadas por tabla.',
     example: { products: 120, sale_invoices: 350 },
     type: 'object',

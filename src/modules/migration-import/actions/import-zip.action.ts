@@ -23,6 +23,11 @@ import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.enti
 import { SalePayment } from '@/modules/sales/entities/sale-payment.entity';
 import { Supplier } from '@/modules/suppliers/entities/supplier.entity';
 import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
+import {
+  TicketSetting,
+  TicketSettingType,
+} from '@/modules/ticket-settings/entities/ticket-setting.entity';
+import { formatTicketNumber } from '@/modules/ticket-settings/internal/format-ticket-number';
 import { User } from '@/modules/users/entities/user.entity';
 import { CreateDefaultWalletAction } from '@/modules/wallets/actions/create-default-wallet.action';
 
@@ -119,8 +124,99 @@ function asNullableDate(v: unknown): Date | null {
 }
 
 /**
- * Inserta una company y un user owner pre-flight (fuera de TX) NO se hace —
- * todo va en la transacción. El pre-flight es solo el lookup de conflictos.
+ * Lee `created_at` y `updated_at` de una fila del ZIP. Si `updated_at` falta
+ * pero `created_at` está presente, espeja `updated_at = created_at` para no
+ * dejar la columna en `now()` (que dispararía el bug de "fecha hoy" del
+ * default de `@UpdateDateColumn`).
+ *
+ * Para tablas de movimientos (sales, credit_notes, purchases, expenses, ...)
+ * un `created_at === null` señala una fila inválida que debe descartarse con
+ * warning — el caller chequea ese caso ANTES de llamar a `repo.create()`.
+ *
+ * Para maestros (categories, customers, etc.) un `created_at === null` es
+ * tolerable: el caller usa el spread condicional para omitir ambos campos y
+ * dejar que el default de la DB (`now()`) actúe.
+ */
+function readZipDates(row: ZipRow): { created_at: Date | null; updated_at: Date | null } {
+  const createdAt = asNullableDate(row.created_at);
+  const updatedAt = asNullableDate(row.updated_at) ?? createdAt;
+  return { created_at: createdAt, updated_at: updatedAt };
+}
+
+/**
+ * Orden de borrado de TODAS las tablas con `company_id`, de hijo a padre.
+ *
+ * --------------------------------------------------------------------------
+ * Por qué este orden exacto
+ * --------------------------------------------------------------------------
+ *
+ * El reemplazo automático (re-subir el dump de un negocio ya migrado) borra
+ * los datos HIJOS del tenant antes de recargar, pero CONSERVA la fila
+ * `companies` y el `user` owner (sus ids no cambian — ver `wipeCompanyChildren`).
+ * Hay FKs `RESTRICT` entre tablas no-company (p.ej. `purchases → suppliers`,
+ * `credit_notes → sale_invoices`,
+ * `carrier_payments → carrier_credits|banks|wallets|financial_movements`) que
+ * obligan a borrar primero al que referencia.
+ *
+ * `RESTRICT` en Postgres se evalúa POR FILA de inmediato (no difiere a fin de
+ * statement como `NO ACTION`), por eso el orden importa incluso dentro de un
+ * mismo `DELETE`. `products` se auto-referencia (`parent_id`), así que se
+ * trata aparte en `wipeCompanyChildren` (NULL-out + delete) para soportar
+ * jerarquías de combos de cualquier profundidad.
+ *
+ * `users` está en la lista por completitud, pero `wipeCompanyChildren` lo OMITE
+ * (el owner se conserva/actualiza en `upsertOwnerUser`). Si en el futuro se
+ * agrega una tabla con `company_id`, debe añadirse aquí: de lo contrario sus
+ * filas viejas sobrevivirían a la recarga y se duplicarían.
+ */
+const COMPANY_SCOPED_DELETE_ORDER: readonly string[] = [
+  'carrier_payments',
+  'product_price_history',
+  'cash_register_logs',
+  'product_cost_history',
+  'carrier_credits',
+  'correction_sources',
+  'credit_note_lines',
+  'credit_notes',
+  'sale_payments',
+  'sale_credits',
+  'sale_invoice_lines',
+  'sale_invoices',
+  'purchase_payments',
+  'purchase_lines',
+  'purchase_credits',
+  'inventory_movements',
+  'purchases',
+  'product_prices',
+  'fixed_expense_periods',
+  // `products` se borra manualmente entre product_prices y el resto (self-FK).
+  'products',
+  'fixed_expenses',
+  'expenses',
+  'financial_movements',
+  'app_alerts',
+  'categories',
+  'packagings',
+  'suppliers',
+  'carriers',
+  'banks',
+  'customers',
+  'wallets',
+  'ticket_settings',
+  'app_settings',
+  'alert_configs',
+  'cash_registers',
+  'employees',
+  'users',
+];
+
+/**
+ * Inserta una company y un user owner. Si el negocio ya fue migrado (mismo
+ * email de owner o mismo document_number) se hace un reemplazo con `company_id`
+ * ESTABLE: se conservan la fila `companies` y el `user` owner (mismos ids, para
+ * que sesiones/JWT y referencias externas sigan válidas), se actualizan con los
+ * datos del dump y se reemplazan SOLO los datos hijos —scoped a su company_id—,
+ * todo dentro de la misma transacción (reemplazo atómico: o todo, o nada).
  */
 @Injectable()
 export class ImportZipAction {
@@ -140,21 +236,40 @@ export class ImportZipAction {
     const documentNumber = asNullableString(companyRow.document_number);
     const email = asString(userRow.email).trim().toLowerCase();
 
-    // Pre-flight: conflicto contra BD. Se ejecuta fuera de la TX para abortar
-    // sin reservar locks innecesarios.
-    await this.assertNoConflicts(documentNumber, email);
-
     const selectedModules = resolveSelectedModules(selectedInput);
     const inserted: Record<string, number> = {};
     const warnings: string[] = [];
+    let replacedCompanyId: string | null = null;
 
     const { companyIdReal, userIdReal } = await this.dataSource.transaction(async (manager) => {
-      // 1. Insertar Company.
-      const company = await this.insertCompany(manager, companyRow);
-      inserted.companies = 1;
+      // 0. Reemplazo automático con company_id ESTABLE: si este negocio ya fue
+      //    migrado (mismo email de owner o, en su defecto, mismo
+      //    document_number) NO rotamos el id. Conservamos la fila `companies` y
+      //    el `user` owner (mismos ids, para que sesiones/JWT sigan válidas),
+      //    los actualizamos con el dump y borramos solo los datos hijos para
+      //    reinsertarlos. Todo en esta misma TX: o se reemplaza completo, o
+      //    nada (rollback).
+      const existingId = await this.resolveExistingCompanyId(manager, documentNumber, email);
 
-      // 2. Insertar User owner (password ya hasheado en argon2id).
-      const user = await this.insertUser(manager, userRow, company.id);
+      let company: Company;
+      let user: User;
+      if (existingId !== null) {
+        await this.wipeCompanyChildren(manager, existingId);
+        company = await this.updateCompany(manager, existingId, companyRow);
+        user = await this.upsertOwnerUser(manager, existingId, userRow);
+        replacedCompanyId = existingId;
+        warnings.push(
+          `Reemplazo automático: la empresa ya existía (company_id=${existingId}). ` +
+            `Se conservó su company_id y su usuario owner; se reemplazaron todos ` +
+            `sus datos por los del dump.`,
+        );
+      } else {
+        // 1. Insertar Company.
+        company = await this.insertCompany(manager, companyRow);
+        // 2. Insertar User owner (password ya hasheado en argon2id).
+        user = await this.insertUser(manager, userRow, company.id);
+      }
+      inserted.companies = 1;
       inserted.users = 1;
 
       // 3. Seeds esenciales.
@@ -177,7 +292,25 @@ export class ImportZipAction {
       inserted.app_settings = 2;
       inserted.alert_configs = 1;
 
-      // 4. Procesar módulos seleccionados en orden topológico.
+      // 4. Cargar los ticket_settings recién sembrados (uno por tipo) para
+      //    poder leer su prefix/suffix al renumerar ventas/notas/compras.
+      const tsRows = await manager.getRepository(TicketSetting).find({
+        where: { company_id: company.id },
+      });
+      const tsByType = new Map<TicketSettingType, TicketSetting>();
+      for (const ts of tsRows) {
+        tsByType.set(ts.ticket_type, ts);
+      }
+      const counters: Record<TicketSettingType, number> = {
+        [TicketSettingType.ORDER]: 0,
+        [TicketSettingType.SALE]: 0,
+        [TicketSettingType.CREDIT_NOTE]: 0,
+        [TicketSettingType.DEBIT_NOTE]: 0,
+        [TicketSettingType.PURCHASE]: 0,
+        [TicketSettingType.PURCHASE_PAYMENT]: 0,
+      };
+
+      // 5. Procesar módulos seleccionados en orden topológico.
       const ctx: ImportCtx = {
         manager,
         zip,
@@ -188,6 +321,8 @@ export class ImportZipAction {
         defaultWalletId: seeds.walletId,
         defaultCashRegisterId: seeds.cashRegisterId,
         warnings,
+        counters,
+        tsByType,
       };
 
       for (const mod of MODULE_GLOBAL_ORDER) {
@@ -203,6 +338,32 @@ export class ImportZipAction {
         }
       }
 
+      // 6. Persistir el `current_number` final de cada `ticket_setting`
+      //    cuyos folios consumimos. Tipos sin emisión quedan en 0 (seed).
+      const typesWithEmission: TicketSettingType[] = [
+        TicketSettingType.ORDER,
+        TicketSettingType.SALE,
+        TicketSettingType.CREDIT_NOTE,
+        TicketSettingType.DEBIT_NOTE,
+        TicketSettingType.PURCHASE,
+        TicketSettingType.PURCHASE_PAYMENT,
+      ];
+      for (const type of typesWithEmission) {
+        const finalCounter = ctx.counters[type];
+        if (finalCounter === 0) {
+          continue;
+        }
+        await manager
+          .createQueryBuilder()
+          .update(TicketSetting)
+          .set({ current_number: finalCounter, updated_at: () => 'now()' })
+          .where('company_id = :c AND ticket_type = :t', {
+            c: ctx.companyIdReal,
+            t: type,
+          })
+          .execute();
+      }
+
       return { companyIdReal: company.id, userIdReal: user.id };
     });
 
@@ -214,6 +375,7 @@ export class ImportZipAction {
     return {
       company_id_real: String(companyIdReal),
       user_id_real: String(userIdReal),
+      replaced_company_id: replacedCompanyId !== null ? String(replacedCompanyId) : null,
       inserted,
       warnings,
       duration_ms: Date.now() - startedAt,
@@ -221,36 +383,136 @@ export class ImportZipAction {
   }
 
   // ---------------------------------------------------------------------
-  // Pre-flight
+  // Resolución de empresa existente + wipe (reemplazo automático)
   // ---------------------------------------------------------------------
 
-  private async assertNoConflicts(documentNumber: string | null, email: string): Promise<void> {
-    // Company.document_number: paridad PlacePos no impone UNIQUE global,
-    // pero para evitar duplicar la misma migración por error chequeamos
-    // existencia. Si el dump no traía document_number, se omite.
+  /**
+   * Resuelve el `company_id` de un negocio ya migrado para reemplazarlo, o
+   * `null` si es una carga nueva.
+   *
+   * La identidad fiable es el EMAIL del owner: `users.email` es UNIQUE global
+   * (`idx_users_email_unique`), así que un email existente apunta a exactamente
+   * una company —la que se migró antes desde este mismo negocio—. Si el email
+   * no existe (p.ej. el owner cambió de correo entre dumps) se usa el
+   * `document_number` como respaldo. NO es UNIQUE (ver Company.document_number),
+   * por eso es solo fallback: tomamos la primera coincidencia.
+   */
+  private async resolveExistingCompanyId(
+    manager: EntityManager,
+    documentNumber: string | null,
+    email: string,
+  ): Promise<string | null> {
+    if (email !== '') {
+      const user = await manager.getRepository(User).findOne({ where: { email } });
+      if (user?.company_id != null) {
+        return user.company_id;
+      }
+    }
+
     if (documentNumber !== null && documentNumber.trim() !== '') {
-      const exists = await this.dataSource
+      const company = await manager
         .getRepository(Company)
         .createQueryBuilder('c')
         .where('c.document_number = :doc', { doc: documentNumber })
+        .orderBy('c.id', 'ASC')
         .getOne();
-      if (exists) {
-        throw new ConflictException({
-          message: 'Ya existe una Company con ese document_number',
-          payload: { code: 'COMPANY_EXISTS', field: 'document_number', value: documentNumber },
-        });
+      if (company) {
+        return company.id;
       }
     }
 
-    if (email !== '') {
-      const userExists = await this.dataSource.getRepository(User).findOne({ where: { email } });
-      if (userExists) {
-        throw new ConflictException({
-          message: 'Ya existe un User con ese email',
-          payload: { code: 'EMAIL_TAKEN', field: 'email', value: email },
-        });
+    return null;
+  }
+
+  /**
+   * Elimina los datos HIJOS del tenant `companyId`, pero CONSERVA la fila
+   * `companies` y el `user` owner (sus ids NO cambian). Se ejecuta DENTRO de la
+   * TX del import; si la recarga posterior falla, el rollback restaura todo.
+   *
+   * Mantener estables el company_id y el owner hace que una re-migración sea
+   * transparente: el login firma el `company_id` dentro del JWT y lo lee de ahí
+   * sin re-consultar la BD, así que rotar el id dejaría a las sesiones activas
+   * apuntando a un tenant inexistente (tablas "vacías"). El borrado es
+   * estrictamente scoped por `company_id` (multi-tenant: jamás toca otra
+   * empresa) y en orden hijo→padre (`COMPANY_SCOPED_DELETE_ORDER`) para respetar
+   * los FK `RESTRICT`.
+   *
+   * `users` se OMITE (el owner se conserva/actualiza en `upsertOwnerUser`). Los
+   * seeds borrados aquí (ticket_settings, wallets, cash_registers, app_settings,
+   * alert_configs) los recrea `seedEssentials` tras el update.
+   */
+  private async wipeCompanyChildren(manager: EntityManager, companyId: string): Promise<void> {
+    for (const table of COMPANY_SCOPED_DELETE_ORDER) {
+      if (table === 'users') {
+        // El owner se conserva (id estable) y se actualiza en upsertOwnerUser.
+        continue;
       }
+      if (table === 'products') {
+        // `products.parent_id` es self-FK RESTRICT. Romper el vínculo padre
+        // antes de borrar permite eliminar combos anidados de cualquier
+        // profundidad en un solo DELETE.
+        await manager.query('UPDATE "products" SET parent_id = NULL WHERE company_id = $1', [
+          companyId,
+        ]);
+        await manager.query('DELETE FROM "products" WHERE company_id = $1', [companyId]);
+        continue;
+      }
+      await manager.query(`DELETE FROM "${table}" WHERE company_id = $1`, [companyId]);
     }
+    // NO se borra la fila `companies`: se actualiza en sitio (updateCompany).
+  }
+
+  /**
+   * Actualiza en sitio la fila `companies` existente con los datos del dump,
+   * conservando su `id`. Si por una inconsistencia no existe, cae a insertar.
+   */
+  private async updateCompany(
+    manager: EntityManager,
+    companyId: string,
+    row: ZipRow,
+  ): Promise<Company> {
+    const repo = manager.getRepository(Company);
+    const existing = await repo.findOne({ where: { id: companyId } });
+    if (existing === null) {
+      return this.insertCompany(manager, row);
+    }
+    existing.name = asString(row.name).trim() || '(Sin nombre)';
+    existing.document_number = asNullableString(row.document_number);
+    existing.balance = asNumber(row.balance);
+    existing.address = asNullableString(row.address);
+    existing.email = asNullableString(row.email);
+    existing.phone_number = asNullableString(row.phone_number);
+    existing.break_even_amount = asNumber(row.break_even_amount);
+    existing.break_even_period_days =
+      row.break_even_period_days !== undefined ? Number(row.break_even_period_days) : 30;
+    return repo.save(existing);
+  }
+
+  /**
+   * Conserva el `user` owner del tenant (mismo id, para no invalidar tokens) y
+   * lo actualiza con los datos del dump. Si no existe un owner para la company
+   * (inconsistencia), inserta uno nuevo. El password viene ya hasheado
+   * (argon2id) desde el ZIP — NO se re-hashea.
+   */
+  private async upsertOwnerUser(
+    manager: EntityManager,
+    companyId: string,
+    row: ZipRow,
+  ): Promise<User> {
+    const repo = manager.getRepository(User);
+    const existing = await repo.findOne({
+      where: { company_id: companyId, type: 'owner' as User['type'] },
+      order: { id: 'ASC' },
+    });
+    if (existing === null) {
+      return this.insertUser(manager, row, companyId);
+    }
+    existing.name = asString(row.name).trim() || 'Owner';
+    existing.lastname = asString(row.lastname).trim() || '';
+    existing.email = asString(row.email).trim().toLowerCase();
+    existing.password = asString(row.password);
+    existing.balance = asNumber(row.balance);
+    return repo.save(existing);
   }
 
   private firstRowRequired(zip: ParsedZip, table: ZipTableName): ZipRow {
@@ -375,11 +637,15 @@ export class ImportZipAction {
       }
       seen.add(final.toLowerCase());
 
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
           name: final,
           is_archived: asBoolean(row.is_archived),
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('categories', localId, saved.id);
@@ -406,6 +672,7 @@ export class ImportZipAction {
       }
       seen.add(final.toLowerCase());
 
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -414,6 +681,9 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('packagings', localId, saved.id);
@@ -442,6 +712,7 @@ export class ImportZipAction {
 
       const productType = row.product_type === 'COMBO' ? 'COMBO' : 'SIMPLE';
 
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -464,6 +735,9 @@ export class ImportZipAction {
           created_by_id: ctx.userIdReal,
           updated_by: asNullableString(row.updated_by),
           updated_by_id: null,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('products', localId, saved.id);
@@ -488,6 +762,7 @@ export class ImportZipAction {
         skipped++;
         continue;
       }
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -499,6 +774,9 @@ export class ImportZipAction {
           iva_percentage: asNumber(row.iva_percentage),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('product_prices', localId, saved.id);
@@ -520,6 +798,7 @@ export class ImportZipAction {
     for (const row of rows) {
       const localId = asString(row.id);
       const personType = row.person_type === 'COMPANY' ? 'COMPANY' : 'INDIVIDUAL';
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -533,6 +812,9 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('customers', localId, saved.id);
@@ -549,6 +831,7 @@ export class ImportZipAction {
       const paymentAccounts = Array.isArray(row.payment_accounts)
         ? (row.payment_accounts as Supplier['payment_accounts'])
         : [];
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -564,6 +847,9 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('suppliers', localId, saved.id);
@@ -590,6 +876,7 @@ export class ImportZipAction {
 
       const accountType = row.account_type === 'checking' ? 'checking' : 'savings';
 
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -601,6 +888,9 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('banks', localId, saved.id);
@@ -627,6 +917,7 @@ export class ImportZipAction {
       }
       seen.add(final.toLowerCase());
 
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -638,6 +929,9 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('carriers', localId, saved.id);
@@ -653,6 +947,7 @@ export class ImportZipAction {
       const localId = asString(row.id);
       // role: 'manager' | 'employee'. login_enabled=false con username/password null.
       const role = row.role === 'manager' ? 'manager' : 'employee';
+      const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -668,6 +963,9 @@ export class ImportZipAction {
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           user_id: null,
+          ...(created_at !== null
+            ? { created_at, updated_at: updated_at ?? created_at }
+            : {}),
         }),
       );
       ctx.remapper.set('employees', localId, saved.id);
@@ -682,20 +980,56 @@ export class ImportZipAction {
 
   private async insertSaleInvoices(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(SaleInvoice);
-    let count = 0;
+
+    // 1. Filtrar filas sin `created_at` (movimientos sin fecha legítima se
+    //    descartan — ver bug #2 del refactor).
+    const dated: { row: ZipRow; createdAt: Date; updatedAt: Date | null }[] = [];
+    let skippedNoDate = 0;
     for (const row of rows) {
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      dated.push({ row, createdAt: created_at, updatedAt: updated_at });
+    }
+
+    // 2. Orden cronológico ASC para que los consecutivos respeten el orden
+    //    histórico (la venta más antigua se queda con VTA-001).
+    dated.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    // 3. Resolver prefijos del seed.
+    const orderTs = ctx.tsByType.get(TicketSettingType.ORDER);
+    const saleTs = ctx.tsByType.get(TicketSettingType.SALE);
+    const orderPrefix = orderTs?.prefix ?? null;
+    const orderSuffix = orderTs?.suffix ?? null;
+    const salePrefix = saleTs?.prefix ?? null;
+    const saleSuffix = saleTs?.suffix ?? null;
+
+    let count = 0;
+    for (const { row, createdAt, updatedAt } of dated) {
       const localId = asString(row.id);
       const ticketType = row.ticket_type === 'ORDER' ? 'ORDER' : 'SALE';
       const localCustomer = asNullableString(row.customer_id);
       const customerIdReal = ctx.remapper.getOptional('customers', localCustomer);
 
+      // Tanto ORDER como SALE consumen el counter `ORDER` para `ticket_number`
+      // (un pedido siempre nace ORDER y al confirmarse hereda su número).
+      // Adicionalmente, SALE consume el counter `SALE` para `sale_number`.
+      const orderNum = ++ctx.counters[TicketSettingType.ORDER];
+      const ticketNumber = formatTicketNumber(orderPrefix, orderSuffix, orderNum);
+      let saleNumber: string | null = null;
+      if (ticketType === 'SALE') {
+        const saleNum = ++ctx.counters[TicketSettingType.SALE];
+        saleNumber = formatTicketNumber(salePrefix, saleSuffix, saleNum);
+      }
+
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
           ticket_type: ticketType as SaleInvoice['ticket_type'],
-          ticket_number: asString(row.ticket_number).trim() || `TKT-${localId}`,
-          sale_number:
-            ticketType === 'SALE' ? (asNullableString(row.sale_number) ?? `VTA-${localId}`) : null,
+          ticket_number: ticketNumber,
+          sale_number: saleNumber,
           customer_id: customerIdReal,
           customer_name: asNullableString(row.customer_name),
           subtotal: Math.max(0, asNumber(row.subtotal)),
@@ -708,10 +1042,18 @@ export class ImportZipAction {
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           is_deleted: asBoolean(row.is_deleted),
+          created_at: createdAt,
+          updated_at: updatedAt ?? createdAt,
         }),
       );
       ctx.remapper.set('sale_invoices', localId, saved.id);
       count++;
+    }
+
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `sale_invoices: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
     }
     return count;
   }
@@ -720,7 +1062,13 @@ export class ImportZipAction {
     const repo = ctx.manager.getRepository(SaleInvoiceLine);
     let count = 0;
     let skipped = 0;
+    let skippedNoDate = 0;
     for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
       const invoiceIdReal = ctx.remapper.getOptional(
         'sale_invoices',
         asNullableString(row.sale_invoice_id),
@@ -756,6 +1104,7 @@ export class ImportZipAction {
           total: Math.max(0, asNumber(row.total)),
           profit: Math.max(0, asNumber(row.profit)),
           margin: Math.max(0, asNumber(row.margin)),
+          created_at,
         }),
       );
       ctx.remapper.set('sale_invoice_lines', asString(row.id), saved.id);
@@ -766,6 +1115,11 @@ export class ImportZipAction {
         `sale_invoice_lines: ${skipped} líneas descartadas (FK faltante o quantity inválida)`,
       );
     }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `sale_invoice_lines: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
     return count;
   }
 
@@ -773,7 +1127,13 @@ export class ImportZipAction {
     const repo = ctx.manager.getRepository(SalePayment);
     let count = 0;
     let skipped = 0;
+    let skippedNoDate = 0;
     for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
       const invoiceIdReal = ctx.remapper.getOptional(
         'sale_invoices',
         asNullableString(row.sale_invoice_id),
@@ -830,6 +1190,7 @@ export class ImportZipAction {
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           uuid: asNullableString(row.uuid),
+          created_at,
         }),
       );
       ctx.remapper.set('sale_payments', asString(row.id), saved.id);
@@ -840,14 +1201,43 @@ export class ImportZipAction {
         `sale_payments: ${skipped} pagos descartados (FK faltante o monto inválido)`,
       );
     }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `sale_payments: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
     return count;
   }
 
   private async insertCreditNotes(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(CreditNote);
+
+    // 1. Filtrar filas sin `created_at` (bug #2).
+    const dated: { row: ZipRow; createdAt: Date; updatedAt: Date | null }[] = [];
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      dated.push({ row, createdAt: created_at, updatedAt: updated_at });
+    }
+
+    // 2. Orden cronológico ASC para preservar el orden histórico de folios.
+    dated.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    // 3. Prefijos del seed.
+    const creditTs = ctx.tsByType.get(TicketSettingType.CREDIT_NOTE);
+    const debitTs = ctx.tsByType.get(TicketSettingType.DEBIT_NOTE);
+    const creditPrefix = creditTs?.prefix ?? null;
+    const creditSuffix = creditTs?.suffix ?? null;
+    const debitPrefix = debitTs?.prefix ?? null;
+    const debitSuffix = debitTs?.suffix ?? null;
+
     let count = 0;
     let skipped = 0;
-    for (const row of rows) {
+    for (const { row, createdAt, updatedAt } of dated) {
       const invoiceIdReal = ctx.remapper.getOptional(
         'sale_invoices',
         asNullableString(row.sale_invoice_id),
@@ -866,12 +1256,23 @@ export class ImportZipAction {
         operationType = 'ADDITION';
       }
 
+      // Renumeración: CREDIT consume el counter CREDIT_NOTE (prefijo NC),
+      // DEBIT consume el counter DEBIT_NOTE (prefijo ND).
+      let noteNumber: string;
+      if (noteType === 'CREDIT') {
+        const n = ++ctx.counters[TicketSettingType.CREDIT_NOTE];
+        noteNumber = formatTicketNumber(creditPrefix, creditSuffix, n);
+      } else {
+        const n = ++ctx.counters[TicketSettingType.DEBIT_NOTE];
+        noteNumber = formatTicketNumber(debitPrefix, debitSuffix, n);
+      }
+
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
           sale_invoice_id: invoiceIdReal,
           customer_id: ctx.remapper.getOptional('customers', asNullableString(row.customer_id)),
-          note_number: asString(row.note_number).trim() || `NC-${asString(row.id)}`,
+          note_number: noteNumber,
           note_type: noteType as CreditNote['note_type'],
           operation_type: operationType as CreditNote['operation_type'],
           subtotal: Math.max(0, asNumber(row.subtotal)),
@@ -881,6 +1282,8 @@ export class ImportZipAction {
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           is_deleted: asBoolean(row.is_deleted),
+          created_at: createdAt,
+          updated_at: updatedAt ?? createdAt,
         }),
       );
       ctx.remapper.set('credit_notes', asString(row.id), saved.id);
@@ -891,6 +1294,11 @@ export class ImportZipAction {
         `credit_notes: ${skipped} notas descartadas por sale_invoice padre inexistente`,
       );
     }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `credit_notes: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
     return count;
   }
 
@@ -898,7 +1306,13 @@ export class ImportZipAction {
     const repo = ctx.manager.getRepository(CreditNoteLine);
     let count = 0;
     let skipped = 0;
+    let skippedNoDate = 0;
     for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
       const noteIdReal = ctx.remapper.getOptional(
         'credit_notes',
         asNullableString(row.credit_note_id),
@@ -931,6 +1345,7 @@ export class ImportZipAction {
           iva_percentage: asNumber(row.iva_percentage),
           iva_amount: Math.max(0, asNumber(row.iva_amount)),
           total: Math.max(0, asNumber(row.total)),
+          created_at,
         }),
       );
       count++;
@@ -938,6 +1353,11 @@ export class ImportZipAction {
     if (skipped > 0) {
       ctx.warnings.push(
         `credit_note_lines: ${skipped} líneas descartadas (FK faltante o qty inválida)`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `credit_note_lines: ${skippedNoDate} filas descartadas por falta de created_at`,
       );
     }
     return count;
@@ -949,9 +1369,30 @@ export class ImportZipAction {
 
   private async insertPurchases(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(Purchase);
+
+    // 1. Filtrar filas sin `created_at` (bug #2).
+    const dated: { row: ZipRow; createdAt: Date; updatedAt: Date | null }[] = [];
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      dated.push({ row, createdAt: created_at, updatedAt: updated_at });
+    }
+
+    // 2. Orden cronológico ASC para preservar el orden histórico de folios.
+    dated.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    // 3. Prefijo del seed.
+    const purchaseTs = ctx.tsByType.get(TicketSettingType.PURCHASE);
+    const purchasePrefix = purchaseTs?.prefix ?? null;
+    const purchaseSuffix = purchaseTs?.suffix ?? null;
+
     let count = 0;
     let skipped = 0;
-    for (const row of rows) {
+    for (const { row, createdAt, updatedAt } of dated) {
       const supplierIdReal = ctx.remapper.getOptional(
         'suppliers',
         asNullableString(row.supplier_id),
@@ -962,11 +1403,13 @@ export class ImportZipAction {
       }
 
       const invoiceDate = asNullableDate(row.invoice_date);
+      const purchaseNum = ++ctx.counters[TicketSettingType.PURCHASE];
+      const purchaseNumber = formatTicketNumber(purchasePrefix, purchaseSuffix, purchaseNum);
 
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
-          purchase_number: asString(row.purchase_number).trim() || `COMP-${asString(row.id)}`,
+          purchase_number: purchaseNumber,
           supplier_id: supplierIdReal,
           supplier_name: asString(row.supplier_name).trim() || `Proveedor ${supplierIdReal}`,
           subtotal: Math.max(0, asNumber(row.subtotal)),
@@ -987,6 +1430,8 @@ export class ImportZipAction {
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           is_deleted: asBoolean(row.is_deleted),
+          created_at: createdAt,
+          updated_at: updatedAt ?? createdAt,
         }),
       );
       ctx.remapper.set('purchases', asString(row.id), saved.id);
@@ -995,6 +1440,9 @@ export class ImportZipAction {
     if (skipped > 0) {
       ctx.warnings.push(`purchases: ${skipped} compras descartadas por supplier inexistente`);
     }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(`purchases: ${skippedNoDate} filas descartadas por falta de created_at`);
+    }
     return count;
   }
 
@@ -1002,7 +1450,13 @@ export class ImportZipAction {
     const repo = ctx.manager.getRepository(PurchaseLine);
     let count = 0;
     let skipped = 0;
+    let skippedNoDate = 0;
     for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
       const purchaseIdReal = ctx.remapper.getOptional(
         'purchases',
         asNullableString(row.purchase_id),
@@ -1039,6 +1493,7 @@ export class ImportZipAction {
           subtotal: Math.max(0, asNumber(row.subtotal)),
           iva_amount: Math.max(0, asNumber(row.iva_amount)),
           total: Math.max(0, asNumber(row.total)),
+          created_at,
         }),
       );
       count++;
@@ -1048,14 +1503,40 @@ export class ImportZipAction {
         `purchase_lines: ${skipped} líneas descartadas (FK faltante o qty inválida)`,
       );
     }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `purchase_lines: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
     return count;
   }
 
   private async insertPurchasePayments(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(PurchasePayment);
+
+    // 1. Filtrar filas sin `created_at` (bug #2).
+    const dated: { row: ZipRow; createdAt: Date }[] = [];
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      dated.push({ row, createdAt: created_at });
+    }
+
+    // 2. Orden cronológico ASC para preservar el orden histórico de folios.
+    dated.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    // 3. Prefijo del seed.
+    const ppTs = ctx.tsByType.get(TicketSettingType.PURCHASE_PAYMENT);
+    const ppPrefix = ppTs?.prefix ?? null;
+    const ppSuffix = ppTs?.suffix ?? null;
+
     let count = 0;
     let skipped = 0;
-    for (const row of rows) {
+    for (const { row, createdAt } of dated) {
       const purchaseIdReal = ctx.remapper.getOptional(
         'purchases',
         asNullableString(row.purchase_id),
@@ -1092,11 +1573,14 @@ export class ImportZipAction {
         }
       }
 
+      const ppNum = ++ctx.counters[TicketSettingType.PURCHASE_PAYMENT];
+      const paymentNumber = formatTicketNumber(ppPrefix, ppSuffix, ppNum);
+
       await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
           purchase_id: purchaseIdReal,
-          payment_number: asString(row.payment_number).trim() || `APC-${asString(row.id)}`,
+          payment_number: paymentNumber,
           payment_method: method as PurchasePayment['payment_method'],
           amount,
           bank_id: ctx.remapper.getOptional('banks', asNullableString(row.bank_id)),
@@ -1107,12 +1591,18 @@ export class ImportZipAction {
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           uuid: asNullableString(row.uuid),
+          created_at: createdAt,
         }),
       );
       count++;
     }
     if (skipped > 0) {
       ctx.warnings.push(`purchase_payments: ${skipped} pagos descartados (FK o amount inválidos)`);
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `purchase_payments: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
     }
     return count;
   }
@@ -1125,7 +1615,13 @@ export class ImportZipAction {
     const repo = ctx.manager.getRepository(Expense);
     let count = 0;
     let skipped = 0;
+    let skippedNoDate = 0;
     for (const row of rows) {
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
       const amount = asNumber(row.amount);
       if (amount <= 0) {
         skipped++;
@@ -1168,12 +1664,17 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
+          created_at,
+          updated_at: updated_at ?? created_at,
         }),
       );
       count++;
     }
     if (skipped > 0) {
       ctx.warnings.push(`expenses: ${skipped} gastos descartados por monto inválido`);
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(`expenses: ${skippedNoDate} filas descartadas por falta de created_at`);
     }
     return count;
   }
@@ -1193,4 +1694,15 @@ interface ImportCtx {
   defaultWalletId: string;
   defaultCashRegisterId: string;
   warnings: string[];
+  /**
+   * Contadores in-memory de folios por tipo. Arrancan en 0 (igual que el
+   * `current_number` del seed) y se incrementan en cada insert. Al final de
+   * la TX se persiste el valor de cada uno en `ticket_settings.current_number`.
+   */
+  counters: Record<TicketSettingType, number>;
+  /**
+   * Mapa de `TicketSetting` por tipo, cargado una sola vez justo después del
+   * seed. Lo usan los inserts para obtener el `prefix`/`suffix` configurado.
+   */
+  tsByType: Map<TicketSettingType, TicketSetting>;
 }
