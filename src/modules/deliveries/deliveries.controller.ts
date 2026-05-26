@@ -94,6 +94,32 @@ export class DeliveriesController {
   }
 
   // --------------------------------------------------------------------------
+  // GET /deliveries/by-invoice/:invoiceId
+  // --------------------------------------------------------------------------
+  // IMPORTANTE: ruta estática antes de `/:id` para que el matcher no la
+  // capture como parámetro (mismo patrón que `prefill/:invoiceId`).
+  //
+  // Para el modal de ticket del cliente: devuelve el domicilio NO archivado
+  // MÁS RECIENTE ligado a la venta, o `null` si la venta no tiene domicilio.
+  // `null` es una respuesta válida — NO se lanza 404.
+
+  @Get('by-invoice/:invoiceId')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Domicilio (no archivado) más reciente ligado a una venta, o null si no existe. Para el modal de ticket.',
+  })
+  @ApiParam({ name: 'invoiceId', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK, type: DeliveryResponseDto })
+  async findByInvoice(
+    @Param('invoiceId', ParseIntPipe) invoiceId: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<DeliveryResponseDto | null> {
+    const row = await this.deliveriesService.findDeliveryByInvoice(invoiceId, companyId);
+    return row ? toDeliveryResponseDto(row) : null;
+  }
+
+  // --------------------------------------------------------------------------
   // GET /deliveries/:id
   // --------------------------------------------------------------------------
 

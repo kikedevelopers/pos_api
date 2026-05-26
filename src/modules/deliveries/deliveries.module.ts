@@ -11,6 +11,7 @@ import { CreateDeliveryCompanyAction } from './actions/create-delivery-company.a
 import { FindAllDeliveriesAction } from './actions/find-all-deliveries.action';
 import { FindAllDeliveryCompaniesAction } from './actions/find-all-delivery-companies.action';
 import { FindDeliveryAction } from './actions/find-delivery.action';
+import { FindDeliveryByInvoiceAction } from './actions/find-delivery-by-invoice.action';
 import { FindDeliveryCompanyAction } from './actions/find-delivery-company.action';
 import { PrefillDeliveryAction } from './actions/prefill-delivery.action';
 import { ToggleDeliveryCompanyArchiveAction } from './actions/toggle-delivery-company-archive.action';
@@ -60,6 +61,7 @@ import { DeliveryCompany } from './entities/delivery-company.entity';
     // deliveries
     FindAllDeliveriesAction,
     FindDeliveryAction,
+    FindDeliveryByInvoiceAction,
     PrefillDeliveryAction,
     CreateDeliveryAction,
     ArchiveDeliveryAction,

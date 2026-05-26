@@ -6,6 +6,7 @@ import { CreateDeliveryCompanyAction } from './actions/create-delivery-company.a
 import { FindAllDeliveriesAction } from './actions/find-all-deliveries.action';
 import { FindAllDeliveryCompaniesAction } from './actions/find-all-delivery-companies.action';
 import { FindDeliveryAction } from './actions/find-delivery.action';
+import { FindDeliveryByInvoiceAction } from './actions/find-delivery-by-invoice.action';
 import { FindDeliveryCompanyAction } from './actions/find-delivery-company.action';
 import { PrefillDeliveryAction } from './actions/prefill-delivery.action';
 import { ToggleDeliveryCompanyArchiveAction } from './actions/toggle-delivery-company-archive.action';
@@ -39,6 +40,7 @@ export class DeliveriesService {
     // deliveries
     private readonly findAllDeliveriesAction: FindAllDeliveriesAction,
     private readonly findDeliveryAction: FindDeliveryAction,
+    private readonly findDeliveryByInvoiceAction: FindDeliveryByInvoiceAction,
     private readonly prefillDeliveryAction: PrefillDeliveryAction,
     private readonly createDeliveryAction: CreateDeliveryAction,
     private readonly archiveDeliveryAction: ArchiveDeliveryAction,
@@ -94,6 +96,10 @@ export class DeliveriesService {
 
   findDelivery(id: number, companyId: number): Promise<Delivery> {
     return this.findDeliveryAction.execute(id, companyId);
+  }
+
+  findDeliveryByInvoice(invoiceId: number, companyId: number): Promise<Delivery | null> {
+    return this.findDeliveryByInvoiceAction.execute(invoiceId, companyId);
   }
 
   prefill(invoiceId: number, companyId: number): Promise<DeliveryPrefillResponseDto> {
