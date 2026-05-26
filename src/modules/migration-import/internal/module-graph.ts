@@ -19,12 +19,20 @@ const MODULE_TABLES: Record<SelectableModule, ZipTableName[]> = {
     'credit_note_lines',
   ],
   purchases: ['purchases', 'purchase_lines', 'purchase_payments'],
-  expenses: ['expenses'],
+  expenses: ['expenses', 'fixed_expenses', 'fixed_expense_periods'],
+  deliveries: ['delivery_companies', 'deliveries'],
+  inventory: ['inventory_movements'],
 };
 
 /**
  * Dependencias modulares. Si llega `sales` agregamos `catalog`. Si llega
  * `purchases` agregamos `catalog` + `suppliers`.
+ *
+ *   - `deliveries`: `deliveries.invoice_id` remapea contra `sale_invoices`,
+ *     así que arrastra `sales` (y transitivamente `catalog`).
+ *   - `inventory`: `inventory_movements.product_id` → `catalog`, y sus
+ *     referencias cruzan ventas/compras, así que arrastra `sales` +
+ *     `purchases` (que a su vez traen `catalog` + `suppliers`).
  */
 const MODULE_DEPS: Record<SelectableModule, SelectableModule[]> = {
   catalog: [],
@@ -34,6 +42,8 @@ const MODULE_DEPS: Record<SelectableModule, SelectableModule[]> = {
   sales: ['catalog'],
   purchases: ['catalog', 'suppliers'],
   expenses: [],
+  deliveries: ['sales'],
+  inventory: ['catalog', 'sales', 'purchases'],
 };
 
 /**

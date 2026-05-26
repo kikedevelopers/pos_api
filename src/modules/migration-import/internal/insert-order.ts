@@ -18,6 +18,10 @@ import type { SelectableModule } from './manifest.types';
  *   - sale_invoices ANTES de sale_invoice_lines / sale_payments (FK).
  *   - credit_notes ANTES de credit_note_lines (FK).
  *   - purchases ANTES de purchase_lines / purchase_payments (FK).
+ *   - expenses ANTES de fixed_expenses; fixed_expenses ANTES de
+ *     fixed_expense_periods (FK fixed_expense_id).
+ *   - delivery_companies ANTES de deliveries (FK delivery_company_id).
+ *   - inventory_movements al final: sus refs cruzan products/sales/purchases.
  */
 export const MODULE_INSERT_ORDER: Record<SelectableModule, ZipTableName[]> = {
   catalog: ['categories', 'packagings', 'products', 'product_prices'],
@@ -32,12 +36,18 @@ export const MODULE_INSERT_ORDER: Record<SelectableModule, ZipTableName[]> = {
     'credit_note_lines',
   ],
   purchases: ['purchases', 'purchase_lines', 'purchase_payments'],
-  expenses: ['expenses'],
+  expenses: ['expenses', 'fixed_expenses', 'fixed_expense_periods'],
+  deliveries: ['delivery_companies', 'deliveries'],
+  inventory: ['inventory_movements'],
 };
 
 /**
  * Orden global de procesamiento de módulos. `suppliers` antes que
  * `purchases` (deps), `catalog` antes que `sales` y `purchases`.
+ *
+ * `deliveries` va DESPUÉS de `sales` (su `invoice_id` remapea contra
+ * `sale_invoices`). `inventory` va AL FINAL: `inventory_movements` referencia
+ * `products` (catalog) y, vía `reference_type`, ventas y compras.
  */
 export const MODULE_GLOBAL_ORDER: SelectableModule[] = [
   'catalog',
@@ -47,4 +57,6 @@ export const MODULE_GLOBAL_ORDER: SelectableModule[] = [
   'sales',
   'purchases',
   'expenses',
+  'deliveries',
+  'inventory',
 ];

@@ -79,5 +79,8 @@ import { MigrationImportService } from './migration-import.service';
   ],
   controllers: [MigrationImportController],
   providers: [ImportZipAction, MigrationImportService, AdminSignatureGuard],
+  // `ImportZipAction` se exporta para que `BackupRestoreModule` reutilice
+  // `importModulesIntoCompany` sin re-registrar entities ni seeds.
+  exports: [ImportZipAction],
 })
 export class MigrationImportModule {}

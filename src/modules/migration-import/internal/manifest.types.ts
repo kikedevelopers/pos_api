@@ -44,6 +44,8 @@ export const ZIP_TABLE_NAMES = [
   'purchase_payments',
   'expenses',
   'credit_notes',
+  'delivery_companies',
+  'deliveries',
   'ticket_settings',
   'wallets',
   'cash_registers',
@@ -86,6 +88,13 @@ export interface ParsedZip {
  * Modulos seleccionables del request body. Cada uno agrupa un conjunto de
  * tablas relacionadas. `catalog` es prerequisito implícito de `sales` y
  * `purchases`; `suppliers` lo es de `purchases`.
+ *
+ *   - `deliveries` (Domiciliarios) pobla `delivery_companies` + `deliveries`.
+ *     `deliveries.invoice_id` apunta a `sale_invoices`, así que depende de
+ *     `sales`.
+ *   - `inventory` pobla `inventory_movements`. Sus FKs cruzan `products`
+ *     (catalog) y referencian ventas/compras, así que depende de
+ *     `catalog` + `sales` + `purchases`.
  */
 export const SELECTABLE_MODULES = [
   'catalog',
@@ -95,6 +104,8 @@ export const SELECTABLE_MODULES = [
   'sales',
   'purchases',
   'expenses',
+  'deliveries',
+  'inventory',
 ] as const;
 
 export type SelectableModule = (typeof SELECTABLE_MODULES)[number];

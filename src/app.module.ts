@@ -23,6 +23,7 @@ import { AppAlertsModule } from './modules/app-alerts/app-alerts.module';
 import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BackupModule } from './modules/backup/backup.module';
+import { BackupRestoreModule } from './modules/backup-restore/backup-restore.module';
 import { BanksModule } from './modules/banks/banks.module';
 import { CarrierPaymentsModule } from './modules/carrier-payments/carrier-payments.module';
 import { CarriersModule } from './modules/carriers/carriers.module';
@@ -229,6 +230,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // entornos. Lo consume el panel kdevs-admin (genera el ZIP y lo sube
     // firmado). El generador de ZIP vive ahora en kdevs-admin.
     MigrationImportModule,
+    // Restore de backup NATIVO de placepos para el owner autenticado
+    // (`POST /backup/restore`). Reutiliza `ImportZipAction` de
+    // MigrationImportModule. Protegido por JWT + @Roles('owner') + Subscription.
+    BackupRestoreModule,
     // Suscripciones (cloud-only). Se importa aquí para que el guard global
     // `SubscriptionGuard` (APP_GUARD) y `SubscriptionsService` resuelvan. Va
     // antes de AuthModule porque AuthModule lo importa para el seed y el
