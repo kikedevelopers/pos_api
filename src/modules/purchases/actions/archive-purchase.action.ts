@@ -263,9 +263,16 @@ export class ArchivePurchaseAction {
   }
 
   /**
-   * Revierte el stock que entró al recibir la compra. Cada línea aportó
-   * `unit_qty * packaging_value` al stock del producto; aquí restamos esa
-   * misma cantidad agregando por producto.
+   * Revierte el stock que entró al recibir la compra. La recepción
+   * (`mark-purchase-received`) sumó `unit_qty` DIRECTO al stock porque en
+   * compras `unit_qty` ya está en la unidad mínima (el embalaje es solo
+   * informativo). Aquí restamos esa misma cantidad agregando por producto.
+   *
+   * Pasamos `packaging_value: 1` en cada línea para neutralizar la
+   * multiplicación que `adjustInventory` —pensado para ventas, donde la
+   * cantidad llega en unidad de venta— aplicaría por defecto con el
+   * `packaging_value` del producto. Sin esto, el archivado restaría
+   * `unit_qty × packaging_value` y corromper el stock de productos con empaque.
    */
   private async revertStock(
     manager: EntityManager,
@@ -291,7 +298,8 @@ export class ArchivePurchaseAction {
 
     const deduct: InventoryLineItem[] = [];
     for (const [productId, qtyBig] of totals.entries()) {
-      deduct.push({ item_id: productId, quantity: Number(qtyBig.toFixed(4)) });
+      // packaging_value: 1 → unit_qty ya está en unidad mínima; no re-multiplicar.
+      deduct.push({ item_id: productId, quantity: Number(qtyBig.toFixed(4)), packaging_value: 1 });
     }
 
     if (deduct.length === 0) {

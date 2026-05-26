@@ -476,11 +476,17 @@ export class UpdatePurchaseAction {
   }
 
   /**
-   * Aplica el delta de stock al inventario via `adjustInventory`. Cada línea
-   * aporta `unit_qty × packaging_value` al stock del padre. Aquí componemos
-   * las "líneas equivalentes" en cantidad neta (positiva = RETURN, negativa
-   * = DEDUCT). Cada UPDATE persiste una fila en `inventory_movements` con
-   * reason=PURCHASE_EDIT.
+   * Aplica el delta de stock al inventario via `adjustInventory`. En compras
+   * `unit_qty` ya está en la unidad mínima (el embalaje es solo informativo),
+   * igual que en la recepción —que sumó `unit_qty` directo—. Aquí componemos
+   * las "líneas equivalentes" en cantidad neta de `unit_qty` (positiva =
+   * RETURN, negativa = DEDUCT).
+   *
+   * Pasamos `packaging_value: 1` para neutralizar la multiplicación que
+   * `adjustInventory` —pensado para ventas— aplicaría con el `packaging_value`
+   * del producto. Sin esto el delta se multiplicaría de más y corromper el
+   * stock de productos con empaque. Cada UPDATE persiste una fila en
+   * `inventory_movements` con reason=PURCHASE_EDIT.
    */
   private async applyInventoryDelta(
     manager: EntityManager,
@@ -514,10 +520,15 @@ export class UpdatePurchaseAction {
       if (deltaBig.eq(0)) {
         continue;
       }
+      // packaging_value: 1 → unit_qty ya está en unidad mínima; no re-multiplicar.
       if (deltaBig.gt(0)) {
-        ret.push({ item_id: productId, quantity: Number(deltaBig.toFixed(4)) });
+        ret.push({ item_id: productId, quantity: Number(deltaBig.toFixed(4)), packaging_value: 1 });
       } else {
-        deduct.push({ item_id: productId, quantity: Number(deltaBig.abs().toFixed(4)) });
+        deduct.push({
+          item_id: productId,
+          quantity: Number(deltaBig.abs().toFixed(4)),
+          packaging_value: 1,
+        });
       }
     }
     const ctx = {
