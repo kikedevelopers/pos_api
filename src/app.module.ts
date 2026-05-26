@@ -34,6 +34,7 @@ import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
 import { CreditsModule } from './modules/credits/credits.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { DeliveriesModule } from './modules/deliveries/deliveries.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
@@ -199,6 +200,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CarrierPaymentsModule,
     // Fase 9 — Gastos y agregadores (credits/payments dependen de Sales+Purchases).
     ExpensesModule,
+    // Módulo Domiciliarios — domiciliarios + domicilios. Depende de
+    // CashRegister (egreso de caja) y Sales (prefill / venta ligada).
+    DeliveriesModule,
     // Ola 2B — Gastos fijos (catálogo + cortes vencidos). Depende
     // conceptualmente de `companies` y `app_alerts` (FK opcional).
     FixedExpensesModule,
