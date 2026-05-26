@@ -6,6 +6,7 @@ import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
 import { CreateDefaultAlertConfigsAction } from '@/modules/alert-configs/actions/create-default-alert-configs.action';
 import { CreateDefaultAppSettingsAction } from '@/modules/app-settings/actions/create-default-app-settings.action';
 import { Company } from '@/modules/companies/entities/company.entity';
+import { CreateSubscriptionAction } from '@/modules/subscriptions/actions/create-subscription.action';
 import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
 import { User, UserType } from '@/modules/users/entities/user.entity';
 import { CreateDefaultWalletAction } from '@/modules/wallets/actions/create-default-wallet.action';
@@ -42,6 +43,7 @@ export class RegisterAction {
     private readonly createDefaultTicketSettingsAction: CreateDefaultTicketSettingsAction,
     private readonly createDefaultAppSettingsAction: CreateDefaultAppSettingsAction,
     private readonly createDefaultAlertConfigsAction: CreateDefaultAlertConfigsAction,
+    private readonly createSubscriptionAction: CreateSubscriptionAction,
   ) {}
 
   async execute(dto: RegisterDto): Promise<AuthResponseDto> {
@@ -136,6 +138,16 @@ export class RegisterAction {
       //      defecto. Paridad placepos (`seeds/alertConfigs.ts`). El dueño
       //      lo activa cuando quiera recibir el resumen diario.
       await this.createDefaultAlertConfigsAction.execute(manager, { companyId, createdBy });
+
+      // 4.5. Suscripción (cloud-only): trial de gracia de 10 días desde ahora.
+      //      Va dentro de la MISMA transacción — si falla cualquier paso, la
+      //      suscripción se revierte junto con Company + User + seeds. Cuando
+      //      `expires_at < now()` la company queda bloqueada (guard + login).
+      await this.createSubscriptionAction.execute(manager, {
+        companyId,
+        ownerUserId: Number(saved.id),
+        startedAt: new Date(),
+      });
 
       return saved;
     });

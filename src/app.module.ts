@@ -49,6 +49,8 @@ import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { SalesModule } from './modules/sales/sales.module';
+import { SubscriptionGuard } from './modules/subscriptions/subscription.guard';
+import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { TicketSettingsModule } from './modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from './modules/users/users.module';
@@ -227,19 +229,30 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // entornos. Lo consume el panel kdevs-admin (genera el ZIP y lo sube
     // firmado). El generador de ZIP vive ahora en kdevs-admin.
     MigrationImportModule,
-    // Auth al final (depende de Wallets/TicketSettings/AppSettings para
-    // sembrar valores iniciales al crear una company).
+    // Suscripciones (cloud-only). Se importa aquí para que el guard global
+    // `SubscriptionGuard` (APP_GUARD) y `SubscriptionsService` resuelvan. Va
+    // antes de AuthModule porque AuthModule lo importa para el seed y el
+    // bloqueo de login.
+    SubscriptionsModule,
+    // Auth al final (depende de Wallets/TicketSettings/AppSettings/Subscriptions
+    // para sembrar valores iniciales al crear una company).
     AuthModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
     // Orden de evaluación de guards: NestJS los ejecuta en el orden en que
-    // aparecen aquí. Primero JWT (poblar request.user), luego Roles (decidir
-    // si el rol matchea), finalmente Throttler (rate limit).
+    // aparecen aquí. Primero JWT (poblar request.user), luego Subscription
+    // (bloqueo 402 si la suscripción de la company venció — necesita
+    // request.user ya poblado), luego Roles (decidir si el rol matchea),
+    // finalmente Throttler (rate limit).
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: SubscriptionGuard,
     },
     {
       provide: APP_GUARD,

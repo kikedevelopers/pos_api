@@ -5,6 +5,8 @@ import { DataSource } from 'typeorm';
 
 import { EmployeesService } from '@/modules/employees/employees.service';
 import { ensureMirrorUserForEmployee } from '@/modules/employees/internal/ensure-mirror-user-for-employee.helper';
+import { SubscriptionExpiredException } from '@/modules/subscriptions/subscription-expired.exception';
+import { SubscriptionsService } from '@/modules/subscriptions/subscriptions.service';
 import { UsersService } from '@/modules/users/users.service';
 
 import type { AuthResponseDto } from '../dto/auth-response.dto';
@@ -71,9 +73,33 @@ export class LoginAction {
     private readonly employeesService: EmployeesService,
     private readonly jwtIssuer: JwtIssuerService,
     private readonly dummyHash: DummyHashService,
+    private readonly subscriptionsService: SubscriptionsService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * Bloqueo de login por suscripción vencida.
+   *
+   * Se invoca DESPUÉS de `argon2.verify` exitoso (no antes) para preservar la
+   * política anti-enumeración: el chequeo no filtra existencia de cuentas
+   * porque solo se alcanza con credenciales válidas.
+   *
+   * Superadmin (`company_id` null) está exento — su login nunca se bloquea.
+   * Si la suscripción no existe o `expires_at < now`, lanza 402.
+   */
+  private async assertSubscriptionActive(companyId: number | null): Promise<void> {
+    if (companyId === null) {
+      return;
+    }
+    const subscription = await this.subscriptionsService.findByCompany(companyId);
+    if (!subscription) {
+      throw new SubscriptionExpiredException(null);
+    }
+    if (subscription.expires_at.getTime() < Date.now()) {
+      throw new SubscriptionExpiredException(subscription.expires_at);
+    }
+  }
 
   async execute(dto: LoginDto): Promise<AuthResponseDto> {
     const isEmailShape = looksLikeEmail(dto.username);
@@ -101,6 +127,11 @@ export class LoginAction {
       if (!passwordValid) {
         throw new UnauthorizedException('Credenciales inválidas');
       }
+      // Bloqueo por suscripción vencida — tras verify, antes de firmar. El
+      // superadmin (company_id null) queda exento dentro del helper.
+      await this.assertSubscriptionActive(
+        user.company_id === null ? null : Number(user.company_id),
+      );
       const access_token = await this.jwtIssuer.sign({
         userId: user.id,
         companyId: user.company_id,
@@ -125,6 +156,10 @@ export class LoginAction {
       if (!passwordValid) {
         throw new UnauthorizedException('Credenciales inválidas');
       }
+
+      // Bloqueo por suscripción vencida — tras verify, antes de crear/sincronizar
+      // el User espejo y firmar. Los employees siempre pertenecen a una company.
+      await this.assertSubscriptionActive(Number(employee.company_id));
 
       // Garantizar el User espejo. Si ya existe, sincroniza; si no, lo crea.
       // Transacción dedicada — corta — para que el INSERT del User + UPDATE

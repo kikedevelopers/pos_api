@@ -7,6 +7,7 @@ import { AlertConfigsModule } from '@/modules/alert-configs/alert-configs.module
 import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { EmployeesModule } from '@/modules/employees/employees.module';
+import { SubscriptionsModule } from '@/modules/subscriptions/subscriptions.module';
 import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from '@/modules/users/users.module';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
@@ -55,6 +56,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     TicketSettingsModule,
     AppSettingsModule,
     AlertConfigsModule,
+    // Suscripción (cloud-only): seed en el registro (CreateSubscriptionAction)
+    // y bloqueo de login (SubscriptionsService). SubscriptionsModule NO importa
+    // AuthModule, así que no hay ciclo.
+    SubscriptionsModule,
   ],
   controllers: [AuthController],
   providers: [
