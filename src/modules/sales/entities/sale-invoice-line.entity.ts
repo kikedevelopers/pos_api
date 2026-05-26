@@ -113,6 +113,14 @@ export class SaleInvoiceLine {
   @Column({ type: 'text', nullable: false })
   description!: string;
 
+  /**
+   * Nota por línea de venta (una por producto/línea). Opcional. Espejo del
+   * `note` por línea del servidor Express offline de PlacePos. El cliente la
+   * captura desde el modal del carrito; no afecta cálculos ni inventario.
+   */
+  @Column({ type: 'text', nullable: true })
+  note!: string | null;
+
   @Column({
     type: 'numeric',
     precision: 15,

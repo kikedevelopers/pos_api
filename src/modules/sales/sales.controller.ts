@@ -7,6 +7,7 @@ import {
   NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -35,6 +36,8 @@ import {
 } from './dto/sale-credit-note-response.dto';
 import { SaleListItemDto } from './dto/sale-list-item.dto';
 import { SaleResponseDto, toSaleResponseDto } from './dto/sale-response.dto';
+import { UpdateSaleNoteDto } from './dto/update-sale-note.dto';
+import type { UpdateSaleNoteActionResult } from './actions/update-sale-note.action';
 import {
   UpdateSaleResponseDto,
   VoidSaleResponseDto,
@@ -272,6 +275,32 @@ export class SalesController {
       type: currentUser.type,
     });
     return toUpdateSaleResponseDto(result);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /sales/:id/note
+  // --------------------------------------------------------------------------
+
+  @Patch(':id/note')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Actualizar SOLO la nota a nivel ticket (sale_invoices.notes) de una venta. ' +
+      'El cajero la agrega desde el modal de éxito post-venta. Idempotente: ' +
+      'reenviar el mismo notes deja el mismo estado; null o cadena vacía limpia ' +
+      'la nota. Retorna { id, notes }.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: UpdateSaleNoteDto })
+  @ApiResponse({ status: HttpStatus.OK, description: '{ id, notes }' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta no encontrada' })
+  async updateNote(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSaleNoteDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<UpdateSaleNoteActionResult> {
+    return this.salesService.updateNote(id, companyId, dto.notes ?? null);
   }
 
   // --------------------------------------------------------------------------

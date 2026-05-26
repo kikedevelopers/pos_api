@@ -336,6 +336,7 @@ function mapItemToLineRow(item: CreateSaleLineDto, saleInvoiceId: string, compan
     packaging_id: null as string | null,
     product_price_id: null as string | null,
     description: item.name,
+    note: item.note ?? null,
     quantity: item.quantity,
     unit_price: item.price,
     unit_cost: unitCost,

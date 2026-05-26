@@ -54,6 +54,14 @@ export class TicketLineResponseDto {
 
   @ApiProperty({ example: 51 })
   total!: number;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: 'Sin cebolla, bien cocido.',
+    description: 'Nota por línea de venta. null si la línea no tiene nota.',
+  })
+  note!: string | null;
 }
 
 export class TicketPaymentResponseDto {
@@ -199,6 +207,14 @@ export class SaleResponseDto {
   })
   customerName!: string;
 
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: 'Pago en efectivo + transferencia.',
+    description: 'Nota a nivel ticket (sale_invoices.notes). null si no tiene.',
+  })
+  notes!: string | null;
+
   @ApiPropertyOptional({ type: 'string', nullable: true })
   createdBy!: string | null;
 
@@ -255,6 +271,7 @@ function toTicketLine(line: SaleInvoiceLine): TicketLineResponseDto {
     quantity: Number(line.quantity),
     price: Number(line.unit_price),
     total: Number(line.total),
+    note: line.note ?? null,
   };
 }
 
@@ -270,6 +287,9 @@ function toCreditNoteLine(line: CreditNoteLine): TicketLineResponseDto {
     quantity: Number(line.quantity),
     price: Number(line.unit_price),
     total: Number(line.total),
+    // Las líneas de NC/ND no llevan nota por línea (la nota vive solo en la
+    // venta original). Se expone como null para uniformar el shape.
+    note: null,
   };
 }
 
@@ -389,6 +409,7 @@ export function toSaleResponseDto(
     profit: Number(sale.profit),
     margin: Number(sale.margin),
     customerName: sale.customer_name || 'CONSUMIDOR FINAL',
+    notes: sale.notes ?? null,
     createdBy: sale.created_by,
     synced: true,
     isDeleted: sale.is_deleted,

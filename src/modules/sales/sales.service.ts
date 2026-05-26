@@ -10,6 +10,10 @@ import { GetConsolidatedInvoiceUpToAction } from './actions/get-consolidated-inv
 import { GetLastSaleAction, type LastSaleResult } from './actions/get-last-sale.action';
 import { GetSaleCreditNoteAction } from './actions/get-sale-credit-note.action';
 import {
+  UpdateSaleNoteAction,
+  type UpdateSaleNoteActionResult,
+} from './actions/update-sale-note.action';
+import {
   UpdateSaleAction,
   type UpdateSaleActionResult,
   type UpdateSaleActor,
@@ -47,6 +51,7 @@ export class SalesService {
     private readonly findSaleAction: FindSaleAction,
     private readonly createSaleAction: CreateSaleAction,
     private readonly updateSaleAction: UpdateSaleAction,
+    private readonly updateSaleNoteAction: UpdateSaleNoteAction,
     private readonly voidSaleAction: VoidSaleAction,
     private readonly getLastSaleAction: GetLastSaleAction,
     private readonly getConsolidatedInvoiceAction: GetConsolidatedInvoiceAction,
@@ -97,6 +102,14 @@ export class SalesService {
     actor: UpdateSaleActor,
   ): Promise<UpdateSaleActionResult> {
     return this.updateSaleAction.execute(id, dto, companyId, actor);
+  }
+
+  updateNote(
+    invoiceId: number,
+    companyId: number,
+    notes: string | null,
+  ): Promise<UpdateSaleNoteActionResult> {
+    return this.updateSaleNoteAction.execute({ invoiceId, companyId, notes });
   }
 
   void(

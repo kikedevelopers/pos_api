@@ -127,6 +127,17 @@ export class UpdateSaleLineDto {
   @IsInt({ message: 'price_position debe ser entero' })
   @Min(0, { message: 'price_position debe ser >= 0' })
   price_position?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Sin cebolla, bien cocido.',
+    description: 'Nota por línea de venta (una por producto). Opcional. null para limpiar.',
+    nullable: true,
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500, { message: 'note no puede exceder 500 caracteres' })
+  note?: string | null;
 }
 
 /**

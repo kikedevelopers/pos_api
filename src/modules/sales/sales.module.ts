@@ -24,6 +24,7 @@ import { GetConsolidatedInvoiceUpToAction } from './actions/get-consolidated-inv
 import { GetLastSaleAction } from './actions/get-last-sale.action';
 import { GetSaleCreditNoteAction } from './actions/get-sale-credit-note.action';
 import { UpdateSaleAction } from './actions/update-sale.action';
+import { UpdateSaleNoteAction } from './actions/update-sale-note.action';
 import { VoidSaleAction } from './actions/void-sale.action';
 import { SaleCredit } from './entities/sale-credit.entity';
 import { SaleInvoiceLine } from './entities/sale-invoice-line.entity';
@@ -77,6 +78,7 @@ import { SalesService } from './sales.service';
     FindSaleAction,
     CreateSaleAction,
     UpdateSaleAction,
+    UpdateSaleNoteAction,
     VoidSaleAction,
     GetLastSaleAction,
     GetConsolidatedInvoiceAction,

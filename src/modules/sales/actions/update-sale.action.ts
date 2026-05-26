@@ -943,6 +943,7 @@ interface SaleInvoiceLineInsertRow {
   packaging_id: string | null;
   product_price_id: string | null;
   description: string;
+  note: string | null;
   quantity: number;
   unit_price: number;
   unit_cost: number;
@@ -972,6 +973,7 @@ function mapPayloadLineToRow(
     packaging_id: null,
     product_price_id: null,
     description: line.name,
+    note: line.note ?? null,
     quantity: line.quantity,
     unit_price: line.price,
     unit_cost: line.cost,
