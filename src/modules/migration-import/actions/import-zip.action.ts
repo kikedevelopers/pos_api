@@ -37,6 +37,7 @@ import { PurchasePayment } from '@/modules/purchases/entities/purchase-payment.e
 import { SaleInvoice } from '@/modules/sales/entities/sale-invoice.entity';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
 import { SalePayment } from '@/modules/sales/entities/sale-payment.entity';
+import { SaleCredit, SaleCreditStatus } from '@/modules/sales/entities/sale-credit.entity';
 import { Supplier } from '@/modules/suppliers/entities/supplier.entity';
 import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
 import {
@@ -680,6 +681,8 @@ export class ImportZipAction {
         return this.insertSaleInvoices(ctx, rows);
       case 'sale_invoice_lines':
         return this.insertSaleInvoiceLines(ctx, rows);
+      case 'sale_credits':
+        return this.insertSaleCredits(ctx, rows);
       case 'sale_payments':
         return this.insertSalePayments(ctx, rows);
       case 'credit_notes':
@@ -791,7 +794,14 @@ export class ImportZipAction {
   private async insertProducts(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(Product);
     const seen = new Set<string>();
+    // sku_code / bar_code tienen índices UNIQUE PARCIALES per-company que solo
+    // aplican a productos ACTIVOS (is_archived = false). Rastreamos los códigos
+    // de activos ya vistos para desduplicar (ver bloque dentro del loop).
+    const seenSku = new Set<string>();
+    const seenBar = new Set<string>();
     let count = 0;
+    let dupSku = 0;
+    let dupBar = 0;
     for (const row of rows) {
       const localId = asString(row.id);
       let name = asString(row.name).trim();
@@ -807,6 +817,32 @@ export class ImportZipAction {
       seen.add(final.toLowerCase());
 
       const productType = row.product_type === 'COMBO' ? 'COMBO' : 'SIMPLE';
+      // Offline usa `archived`; cloud usa `is_archived`.
+      const isArchived = asBoolean(row.is_archived ?? row.archived);
+
+      // El backup (origen SQLite de placepos) puede traer sku_code/bar_code
+      // repetidos entre productos activos. El índice único parcial solo cubre
+      // activos y es sensible a mayúsculas/espacios, así que comparamos el
+      // valor EXACTO que se insertaría. Ante un duplicado, anulamos el código
+      // del segundo en adelante para no abortar toda la transacción del restore.
+      let skuCode = asNullableString(row.sku_code);
+      if (skuCode !== null && !isArchived) {
+        if (seenSku.has(skuCode)) {
+          skuCode = null;
+          dupSku++;
+        } else {
+          seenSku.add(skuCode);
+        }
+      }
+      let barCode = asNullableString(row.bar_code);
+      if (barCode !== null && !isArchived) {
+        if (seenBar.has(barCode)) {
+          barCode = null;
+          dupBar++;
+        } else {
+          seenBar.add(barCode);
+        }
+      }
 
       const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
@@ -816,8 +852,8 @@ export class ImportZipAction {
           description: asNullableString(row.description),
           product_type: productType as Product['product_type'],
           parent_id: ctx.remapper.getOptional('products', asNullableString(row.parent_id)),
-          sku_code: asNullableString(row.sku_code),
-          bar_code: asNullableString(row.bar_code),
+          sku_code: skuCode,
+          bar_code: barCode,
           packaging_id: ctx.remapper.getOptional('packagings', asNullableString(row.packaging_id)),
           category_id: ctx.remapper.getOptional('categories', asNullableString(row.category_id)),
           cost: asNumber(row.cost),
@@ -826,7 +862,7 @@ export class ImportZipAction {
           hash: asNullableString(row.hash),
           image: asNullableString(row.image),
           show_in_pos: asBoolean(row.show_in_pos, true),
-          is_archived: asBoolean(row.is_archived),
+          is_archived: isArchived,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: ctx.userIdReal,
           updated_by: asNullableString(row.updated_by),
@@ -838,6 +874,16 @@ export class ImportZipAction {
       );
       ctx.remapper.set('products', localId, saved.id);
       count++;
+    }
+    if (dupSku > 0) {
+      ctx.warnings.push(
+        `products: ${dupSku} sku_code duplicados anulados para respetar la unicidad per-company`,
+      );
+    }
+    if (dupBar > 0) {
+      ctx.warnings.push(
+        `products: ${dupBar} bar_code duplicados anulados para respetar la unicidad per-company`,
+      );
     }
     return count;
   }
@@ -1193,11 +1239,19 @@ export class ImportZipAction {
         skippedNoDate++;
         continue;
       }
+      // El backup nativo (placepos) usa `invoice_id`/`item_id` y `name`/`price`/
+      // `cost`; el esquema cloud usa `sale_invoice_id`/`product_id` y
+      // `description`/`unit_price`/`unit_cost`. Mapeamos offline→cloud con
+      // fallback al nombre cloud (backups futuros). El offline no maneja IVA:
+      // subtotal = total, iva = 0.
       const invoiceIdReal = ctx.remapper.getOptional(
         'sale_invoices',
-        asNullableString(row.sale_invoice_id),
+        asNullableString(row.invoice_id ?? row.sale_invoice_id),
       );
-      const productIdReal = ctx.remapper.getOptional('products', asNullableString(row.product_id));
+      const productIdReal = ctx.remapper.getOptional(
+        'products',
+        asNullableString(row.item_id ?? row.product_id),
+      );
       if (invoiceIdReal === null || productIdReal === null) {
         skipped++;
         continue;
@@ -1218,11 +1272,13 @@ export class ImportZipAction {
             'product_prices',
             asNullableString(row.product_price_id),
           ),
-          description: asString(row.description).trim() || `Producto ${productIdReal}`,
+          description:
+            (asString(row.description) || asString(row.name)).trim() ||
+            `Producto ${productIdReal}`,
           quantity,
-          unit_price: Math.max(0, asNumber(row.unit_price)),
-          unit_cost: Math.max(0, asNumber(row.unit_cost)),
-          subtotal: Math.max(0, asNumber(row.subtotal)),
+          unit_price: Math.max(0, asNumber(row.unit_price ?? row.price)),
+          unit_cost: Math.max(0, asNumber(row.unit_cost ?? row.cost)),
+          subtotal: Math.max(0, asNumber(row.subtotal ?? row.total)),
           iva_percentage: asNumber(row.iva_percentage),
           iva_amount: Math.max(0, asNumber(row.iva_amount)),
           total: Math.max(0, asNumber(row.total)),
@@ -1247,6 +1303,122 @@ export class ImportZipAction {
     return count;
   }
 
+  /**
+   * Créditos de venta (ventas a crédito). Su presencia es la que hace que el
+   * profit y el recaudo distingan ventas de contado de ventas a crédito: las
+   * queries del dashboard excluyen del profit base las facturas que tienen un
+   * `sale_credit` (esas aportan vía abonos). Si no se importaran, las ventas a
+   * crédito se contarían como contado y el profit del mes quedaría inflado.
+   *
+   * Particularidades del mapeo backup→cloud:
+   *   - El backup usa `invoice_id` como FK (cloud: `sale_invoice_id`).
+   *   - El backup NO guarda `customer_id` en el crédito (lo deriva de la
+   *     factura); la entidad cloud lo exige NOT NULL, así que lo resolvemos
+   *     desde el `customer_id` de la `sale_invoice` del propio ZIP.
+   *   - Recalculamos `balance` y `status` a partir de `total_amount`/`paid_amount`
+   *     para garantizar los CHECK de consistencia, sin depender de que los
+   *     montos del backup cuadren al céntimo ni del enum de estado de origen
+   *     (offline: PENDING/PARTIAL/PAID → cloud: PENDING/PARTIALLY_PAID/PAID).
+   */
+  private async insertSaleCredits(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(SaleCredit);
+
+    // customer_id por factura, tomado del propio ZIP de sale_invoices.
+    const invoiceCustomer = new Map<string, string | null>();
+    for (const inv of ctx.zip.tables.get('sale_invoices') ?? []) {
+      invoiceCustomer.set(asString(inv.id), asNullableString(inv.customer_id));
+    }
+
+    const seenInvoices = new Set<string>();
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    let skippedNoCustomer = 0;
+    for (const row of rows) {
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const localInvoiceId = asNullableString(row.invoice_id);
+      const invoiceIdReal = ctx.remapper.getOptional('sale_invoices', localInvoiceId);
+      if (invoiceIdReal === null) {
+        skipped++;
+        continue;
+      }
+      // UNIQUE(company_id, sale_invoice_id): un crédito por factura.
+      if (seenInvoices.has(invoiceIdReal)) {
+        skipped++;
+        continue;
+      }
+
+      const total = Math.max(0, asNumber(row.total_amount));
+      if (total <= 0) {
+        // CHECK chk_sale_credits_total_positive.
+        skipped++;
+        continue;
+      }
+
+      const localCustomerId =
+        localInvoiceId !== null ? (invoiceCustomer.get(localInvoiceId) ?? null) : null;
+      const customerIdReal = ctx.remapper.getOptional('customers', localCustomerId);
+      if (customerIdReal === null) {
+        skippedNoCustomer++;
+        continue;
+      }
+
+      // balance/status recomputados para respetar los CHECK de consistencia.
+      const paid = Math.min(Math.max(0, asNumber(row.paid_amount)), total);
+      const balance = Math.round((total - paid) * 100) / 100;
+      const status =
+        paid <= 0
+          ? SaleCreditStatus.PENDING
+          : balance > 0
+            ? SaleCreditStatus.PARTIALLY_PAID
+            : SaleCreditStatus.PAID;
+
+      const dueRaw = asNullableString(row.due_date);
+      let dueDate: Date | null = null;
+      if (dueRaw !== null) {
+        const d = new Date(dueRaw);
+        dueDate = Number.isNaN(d.getTime()) ? null : d;
+      }
+
+      await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          sale_invoice_id: invoiceIdReal,
+          customer_id: customerIdReal,
+          total_amount: total,
+          paid_amount: paid,
+          balance,
+          due_date: dueDate,
+          status,
+          created_at,
+          updated_at: updated_at ?? created_at,
+        }),
+      );
+      seenInvoices.add(invoiceIdReal);
+      count++;
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `sale_credits: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `sale_credits: ${skipped} créditos descartados (FK faltante, duplicado o total inválido)`,
+      );
+    }
+    if (skippedNoCustomer > 0) {
+      ctx.warnings.push(
+        `sale_credits: ${skippedNoCustomer} créditos descartados por factura sin cliente`,
+      );
+    }
+    return count;
+  }
+
   private async insertSalePayments(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(SalePayment);
     let count = 0;
@@ -1258,15 +1430,23 @@ export class ImportZipAction {
         skippedNoDate++;
         continue;
       }
+      // El backup nativo (placepos) usa `invoice_id`; el esquema cloud usa
+      // `sale_invoice_id`. Sin este mapeo, la FK no resolvía y se descartaban
+      // TODOS los pagos (recaudo del día en 0).
       const invoiceIdReal = ctx.remapper.getOptional(
         'sale_invoices',
-        asNullableString(row.sale_invoice_id),
+        asNullableString(row.invoice_id ?? row.sale_invoice_id),
       );
       if (invoiceIdReal === null) {
         skipped++;
         continue;
       }
-      const amount = asNumber(row.amount);
+      // El backup nativo (placepos) modela el monto pagado como `amount_paid`
+      // (la tabla offline tiene amount_due/amount_paid/change_amount, NO
+      // `amount`). La entidad cloud lo unifica en `amount`. Leer `row.amount`
+      // dejaba el monto en 0 y descartaba TODOS los pagos → recaudo del día en
+      // 0. Fallback a `amount` por si un backup futuro ya trae ese nombre.
+      const amount = asNumber(row.amount_paid ?? row.amount);
       if (amount <= 0) {
         skipped++;
         continue;
@@ -1362,9 +1542,12 @@ export class ImportZipAction {
     let count = 0;
     let skipped = 0;
     for (const { row, createdAt, updatedAt } of dated) {
+      // El backup nativo (placepos) usa `original_invoice_id`; el esquema cloud
+      // usa `sale_invoice_id`. Sin este mapeo, las notas no resolvían su factura
+      // y se descartaban todas (ajustes de anulación ausentes en el dashboard).
       const invoiceIdReal = ctx.remapper.getOptional(
         'sale_invoices',
-        asNullableString(row.sale_invoice_id),
+        asNullableString(row.original_invoice_id ?? row.sale_invoice_id),
       );
       if (invoiceIdReal === null) {
         skipped++;
@@ -1399,7 +1582,7 @@ export class ImportZipAction {
           note_number: noteNumber,
           note_type: noteType as CreditNote['note_type'],
           operation_type: operationType as CreditNote['operation_type'],
-          subtotal: Math.max(0, asNumber(row.subtotal)),
+          subtotal: Math.max(0, asNumber(row.subtotal ?? row.total)),
           tax_total: Math.max(0, asNumber(row.tax_total)),
           total: Math.max(0, asNumber(row.total)),
           reason: asNullableString(row.reason),
@@ -1441,7 +1624,11 @@ export class ImportZipAction {
         'credit_notes',
         asNullableString(row.credit_note_id),
       );
-      const productIdReal = ctx.remapper.getOptional('products', asNullableString(row.product_id));
+      // Offline usa `item_id`; cloud usa `product_id`.
+      const productIdReal = ctx.remapper.getOptional(
+        'products',
+        asNullableString(row.item_id ?? row.product_id),
+      );
       if (noteIdReal === null || productIdReal === null) {
         skipped++;
         continue;
@@ -1461,11 +1648,13 @@ export class ImportZipAction {
           ),
           product_id: productIdReal,
           packaging_id: ctx.remapper.getOptional('packagings', asNullableString(row.packaging_id)),
-          description: asString(row.description).trim() || `Producto ${productIdReal}`,
+          description:
+            (asString(row.description) || asString(row.name)).trim() ||
+            `Producto ${productIdReal}`,
           quantity,
-          unit_price: Math.max(0, asNumber(row.unit_price)),
-          unit_cost: Math.max(0, asNumber(row.unit_cost)),
-          subtotal: Math.max(0, asNumber(row.subtotal)),
+          unit_price: Math.max(0, asNumber(row.unit_price ?? row.price)),
+          unit_cost: Math.max(0, asNumber(row.unit_cost ?? row.cost)),
+          subtotal: Math.max(0, asNumber(row.subtotal ?? row.total)),
           iva_percentage: asNumber(row.iva_percentage),
           iva_amount: Math.max(0, asNumber(row.iva_amount)),
           total: Math.max(0, asNumber(row.total)),

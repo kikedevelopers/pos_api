@@ -31,6 +31,7 @@ export const MODULE_INSERT_ORDER: Record<SelectableModule, ZipTableName[]> = {
   sales: [
     'sale_invoices',
     'sale_invoice_lines',
+    'sale_credits',
     'sale_payments',
     'credit_notes',
     'credit_note_lines',
