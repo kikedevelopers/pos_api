@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { GetComparativeReportAction } from './actions/get-comparative-report.action';
 import { GetDashboardSalesAction } from './actions/get-dashboard-sales.action';
 import { GetSalesReportAction } from './actions/get-sales-report.action';
 import { PosReportsController } from './pos-reports.controller';
@@ -10,7 +11,12 @@ import { PosReportsService } from './pos-reports.service';
  */
 @Module({
   controllers: [PosReportsController],
-  providers: [PosReportsService, GetSalesReportAction, GetDashboardSalesAction],
+  providers: [
+    PosReportsService,
+    GetSalesReportAction,
+    GetDashboardSalesAction,
+    GetComparativeReportAction,
+  ],
   exports: [PosReportsService],
 })
 export class PosReportsModule {}

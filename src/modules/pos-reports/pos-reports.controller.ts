@@ -4,9 +4,14 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
+import { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
 import { DashboardSalesQueryDto, SalesReportQueryDto } from './dto/sales-report-query.dto';
 import { PosReportsService } from './pos-reports.service';
-import type { DashboardSalesResult, SalesReportResult } from './pos-reports.service';
+import type {
+  ComparativeReportResult,
+  DashboardSalesResult,
+  SalesReportResult,
+} from './pos-reports.service';
 
 /**
  * Endpoints `/pos-reports` — Fase 11.3. Espejo PlacePos byte-por-byte
@@ -46,5 +51,19 @@ export class PosReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<DashboardSalesResult> {
     return this.posReportsService.getDashboardSales(companyId, query);
+  }
+
+  @Get('comparative')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary:
+      'Informe Comparativo "a la fecha": período actual vs anterior de igual duración (ventas/costo/ganancia/margen) + breakdown por sub-buckets. Misma matemática que /dashboard/performance.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  comparative(
+    @Query() query: ComparativeReportQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<ComparativeReportResult> {
+    return this.posReportsService.getComparativeReport(companyId, query);
   }
 }
