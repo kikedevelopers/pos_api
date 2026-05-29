@@ -233,7 +233,25 @@ export class GetSalesReportAction {
 
     this.applyNoteFilter(conditions, params, filters, dateFrom, dateTo);
 
+    // Pre-agregación de notas activas por invoice (P6). Reemplaza las dos
+    // subqueries escalares correlacionadas (notes_count / note_types) que se
+    // re-ejecutaban una vez por fila. Con el índice parcial
+    // `idx_credit_notes_sale_invoice_active (company_id, sale_invoice_id)
+    // INCLUDE (operation_type) WHERE is_deleted = false` esta agregación se
+    // resuelve por Index-Only Scan. El LEFT JOIN preserva el shape original:
+    // COUNT(*) → 0 vía COALESCE y STRING_AGG → NULL cuando la invoice no tiene
+    // notas, exactamente como devolvían las subqueries.
     const sql = `
+      WITH note_agg AS (
+        SELECT
+          cn2.sale_invoice_id,
+          COUNT(*) AS notes_count,
+          STRING_AGG(DISTINCT cn2.operation_type::text, ',') AS note_types
+        FROM credit_notes cn2
+        WHERE cn2.company_id = $1
+          AND cn2.is_deleted = false
+        GROUP BY cn2.sale_invoice_id
+      )
       SELECT
         si.id::text AS id,
         si.ticket_type::text AS ticket_type,
@@ -247,19 +265,8 @@ export class GetSalesReportAction {
         si.created_by,
         si.is_deleted,
         si.created_at,
-        (
-          SELECT COUNT(*) FROM credit_notes cn2
-          WHERE cn2.sale_invoice_id = si.id
-            AND cn2.company_id = $1
-            AND cn2.is_deleted = false
-        ) AS notes_count,
-        (
-          SELECT STRING_AGG(DISTINCT cn2.operation_type::text, ',')
-          FROM credit_notes cn2
-          WHERE cn2.sale_invoice_id = si.id
-            AND cn2.company_id = $1
-            AND cn2.is_deleted = false
-        ) AS note_types,
+        COALESCE(na.notes_count, 0) AS notes_count,
+        na.note_types,
         (sc.id IS NOT NULL) AS is_credit,
         COALESCE(sc.balance, 0)::float AS credit_balance,
         sc.status::text AS credit_status
@@ -267,6 +274,8 @@ export class GetSalesReportAction {
       LEFT JOIN sale_credits sc
         ON sc.sale_invoice_id = si.id
        AND sc.company_id = $1
+      LEFT JOIN note_agg na
+        ON na.sale_invoice_id = si.id
       WHERE ${conditions.join(' AND ')}
       ORDER BY si.created_at DESC
     `;
@@ -334,16 +343,20 @@ export class GetSalesReportAction {
         )`,
       );
     } else if (!filters.showDeleted) {
-      // Default: ocultar borradas, EXCEPTO si tienen notas en el rango.
+      // Default: ocultar borradas, EXCEPTO si tienen notas en el rango (P2).
+      // `si.id IN (subquery)` en vez de `EXISTS` correlacionado: el planner lo
+      // resuelve como hash semi-join (una sola evaluación) en lugar de
+      // re-ejecutar el subplan por fila. Es equivalente porque
+      // `credit_notes.sale_invoice_id` es NOT NULL (FK), así que no hay
+      // semántica de NULL que cambie el resultado del IN.
       params.push(dateFrom);
       const fromIdx = params.length;
       params.push(dateTo);
       const toIdx = params.length;
       conditions.push(
-        `(si.is_deleted = false OR EXISTS (
-          SELECT 1 FROM credit_notes cn
-          WHERE cn.sale_invoice_id = si.id
-            AND cn.company_id = $1
+        `(si.is_deleted = false OR si.id IN (
+          SELECT cn.sale_invoice_id FROM credit_notes cn
+          WHERE cn.company_id = $1
             AND cn.is_deleted = false
             AND cn.created_at BETWEEN $${fromIdx} AND $${toIdx}
         ))`,
