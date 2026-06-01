@@ -7,6 +7,10 @@ import { CreateDefaultAlertConfigsAction } from '@/modules/alert-configs/actions
 import { CreateDefaultAppSettingsAction } from '@/modules/app-settings/actions/create-default-app-settings.action';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { CreateSubscriptionAction } from '@/modules/subscriptions/actions/create-subscription.action';
+import {
+  SUBSCRIPTION_MIGRATION_DAYS,
+  SUBSCRIPTION_TRIAL_DAYS,
+} from '@/modules/subscriptions/subscriptions.constants';
 import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
 import { User, UserType } from '@/modules/users/entities/user.entity';
 import { CreateDefaultWalletAction } from '@/modules/wallets/actions/create-default-wallet.action';
@@ -52,6 +56,11 @@ export class RegisterAction {
     // después, el hash se descarta — costo aceptable.
     const passwordHash = await argon2.hash(dto.password, ARGON2_OPTIONS);
 
+    // Cuenta creada desde un POS offline (placepos) en su primera migración a
+    // cloud: marca la company y acorta el trial. Flag auto-protegido (pedir
+    // MENOS días no abre superficie de abuso), por eso es público sin gating.
+    const fromOfflineMigration = dto.from_offline_migration === true;
+
     const savedUser = await this.dataSource.transaction<User>(async (manager) => {
       // 1. Fast-path: verificar que el email no esté tomado antes de insertar.
       const existing = await manager.findOne(User, { where: { email: dto.email } });
@@ -77,6 +86,11 @@ export class RegisterAction {
         balance: 0,
         break_even_amount: 0,
         break_even_period_days: 30,
+        // `offline_migration` si la cuenta nace de la migración de un POS
+        // offline; `web` para el registro normal. TypeORM 0.3 no aplica el
+        // default SQL si la columna no aparece en `create()`, por eso se setea
+        // explícito.
+        origin: fromOfflineMigration ? 'offline_migration' : 'web',
       });
       const savedCompany = await manager.save(Company, company);
 
@@ -139,14 +153,19 @@ export class RegisterAction {
       //      lo activa cuando quiera recibir el resumen diario.
       await this.createDefaultAlertConfigsAction.execute(manager, { companyId, createdBy });
 
-      // 4.5. Suscripción (cloud-only): trial de gracia de 10 días desde ahora.
-      //      Va dentro de la MISMA transacción — si falla cualquier paso, la
-      //      suscripción se revierte junto con Company + User + seeds. Cuando
+      // 4.5. Suscripción (cloud-only): trial de gracia desde ahora. Registro
+      //      normal = 10 días (`SUBSCRIPTION_TRIAL_DAYS`); migración desde POS
+      //      offline = 1 día (`SUBSCRIPTION_MIGRATION_DAYS`). Va dentro de la
+      //      MISMA transacción — si falla cualquier paso, la suscripción se
+      //      revierte junto con Company + User + seeds. Cuando
       //      `expires_at < now()` la company queda bloqueada (guard + login).
       await this.createSubscriptionAction.execute(manager, {
         companyId,
         ownerUserId: Number(saved.id),
         startedAt: new Date(),
+        durationDays: fromOfflineMigration
+          ? SUBSCRIPTION_MIGRATION_DAYS
+          : SUBSCRIPTION_TRIAL_DAYS,
       });
 
       return saved;

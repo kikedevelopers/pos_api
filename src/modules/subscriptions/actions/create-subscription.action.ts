@@ -17,6 +17,13 @@ export interface CreateSubscriptionInput {
   companyId: number;
   ownerUserId: number;
   startedAt: Date;
+  /**
+   * Duración (en días) de la ventana de vigencia del trial. Opcional: si se
+   * omite se usa `SUBSCRIPTION_TRIAL_DAYS` (10), que es el registro normal.
+   * El flujo de migración desde un POS offline pasa
+   * `SUBSCRIPTION_MIGRATION_DAYS` (1).
+   */
+  durationDays?: number;
 }
 
 @Injectable()
@@ -27,7 +34,8 @@ export class CreateSubscriptionAction {
     const repo = manager.getRepository(Subscription);
 
     const startedAt = input.startedAt;
-    const expiresAt = addDays(startedAt, SUBSCRIPTION_TRIAL_DAYS);
+    const durationDays = input.durationDays ?? SUBSCRIPTION_TRIAL_DAYS;
+    const expiresAt = addDays(startedAt, durationDays);
 
     const subscription = repo.create({
       company_id: String(input.companyId),
@@ -43,7 +51,7 @@ export class CreateSubscriptionAction {
       ownerUserId: input.ownerUserId,
       startedAt: startedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
-      trialDays: SUBSCRIPTION_TRIAL_DAYS,
+      trialDays: durationDays,
     });
 
     return saved;

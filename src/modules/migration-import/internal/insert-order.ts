@@ -17,11 +17,17 @@ import type { SelectableModule } from './manifest.types';
  *     en el módulo `suppliers`).
  *   - sale_invoices ANTES de sale_invoice_lines / sale_payments (FK).
  *   - credit_notes ANTES de credit_note_lines (FK).
- *   - purchases ANTES de purchase_lines / purchase_payments (FK).
+ *   - purchases ANTES de purchase_lines / purchase_credits / purchase_payments (FK).
  *   - expenses ANTES de fixed_expenses; fixed_expenses ANTES de
  *     fixed_expense_periods (FK fixed_expense_id).
  *   - delivery_companies ANTES de deliveries (FK delivery_company_id).
- *   - inventory_movements al final: sus refs cruzan products/sales/purchases.
+ *   - credit_notes ANTES de correction_sources (FK 1:1 credit_note_id).
+ *   - carrier_credits tras purchases+carriers (FK purchase_id + carrier_id).
+ *   - product_cost_history ANTES de product_price_history (FK cost_history_id);
+ *     ambos viven en `inventory` para que `purchases` (purchase_id) ya exista.
+ *   - financial_movements ANTES de carrier_payments (FK NOT NULL RESTRICT
+ *     financial_movement_id) e inventory_movements al final: sus refs cruzan
+ *     products/sales/purchases/banks/wallets.
  */
 export const MODULE_INSERT_ORDER: Record<SelectableModule, ZipTableName[]> = {
   catalog: ['categories', 'packagings', 'products', 'product_prices'],
@@ -35,11 +41,24 @@ export const MODULE_INSERT_ORDER: Record<SelectableModule, ZipTableName[]> = {
     'sale_payments',
     'credit_notes',
     'credit_note_lines',
+    'correction_sources',
   ],
-  purchases: ['purchases', 'purchase_lines', 'purchase_payments'],
+  purchases: [
+    'purchases',
+    'purchase_lines',
+    'purchase_credits',
+    'purchase_payments',
+    'carrier_credits',
+  ],
   expenses: ['expenses', 'fixed_expenses', 'fixed_expense_periods'],
   deliveries: ['delivery_companies', 'deliveries'],
-  inventory: ['inventory_movements'],
+  inventory: [
+    'product_cost_history',
+    'product_price_history',
+    'financial_movements',
+    'carrier_payments',
+    'inventory_movements',
+  ],
 };
 
 /**

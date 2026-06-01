@@ -13,6 +13,16 @@ import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { User } from '@/modules/users/entities/user.entity';
 
 /**
+ * Origen de creación de la company.
+ *
+ *   - `web`: registro normal vía `POST /auth/register` (web/cloud directo).
+ *   - `offline_migration`: la cuenta cloud se creó DESDE un POS offline
+ *     (`placepos`) en su primera migración a "modo cloud". Estas cuentas
+ *     arrancan con un trial más corto (`SUBSCRIPTION_MIGRATION_DAYS`).
+ */
+export type CompanyOrigin = 'web' | 'offline_migration';
+
+/**
  * `companies` — Tenant raíz del sistema multi-tenant.
  *
  * No lleva `owner_id` (divergencia intencional vs PlacePos): el owner se
@@ -71,6 +81,15 @@ export class Company {
 
   @Column({ type: 'integer', default: 30 })
   break_even_period_days!: number;
+
+  /**
+   * Origen de la cuenta: `'web'` (registro normal) | `'offline_migration'`
+   * (creada desde un POS offline en su primera migración a cloud). Default
+   * `'web'` en DB para que las companies existentes queden marcadas como
+   * registro normal sin necesidad de backfill explícito.
+   */
+  @Column({ type: 'varchar', length: 32, default: 'web' })
+  origin!: CompanyOrigin;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

@@ -5,10 +5,25 @@ import { CreateDefaultAlertConfigsAction } from '@/modules/alert-configs/actions
 import { CreateDefaultAppSettingsAction } from '@/modules/app-settings/actions/create-default-app-settings.action';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { Carrier } from '@/modules/carriers/entities/carrier.entity';
+import {
+  CarrierCredit,
+  CarrierCreditStatus,
+} from '@/modules/carriers/entities/carrier-credit.entity';
+import {
+  CarrierPayment,
+  CarrierPaymentMethod,
+} from '@/modules/carrier-payments/entities/carrier-payment.entity';
 import { Category } from '@/modules/categories/entities/category.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
+import { CorrectionSource } from '@/modules/credit-notes/entities/correction-source.entity';
 import { CreditNote } from '@/modules/credit-notes/entities/credit-note.entity';
 import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
+import {
+  FinancialMovement,
+  MovementConcept,
+  MovementType,
+  type AccountReference,
+} from '@/modules/financial-movements/entities/financial-movement.entity';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { Delivery, type DeliveryPaymentMethod } from '@/modules/deliveries/entities/delivery.entity';
 import { DeliveryCompany } from '@/modules/deliveries/entities/delivery-company.entity';
@@ -31,8 +46,18 @@ import {
   type InventoryMovementReferenceType,
 } from '@/modules/products/entities/inventory-movement.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
+import {
+  ProductCostHistory,
+  ProductCostHistoryDerivedFrom,
+  ProductCostHistoryEvent,
+} from '@/modules/product-history/entities/product-cost-history.entity';
+import { ProductPriceHistory } from '@/modules/product-history/entities/product-price-history.entity';
 import { Purchase } from '@/modules/purchases/entities/purchase.entity';
 import { PurchaseLine } from '@/modules/purchases/entities/purchase-line.entity';
+import {
+  PurchaseCredit,
+  PurchaseCreditStatus,
+} from '@/modules/purchases/entities/purchase-credit.entity';
 import { PurchasePayment } from '@/modules/purchases/entities/purchase-payment.entity';
 import { SaleInvoice } from '@/modules/sales/entities/sale-invoice.entity';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
@@ -689,12 +714,18 @@ export class ImportZipAction {
         return this.insertCreditNotes(ctx, rows);
       case 'credit_note_lines':
         return this.insertCreditNoteLines(ctx, rows);
+      case 'correction_sources':
+        return this.insertCorrectionSources(ctx, rows);
       case 'purchases':
         return this.insertPurchases(ctx, rows);
       case 'purchase_lines':
         return this.insertPurchaseLines(ctx, rows);
+      case 'purchase_credits':
+        return this.insertPurchaseCredits(ctx, rows);
       case 'purchase_payments':
         return this.insertPurchasePayments(ctx, rows);
+      case 'carrier_credits':
+        return this.insertCarrierCredits(ctx, rows);
       case 'expenses':
         return this.insertExpenses(ctx, rows);
       case 'fixed_expenses':
@@ -705,6 +736,14 @@ export class ImportZipAction {
         return this.insertDeliveryCompanies(ctx, rows);
       case 'deliveries':
         return this.insertDeliveries(ctx, rows);
+      case 'product_cost_history':
+        return this.insertProductCostHistory(ctx, rows);
+      case 'product_price_history':
+        return this.insertProductPriceHistory(ctx, rows);
+      case 'financial_movements':
+        return this.insertFinancialMovements(ctx, rows);
+      case 'carrier_payments':
+        return this.insertCarrierPayments(ctx, rows);
       case 'inventory_movements':
         return this.insertInventoryMovements(ctx, rows);
       default:
@@ -1824,6 +1863,104 @@ export class ImportZipAction {
     return count;
   }
 
+  private async insertPurchaseCredits(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(PurchaseCredit);
+
+    // supplier_id por compra, tomado del propio ZIP de purchases: el dump de
+    // purchase_credits no trae supplier_id, pero el modelo cloud lo exige
+    // (FK NOT NULL). Mismo patrón que insertSaleCredits con el customer.
+    const purchaseSupplier = new Map<string, string | null>();
+    for (const p of ctx.zip.tables.get('purchases') ?? []) {
+      purchaseSupplier.set(asString(p.id), asNullableString(p.supplier_id));
+    }
+
+    const seenPurchases = new Set<string>();
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    let skippedNoSupplier = 0;
+    for (const row of rows) {
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+
+      const localPurchaseId = asNullableString(row.purchase_id);
+      const purchaseIdReal = ctx.remapper.getOptional('purchases', localPurchaseId);
+      if (purchaseIdReal === null) {
+        // La compra padre fue descartada (p.ej. supplier inexistente) → su
+        // crédito no tiene a qué colgarse.
+        skipped++;
+        continue;
+      }
+
+      // UNIQUE(company_id, purchase_id): un crédito por compra.
+      if (seenPurchases.has(purchaseIdReal)) {
+        skipped++;
+        continue;
+      }
+
+      const total = Math.max(0, asNumber(row.total_amount));
+      if (total <= 0) {
+        // CHECK chk_purchase_credits_total_positive.
+        skipped++;
+        continue;
+      }
+
+      const localSupplierId =
+        localPurchaseId !== null ? (purchaseSupplier.get(localPurchaseId) ?? null) : null;
+      const supplierIdReal = ctx.remapper.getOptional('suppliers', localSupplierId);
+      if (supplierIdReal === null) {
+        skippedNoSupplier++;
+        continue;
+      }
+
+      // balance/status recomputados para respetar los CHECK de consistencia
+      // contable (paid + balance = total; status coherente con paid/balance).
+      const paid = Math.min(Math.max(0, asNumber(row.paid_amount)), total);
+      const balance = Math.round((total - paid) * 100) / 100;
+      const status =
+        paid <= 0
+          ? PurchaseCreditStatus.PENDING
+          : balance > 0
+            ? PurchaseCreditStatus.PARTIALLY_PAID
+            : PurchaseCreditStatus.PAID;
+
+      await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          purchase_id: purchaseIdReal,
+          supplier_id: supplierIdReal,
+          total_amount: total,
+          paid_amount: paid,
+          balance,
+          status,
+          created_at,
+          updated_at: updated_at ?? created_at,
+        }),
+      );
+      seenPurchases.add(purchaseIdReal);
+      count++;
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `purchase_credits: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `purchase_credits: ${skipped} créditos descartados (FK faltante, duplicado o total inválido)`,
+      );
+    }
+    if (skippedNoSupplier > 0) {
+      ctx.warnings.push(
+        `purchase_credits: ${skippedNoSupplier} créditos descartados por compra sin supplier`,
+      );
+    }
+    return count;
+  }
+
   private async insertPurchasePayments(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(PurchasePayment);
 
@@ -2246,6 +2383,675 @@ export class ImportZipAction {
       );
     }
     return count;
+  }
+
+  // ---------------------------------------------------------------------
+  // Correcciones (rastro de devoluciones de notas)
+  // ---------------------------------------------------------------------
+
+  /**
+   * `correction_sources` — rastro de auditoría 1:1 con una `CreditNote` que
+   * generó retorno de dinero o ajuste de cartera.
+   *
+   * Mapeo backup→cloud:
+   *   - `credit_note_id` se remapea contra `credit_notes`; requerido (FK NOT
+   *     NULL + UNIQUE per-company). Si la nota padre fue descartada o el id no
+   *     resuelve → skip + warning. UNIQUE: descartamos duplicados por nota.
+   *   - `source_type` validado contra el CHECK cloud
+   *     (`bank|wallet|cash_register|sale_credit`); cualquier otro valor → skip.
+   *   - `source_id` es NOT NULL en cloud (offline lo emite sintético, p.ej. 0
+   *     para `cash_register`). Lo remapeamos según el tipo:
+   *       · bank          → `banks` (si no resuelve, no podemos satisfacer la
+   *                         FK semántica → skip).
+   *       · wallet        → wallet default sembrado.
+   *       · cash_register → cash_register default sembrado.
+   *       · sale_credit   → `sale_credits`. Como `sale_credits` se registra en
+   *                         el remapper sólo por id local de crédito (no por
+   *                         factura), si no resuelve degradamos a `cash_register`
+   *                         del default para no perder el rastro.
+   *   - `source_name` NOT NULL no-blank (CHECK) → fallback al tipo.
+   *   - No se remapea su id (nadie depende de correction_sources).
+   */
+  private async insertCorrectionSources(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(CorrectionSource);
+    const validTypes: readonly CorrectionSource['source_type'][] = [
+      'bank',
+      'wallet',
+      'cash_register',
+      'sale_credit',
+    ];
+    const seenNotes = new Set<string>();
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const creditNoteIdReal = ctx.remapper.getOptional(
+        'credit_notes',
+        asNullableString(row.credit_note_id),
+      );
+      if (creditNoteIdReal === null) {
+        skipped++;
+        continue;
+      }
+      // UNIQUE(company_id, credit_note_id): una corrección por nota.
+      if (seenNotes.has(creditNoteIdReal)) {
+        skipped++;
+        continue;
+      }
+
+      const rawType = asString(row.source_type) as CorrectionSource['source_type'];
+      if (!validTypes.includes(rawType)) {
+        skipped++;
+        continue;
+      }
+
+      // source_id NOT NULL: remapeo según tipo. Para bank exigimos resolución
+      // real; el resto cae a los defaults sembrados (caja/billetera) o degrada.
+      let sourceType: CorrectionSource['source_type'] = rawType;
+      let sourceId: string | null = null;
+      if (rawType === 'bank') {
+        sourceId = ctx.remapper.getOptional('banks', asNullableString(row.source_id));
+        if (sourceId === null) {
+          skipped++;
+          continue;
+        }
+      } else if (rawType === 'wallet') {
+        sourceId = ctx.defaultWalletId;
+      } else if (rawType === 'sale_credit') {
+        const scId = ctx.remapper.getOptional('sale_credits', asNullableString(row.source_id));
+        if (scId !== null) {
+          sourceId = scId;
+        } else {
+          // Sin crédito resoluble degradamos a caja para preservar el rastro.
+          sourceType = 'cash_register';
+          sourceId = ctx.defaultCashRegisterId;
+        }
+      } else {
+        // cash_register.
+        sourceId = ctx.defaultCashRegisterId;
+      }
+
+      const sourceName = asString(row.source_name).trim() || sourceType;
+
+      await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          credit_note_id: creditNoteIdReal,
+          source_type: sourceType,
+          source_id: sourceId,
+          source_name: sourceName,
+          created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
+          created_by_id: ctx.userIdReal,
+          created_at,
+        }),
+      );
+      seenNotes.add(creditNoteIdReal);
+      count++;
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `correction_sources: ${skipped} correcciones descartadas (nota inexistente, duplicada, tipo o bank inválido)`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `correction_sources: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    return count;
+  }
+
+  // ---------------------------------------------------------------------
+  // Créditos / abonos a transportistas
+  // ---------------------------------------------------------------------
+
+  /**
+   * `carrier_credits` — cuenta por pagar a un transportista, 1:1 con una
+   * compra (flete). Se registra en el remapper porque `carrier_payments`
+   * depende de su id.
+   *
+   * Mapeo backup→cloud:
+   *   - `carrier_id` remapeado contra `carriers`; requerido (FK NOT NULL) →
+   *     skip si no resuelve.
+   *   - `purchase_id` remapeado contra `purchases`; requerido (FK NOT NULL) →
+   *     skip si no resuelve. UNIQUE(company_id, purchase_id): un crédito por
+   *     compra → descartamos duplicados.
+   *   - `total/paid_amount/balance` recomputados (paid = min(paid, total);
+   *     balance = total - paid) para respetar los CHECK contables
+   *     (paid <= total; paid + balance ≈ total). total puede ser 0 (el CHECK
+   *     cloud admite `total >= 0`, a diferencia de sale/purchase credits).
+   *   - `status` offline (PENDING/PARTIAL/PAID) coincide con el enum cloud
+   *     `carrier_credit_status` (PENDING/PARTIAL/PAID), pero lo recomputamos
+   *     desde paid/balance para garantizar consistencia.
+   */
+  private async insertCarrierCredits(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(CarrierCredit);
+    const seenPurchases = new Set<string>();
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const localId = asString(row.id);
+      const { created_at, updated_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const carrierIdReal = ctx.remapper.getOptional('carriers', asNullableString(row.carrier_id));
+      const purchaseIdReal = ctx.remapper.getOptional(
+        'purchases',
+        asNullableString(row.purchase_id),
+      );
+      if (carrierIdReal === null || purchaseIdReal === null) {
+        skipped++;
+        continue;
+      }
+      if (seenPurchases.has(purchaseIdReal)) {
+        skipped++;
+        continue;
+      }
+
+      const total = Math.max(0, asNumber(row.total));
+      const paid = Math.min(Math.max(0, asNumber(row.paid_amount)), total);
+      const balance = Math.round((total - paid) * 100) / 100;
+      const status =
+        paid <= 0
+          ? CarrierCreditStatus.PENDING
+          : balance > 0
+            ? CarrierCreditStatus.PARTIAL
+            : CarrierCreditStatus.PAID;
+
+      const saved = await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          carrier_id: carrierIdReal,
+          purchase_id: purchaseIdReal,
+          total,
+          paid_amount: paid,
+          balance,
+          status,
+          created_at,
+          updated_at: updated_at ?? created_at,
+        }),
+      );
+      ctx.remapper.set('carrier_credits', localId, saved.id);
+      seenPurchases.add(purchaseIdReal);
+      count++;
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `carrier_credits: ${skipped} créditos descartados (carrier/compra inexistente o duplicado)`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `carrier_credits: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    return count;
+  }
+
+  /**
+   * `carrier_payments` — abono concreto a un `carrier_credit`. Va en el módulo
+   * `inventory` DESPUÉS de `financial_movements` porque su
+   * `financial_movement_id` es NOT NULL con FK RESTRICT.
+   *
+   * Mapeo backup→cloud:
+   *   - `carrier_credit_id` remapeado; requerido → skip si no resuelve.
+   *   - `financial_movement_id` remapeado contra `financial_movements`;
+   *     requerido (FK NOT NULL RESTRICT). Si el FM padre no se migró → skip
+   *     (no podemos inventar el respaldo contable).
+   *   - `amount > 0` (CHECK) → skip si <= 0.
+   *   - `payment_method` ∈ {CASH,BANK,WALLET}. El CHECK exige coherencia
+   *     método↔cuenta: CASH ⇒ bank/wallet NULL; BANK ⇒ bank NOT NULL, wallet
+   *     NULL; WALLET ⇒ wallet NOT NULL, bank NULL. Para BANK remapeamos el
+   *     `bank_id`; si no resuelve degradamos el pago a CASH (preserva el monto
+   *     y su FM). Para WALLET usamos el wallet default sembrado.
+   *   - No se remapea su id (nadie depende de carrier_payments).
+   */
+  private async insertCarrierPayments(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(CarrierPayment);
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const creditIdReal = ctx.remapper.getOptional(
+        'carrier_credits',
+        asNullableString(row.carrier_credit_id),
+      );
+      if (creditIdReal === null) {
+        skipped++;
+        continue;
+      }
+      const fmIdReal = ctx.remapper.getOptional(
+        'financial_movements',
+        asNullableString(row.financial_movement_id),
+      );
+      if (fmIdReal === null) {
+        skipped++;
+        continue;
+      }
+      const amount = asNumber(row.amount);
+      if (amount <= 0) {
+        skipped++;
+        continue;
+      }
+
+      const rawMethod = asString(row.payment_method);
+      let method: CarrierPaymentMethod;
+      let bankId: string | null = null;
+      let walletId: string | null = null;
+      if (rawMethod === 'BANK') {
+        const bankIdReal = ctx.remapper.getOptional('banks', asNullableString(row.bank_id));
+        if (bankIdReal !== null) {
+          method = CarrierPaymentMethod.BANK;
+          bankId = bankIdReal;
+        } else {
+          // Sin banco resoluble degradamos a CASH (el CHECK exige bank/wallet
+          // NULL para CASH) preservando monto y respaldo contable.
+          method = CarrierPaymentMethod.CASH;
+        }
+      } else if (rawMethod === 'WALLET') {
+        method = CarrierPaymentMethod.WALLET;
+        walletId = ctx.defaultWalletId;
+      } else {
+        method = CarrierPaymentMethod.CASH;
+      }
+
+      await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          carrier_credit_id: creditIdReal,
+          amount,
+          payment_method: method,
+          bank_id: bankId,
+          wallet_id: walletId,
+          financial_movement_id: fmIdReal,
+          description: asNullableString(row.description),
+          created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
+          created_by_id: ctx.userIdReal,
+          created_at,
+        }),
+      );
+      count++;
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `carrier_payments: ${skipped} abonos descartados (crédito/FM inexistente o monto inválido)`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `carrier_payments: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    return count;
+  }
+
+  // ---------------------------------------------------------------------
+  // Historial de costo / precio de producto
+  // ---------------------------------------------------------------------
+
+  /**
+   * `product_cost_history` — auditoría inmutable de cambios de costo. Se
+   * registra en el remapper porque `product_price_history.cost_history_id`
+   * depende de su id.
+   *
+   * Mapeo backup→cloud:
+   *   - `product_id` remapeado; requerido (FK NOT NULL) → skip si no resuelve.
+   *   - `purchase_id` remapeado contra `purchases`; opcional (FK SET NULL) →
+   *     NULL si no resuelve.
+   *   - `event_type` ∈ {RECEIVE,EDIT,ARCHIVE}; default RECEIVE si inválido.
+   *   - `derived_from` ∈ {PURCHASE,PARENT}; default PURCHASE si inválido.
+   *   - `cost_before/cost_after` numéricos (NUMERIC(15,4) cloud). `change_pct`
+   *     offline es nullable; cloud lo guarda con default 0 → coalesce a 0.
+   *   - `created_by` no viene en offline (sólo created_by_id) → owner.
+   */
+  private async insertProductCostHistory(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(ProductCostHistory);
+    const validEvents: readonly ProductCostHistoryEvent[] = [
+      ProductCostHistoryEvent.RECEIVE,
+      ProductCostHistoryEvent.EDIT,
+      ProductCostHistoryEvent.ARCHIVE,
+    ];
+    const validSources: readonly ProductCostHistoryDerivedFrom[] = [
+      ProductCostHistoryDerivedFrom.PURCHASE,
+      ProductCostHistoryDerivedFrom.PARENT,
+    ];
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const localId = asString(row.id);
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const productIdReal = ctx.remapper.getOptional('products', asNullableString(row.product_id));
+      if (productIdReal === null) {
+        skipped++;
+        continue;
+      }
+      const rawEvent = asString(row.event_type) as ProductCostHistoryEvent;
+      const eventType: ProductCostHistoryEvent = validEvents.includes(rawEvent)
+        ? rawEvent
+        : ProductCostHistoryEvent.RECEIVE;
+      const rawDerived = asString(row.derived_from) as ProductCostHistoryDerivedFrom;
+      const derivedFrom: ProductCostHistoryDerivedFrom = validSources.includes(rawDerived)
+        ? rawDerived
+        : ProductCostHistoryDerivedFrom.PURCHASE;
+
+      const saved = await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          product_id: productIdReal,
+          purchase_id: ctx.remapper.getOptional('purchases', asNullableString(row.purchase_id)),
+          event_type: eventType,
+          derived_from: derivedFrom,
+          cost_before: asNumber(row.cost_before),
+          cost_after: asNumber(row.cost_after),
+          change_pct: asNullableNumber(row.change_pct) ?? 0,
+          created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
+          created_by_id: ctx.userIdReal,
+          created_at,
+        }),
+      );
+      ctx.remapper.set('product_cost_history', localId, saved.id);
+      count++;
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `product_cost_history: ${skipped} entradas descartadas por product inexistente`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `product_cost_history: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    return count;
+  }
+
+  /**
+   * `product_price_history` — snapshot del profit/margin de un `product_prices`
+   * antes/después de un cambio de costo.
+   *
+   * Mapeo backup→cloud:
+   *   - `product_price_id` remapeado contra `product_prices`; requerido (FK NOT
+   *     NULL) → skip si no resuelve. OJO: `product_prices` topa en 5 por
+   *     producto en el import, así que precios excedentes no existen y sus
+   *     snapshots se descartan legítimamente.
+   *   - `product_id` remapeado; requerido (FK NOT NULL) → skip si no resuelve.
+   *   - `cost_history_id` offline es NOT NULL, pero el cloud lo modela nullable
+   *     (FK SET NULL). Lo remapeamos contra `product_cost_history`; si su row
+   *     padre fue descartado, NO descartamos el snapshot: dejamos NULL.
+   *   - `sale_price/profit_before/profit_after/margin_before/margin_after`
+   *     numéricos (default 0 en cloud) → coalesce a 0.
+   *   - `created_by`/`created_by_id` no vienen en offline → owner.
+   */
+  private async insertProductPriceHistory(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(ProductPriceHistory);
+    let count = 0;
+    let skipped = 0;
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const productPriceIdReal = ctx.remapper.getOptional(
+        'product_prices',
+        asNullableString(row.product_price_id),
+      );
+      const productIdReal = ctx.remapper.getOptional('products', asNullableString(row.product_id));
+      if (productPriceIdReal === null || productIdReal === null) {
+        skipped++;
+        continue;
+      }
+      // cost_history_id: nullable en cloud → NULL si el row padre fue descartado.
+      const costHistoryIdReal = ctx.remapper.getOptional(
+        'product_cost_history',
+        asNullableString(row.cost_history_id),
+      );
+
+      await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          product_price_id: productPriceIdReal,
+          product_id: productIdReal,
+          cost_history_id: costHistoryIdReal,
+          sale_price: asNumber(row.sale_price),
+          profit_before: asNumber(row.profit_before),
+          profit_after: asNumber(row.profit_after),
+          margin_before: asNumber(row.margin_before),
+          margin_after: asNumber(row.margin_after),
+          created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
+          created_by_id: ctx.userIdReal,
+          created_at,
+        }),
+      );
+      count++;
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(
+        `product_price_history: ${skipped} snapshots descartados (product_price/product inexistente)`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `product_price_history: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    return count;
+  }
+
+  // ---------------------------------------------------------------------
+  // Tesorería (libro de movimientos financieros)
+  // ---------------------------------------------------------------------
+
+  /**
+   * `financial_movements` — libro de AUDITORÍA inmutable de tesorería. Se migra
+   * en crudo (NO se regenera vía servicios) → no hay doble conteo. Se registra
+   * en el remapper porque `carrier_payments.financial_movement_id` depende de
+   * su id (FK NOT NULL RESTRICT).
+   *
+   * Referencias polimórficas source/destination (type+id):
+   *   - `source_type`/`destination_type` ∈ {bank,wallet,cash_register,external}
+   *     (CHECK). placepos puede emitir otros valores → si quedan ambos NULL el
+   *     CHECK `has_endpoint` aborta, por eso validamos endpoint a endpoint.
+   *   - El id de cada endpoint se remapea según su tipo:
+   *       · bank          → `banks`. Si NO resuelve, anulamos ese endpoint
+   *         (type+id a NULL) en vez de inventar un banco (los CHECK de
+   *         consistencia exigen que bank/wallet lleven id non-null).
+   *       · wallet        → wallet default sembrado.
+   *       · cash_register → cash_register default sembrado. NOTA: el CHECK
+   *         relajado (`relax-financial-movements-source-check`) permite
+   *         cash_register/external CON id NULL, pero usamos el default para
+   *         máxima fidelidad.
+   *       · external      → sin id (el CHECK lo permite NULL).
+   *   - Tras el remapeo, si AMBOS endpoints quedaron NULL el movimiento se
+   *     descarta con warning (violaría `has_endpoint`); es el único caso de
+   *     pérdida y sólo ocurre con dumps inconsistentes (todo bank irresoluble).
+   *
+   * Enum `concept`: el cloud no admite varios valores offline
+   * (CASH_REGISTER_CLOSE, PURCHASE_PAYMENT, TAX_PAYMENT, PAYROLL, OTHER). Se
+   * mapean al concepto cloud más cercano (ver `mapMovementConcept`) para no
+   * perder el movimiento. `movement_type` ∈ {INCOME,EXPENSE,TRANSFER} es
+   * idéntico en ambos lados.
+   *
+   * `amount > 0` (CHECK) → skip si <= 0. No tiene `updated_at`.
+   */
+  private async insertFinancialMovements(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
+    const repo = ctx.manager.getRepository(FinancialMovement);
+    const validTypes: readonly MovementType[] = [
+      MovementType.INCOME,
+      MovementType.EXPENSE,
+      MovementType.TRANSFER,
+    ];
+    let count = 0;
+    let skipped = 0;
+    let skippedNoEndpoint = 0;
+    let skippedNoDate = 0;
+    for (const row of rows) {
+      const localId = asString(row.id);
+      const { created_at } = readZipDates(row);
+      if (created_at === null) {
+        skippedNoDate++;
+        continue;
+      }
+      const amount = asNumber(row.amount);
+      if (amount <= 0) {
+        skipped++;
+        continue;
+      }
+      const rawType = asString(row.movement_type) as MovementType;
+      const movementType: MovementType = validTypes.includes(rawType)
+        ? rawType
+        : MovementType.EXPENSE;
+      const concept = this.mapMovementConcept(asString(row.concept));
+
+      const source = this.resolveMovementEndpoint(
+        ctx,
+        asNullableString(row.source_type),
+        asNullableString(row.source_id),
+      );
+      const destination = this.resolveMovementEndpoint(
+        ctx,
+        asNullableString(row.destination_type),
+        asNullableString(row.destination_id),
+      );
+      // CHECK chk_financial_movements_has_endpoint: al menos un endpoint.
+      if (source.type === null && destination.type === null) {
+        skippedNoEndpoint++;
+        continue;
+      }
+
+      const saved = await repo.save(
+        repo.create({
+          company_id: ctx.companyIdReal,
+          amount,
+          movement_type: movementType,
+          concept,
+          description: asNullableString(row.description),
+          source_type: source.type,
+          source_id: source.id,
+          destination_type: destination.type,
+          destination_id: destination.id,
+          reference_code: asNullableString(row.reference_code),
+          created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
+          created_by_id: ctx.userIdReal,
+          created_at,
+        }),
+      );
+      ctx.remapper.set('financial_movements', localId, saved.id);
+      count++;
+    }
+    if (skipped > 0) {
+      ctx.warnings.push(`financial_movements: ${skipped} movimientos descartados por monto inválido`);
+    }
+    if (skippedNoEndpoint > 0) {
+      ctx.warnings.push(
+        `financial_movements: ${skippedNoEndpoint} movimientos descartados por quedar sin endpoint resoluble`,
+      );
+    }
+    if (skippedNoDate > 0) {
+      ctx.warnings.push(
+        `financial_movements: ${skippedNoDate} filas descartadas por falta de created_at`,
+      );
+    }
+    return count;
+  }
+
+  /**
+   * Mapea el `concept` offline al enum cloud `movement_concept`. Los valores
+   * comunes pasan idénticos; los exclusivos de placepos
+   * (CASH_REGISTER_CLOSE, PURCHASE_PAYMENT, TAX_PAYMENT, PAYROLL, OTHER) se
+   * proyectan al cloud más cercano para no perder el movimiento.
+   */
+  private mapMovementConcept(raw: string): MovementConcept {
+    switch (raw) {
+      case 'SALE':
+        return MovementConcept.SALE;
+      case 'SALE_PAYMENT':
+        return MovementConcept.SALE_PAYMENT;
+      case 'PURCHASE':
+        return MovementConcept.PURCHASE;
+      case 'PURCHASE_PAYMENT':
+        // El cloud no tiene PURCHASE_PAYMENT como concepto de tesorería: el
+        // pago a compra es un egreso de caja/cartera → PURCHASE.
+        return MovementConcept.PURCHASE;
+      case 'EXPENSE':
+        return MovementConcept.EXPENSE;
+      case 'EXPENSE_PAYMENT':
+        return MovementConcept.EXPENSE_PAYMENT;
+      case 'TAX_PAYMENT':
+      case 'PAYROLL':
+        // Sin concepto dedicado en cloud → gasto.
+        return MovementConcept.EXPENSE_PAYMENT;
+      case 'TRANSFER':
+        return MovementConcept.TRANSFER;
+      case 'INITIAL_BALANCE':
+        return MovementConcept.INITIAL_BALANCE;
+      case 'REFUND':
+        return MovementConcept.REFUND;
+      case 'CARRIER_PAYMENT':
+        return MovementConcept.CARRIER_PAYMENT;
+      case 'ADJUSTMENT':
+      case 'CASH_REGISTER_CLOSE':
+      case 'OTHER':
+      default:
+        // Cierre de caja / sobrante / otros sin equivalente → ajuste.
+        return MovementConcept.ADJUSTMENT;
+    }
+  }
+
+  /**
+   * Resuelve un endpoint (source o destination) de un `financial_movement`:
+   * valida el tipo contra el CHECK y remapea el id según corresponda. Devuelve
+   * `{ type:null, id:null }` cuando el endpoint no existe o no es resoluble
+   * (p.ej. un bank que no se migró), respetando los CHECK de consistencia.
+   */
+  private resolveMovementEndpoint(
+    ctx: ImportCtx,
+    rawType: string | null,
+    rawId: string | null,
+  ): { type: AccountReference | null; id: string | null } {
+    if (rawType === null || rawType === '') {
+      return { type: null, id: null };
+    }
+    if (rawType === 'bank') {
+      const bankIdReal = ctx.remapper.getOptional('banks', rawId);
+      // bank exige id non-null (CHECK de consistencia): si no resuelve, anula
+      // el endpoint completo en vez de inventar un banco.
+      if (bankIdReal === null) {
+        return { type: null, id: null };
+      }
+      return { type: 'bank', id: bankIdReal };
+    }
+    if (rawType === 'wallet') {
+      return { type: 'wallet', id: ctx.defaultWalletId };
+    }
+    if (rawType === 'cash_register') {
+      return { type: 'cash_register', id: ctx.defaultCashRegisterId };
+    }
+    if (rawType === 'external') {
+      // external admite id NULL (CHECK relajado).
+      return { type: 'external', id: null };
+    }
+    // Tipo desconocido → endpoint anulado.
+    return { type: null, id: null };
   }
 
   // ---------------------------------------------------------------------

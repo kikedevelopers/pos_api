@@ -1,6 +1,14 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 /**
  * Payload de `POST /auth/register`.
@@ -60,4 +68,23 @@ export class RegisterDto {
   @MinLength(1)
   @MaxLength(255)
   company_name!: string;
+
+  /**
+   * `true` cuando la cuenta cloud se crea DESDE un POS offline (placepos) en su
+   * primera migración a "modo cloud". Marca la company con
+   * `origin = 'offline_migration'` y reduce el trial a
+   * `SUBSCRIPTION_MIGRATION_DAYS` (1 día) en vez de los 10 del registro normal.
+   *
+   * Opcional: ausente/`false` mantiene el flujo de registro normal. Es un flag
+   * auto-protegido (pedir MENOS días de trial no abre superficie de abuso), por
+   * eso es público y no requiere gating adicional.
+   */
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'true si la cuenta se crea desde la migración de un POS offline (trial de 1 día).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  from_offline_migration?: boolean;
 }
