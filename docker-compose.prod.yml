@@ -64,6 +64,13 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_OWNER: ${JWT_EXPIRES_OWNER:-7d}
       JWT_EXPIRES_EMPLOYEE: ${JWT_EXPIRES_EMPLOYEE:-1d}
+      # Firmas asimétricas Ed25519 (paneles externos: kdevs-admin). Sin valor =
+      # endpoints firmados deshabilitados (503). ADMIN_* = migration-import;
+      # SUPERADMIN_* = módulo superadmin (privada solo en el navegador).
+      ADMIN_SIGNING_PUBLIC_KEY: ${ADMIN_SIGNING_PUBLIC_KEY:-}
+      ADMIN_SIGNATURE_MAX_SKEW_MS: ${ADMIN_SIGNATURE_MAX_SKEW_MS:-300000}
+      SUPERADMIN_SIGNING_PUBLIC_KEY: ${SUPERADMIN_SIGNING_PUBLIC_KEY:-}
+      SUPERADMIN_SIGNATURE_MAX_SKEW_MS: ${SUPERADMIN_SIGNATURE_MAX_SKEW_MS:-120000}
     # Sin `ports:` — el acceso externo solo va por nginx (80/443).
     expose:
       - '${PORT:-3010}'
