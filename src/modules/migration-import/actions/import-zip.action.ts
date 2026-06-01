@@ -27,7 +27,8 @@ import {
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { Delivery, type DeliveryPaymentMethod } from '@/modules/deliveries/entities/delivery.entity';
 import { DeliveryCompany } from '@/modules/deliveries/entities/delivery-company.entity';
-import { Employee } from '@/modules/employees/entities/employee.entity';
+import { Employee, EmployeeRole } from '@/modules/employees/entities/employee.entity';
+import { ensureMirrorUserForEmployee } from '@/modules/employees/internal/ensure-mirror-user-for-employee.helper';
 import { Expense } from '@/modules/expenses/entities/expense.entity';
 import {
   FixedExpense,
@@ -454,6 +455,15 @@ export class ImportZipAction {
       tsByType,
     };
 
+    // 4.0 Pre-poblar el MAPA DE USUARIOS offline→cloud (namespace 'users' del
+    //     remapper) ANTES del loop de módulos. Es la fuente de verdad para
+    //     remapear `created_by_id` en TODAS las tablas de movimiento. Debe
+    //     correr SIEMPRE, incluso si el módulo `employees` no fue seleccionado
+    //     (p.ej. seleccionan `sales` sin `employees`), para que `created_by_id`
+    //     resuelva consistentemente al owner por defecto.
+    const employeesSelected = selectedModules.includes('employees');
+    this.populateUserMap(ctx, employeesSelected);
+
     for (const mod of MODULE_GLOBAL_ORDER) {
       if (!selectedModules.includes(mod)) {
         continue;
@@ -818,7 +828,7 @@ export class ImportZipAction {
           value: asNumber(row.value),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
             : {}),
@@ -903,7 +913,7 @@ export class ImportZipAction {
           show_in_pos: asBoolean(row.show_in_pos, true),
           is_archived: isArchived,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           updated_by: asNullableString(row.updated_by),
           updated_by_id: null,
           ...(created_at !== null
@@ -973,7 +983,7 @@ export class ImportZipAction {
           margin: Math.max(0, asNumber(row.margin)),
           iva_percentage: asNumber(row.iva_percentage),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
             : {}),
@@ -1020,7 +1030,7 @@ export class ImportZipAction {
           balance: asNumber(row.balance),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
             : {}),
@@ -1055,7 +1065,7 @@ export class ImportZipAction {
           payment_accounts: paymentAccounts,
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
             : {}),
@@ -1096,7 +1106,7 @@ export class ImportZipAction {
           available_in_pos: asBoolean(row.available_in_pos, true),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
             : {}),
@@ -1137,7 +1147,7 @@ export class ImportZipAction {
           notes: asNullableString(row.notes),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
             : {}),
@@ -1149,13 +1159,145 @@ export class ImportZipAction {
     return count;
   }
 
+  // ---------------------------------------------------------------------
+  // Mapa de usuarios offline→cloud (remapeo de created_by_id)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Pre-puebla el namespace `'users'` del remapper: `offline users.id` →
+   * `cloud users.id`, fuente de verdad para remapear `created_by_id` en todas
+   * las tablas de movimiento.
+   *
+   * --------------------------------------------------------------------------
+   * Reglas de mapeo
+   * --------------------------------------------------------------------------
+   *
+   *   - Default: TODO `users.id` offline → `ctx.userIdReal` (owner cloud). Esto
+   *     cubre al owner y al `superadmin` offline: el cloud NO tiene superadmin
+   *     por tenant, así que sus movimientos se atribuyen al owner (la única
+   *     identidad "global" del tenant). Si el dump tuviera más de un owner, el
+   *     extra también cae al owner cloud único.
+   *
+   *   - Override por empleado con login: los `user_id` (offline) de empleados
+   *     que serán espejados (`login_enabled=true` o `user_id != null`, con
+   *     credenciales) se EXCLUYEN del default aquí y los mapea `insertEmployees`
+   *     al `users.id` del espejo cloud recién creado. Así un mismo id offline
+   *     nunca se registra dos veces en el remapper (IdRemapper.set lanza ante
+   *     duplicados).
+   *
+   * Si el módulo `employees` NO fue seleccionado, no se crearán espejos, así
+   * que TODOS los `users.id` (incluidos los de empleados) caen al owner: es el
+   * comportamiento seguro previo (sin empleados migrados no hay a quién
+   * atribuir las ventas salvo el owner).
+   */
+  private populateUserMap(ctx: ImportCtx, employeesSelected: boolean): void {
+    // 1. Recolectar los user_id offline de empleados que SERÁN espejados.
+    //    Solo si el módulo employees está seleccionado (de lo contrario no se
+    //    crean espejos y esos ids deben caer al owner).
+    const mirroredOfflineUserIds = new Set<string>();
+    if (employeesSelected) {
+      for (const emp of ctx.zip.tables.get('employees') ?? []) {
+        const username = asNullableString(emp.username);
+        const password = asNullableString(emp.password);
+        const hasCredentials =
+          username !== null && username.trim() !== '' && password !== null && password !== '';
+        const loginEnabled = asBoolean(emp.login_enabled) && hasCredentials;
+        const offlineUserId = asNullableString(emp.user_id);
+        const willMirror = hasCredentials && (loginEnabled || offlineUserId !== null);
+        if (willMirror && offlineUserId !== null) {
+          mirroredOfflineUserIds.add(offlineUserId);
+        }
+      }
+    }
+
+    // 2. Default: cada users.id offline → owner cloud, salvo los reservados a
+    //    espejos (que poblará insertEmployees).
+    let toOwner = 0;
+    for (const userRow of ctx.zip.tables.get('users') ?? []) {
+      const offlineUserId = asNullableString(userRow.id);
+      if (offlineUserId === null) {
+        continue;
+      }
+      if (mirroredOfflineUserIds.has(offlineUserId)) {
+        continue; // lo mapea insertEmployees al espejo.
+      }
+      if (!ctx.remapper.has('users', offlineUserId)) {
+        ctx.remapper.set('users', offlineUserId, ctx.userIdReal);
+        toOwner++;
+      }
+    }
+    if (toOwner > 0) {
+      ctx.warnings.push(
+        `users: ${toOwner} usuario(s) offline (owner/superadmin/empleados sin login) mapeados al owner cloud para created_by_id`,
+      );
+    }
+  }
+
+  /**
+   * Traduce un `created_by_id` offline al `users.id` cloud correcto vía el mapa
+   * `'users'` del remapper. Si el id no está mapeado (p.ej. un user_id offline
+   * inesperado), cae al owner cloud — nunca deja `created_by_id` colgando.
+   */
+  private remapUserId(ctx: ImportCtx, offlineCreatedById: unknown): string {
+    const key = asNullableString(offlineCreatedById);
+    if (key === null) {
+      return ctx.userIdReal;
+    }
+    return ctx.remapper.getOptional('users', key) ?? ctx.userIdReal;
+  }
+
+  /**
+   * `employees` — sub-usuarios del POS. A diferencia de la versión previa
+   * (que anulaba credenciales y dejaba `user_id=null`), aquí MIGRAMOS las
+   * credenciales reales del dump y, para los empleados con login, creamos su
+   * User ESPEJO cloud enlazando `employees.user_id`.
+   *
+   * --------------------------------------------------------------------------
+   * Por qué importa para la atribución de ventas
+   * --------------------------------------------------------------------------
+   *
+   * Offline, `sale_invoices.created_by_id` apunta al `users.id` del vendedor
+   * (su User espejo si es empleado). El POS cloud, al loguear al empleado, lo
+   * resuelve vía `ensureMirrorUserForEmployee`, que REUSA el espejo si
+   * `employees.user_id` ya está seteado. Por eso, si aquí creamos el espejo y
+   * fijamos `employees.user_id`, el login posterior obtiene EXACTAMENTE el
+   * mismo `users.id` que pusimos en las ventas migradas → el empleado ve sus
+   * ventas. Además registramos en el mapa `offline employees.user_id →
+   * cloud mirror.id` para que `remapUserId` lo aplique a `created_by_id`.
+   *
+   * --------------------------------------------------------------------------
+   * Credenciales
+   * --------------------------------------------------------------------------
+   *
+   * `username`/`password` (hash argon2id) y `login_enabled` se copian tal cual
+   * del ZIP. El hash es compatible con `argon2.verify` de pos_api (mismo
+   * algoritmo PHC). El espejo reusa ese mismo hash (no se re-hashea).
+   *
+   * La migración hace wipe del tenant antes de cargar, así que dentro de la
+   * company no hay colisión de `employees.username`. El email sintético del
+   * espejo lleva `companyId` (ver `buildMirrorEmail`), evitando colisiones
+   * cross-tenant; `ensureMirrorUserForEmployee` traduce un 23505 residual a
+   * `ConflictException`.
+   */
   private async insertEmployees(ctx: ImportCtx, rows: ZipRow[]): Promise<number> {
     const repo = ctx.manager.getRepository(Employee);
     let count = 0;
+    let mirrors = 0;
     for (const row of rows) {
       const localId = asString(row.id);
-      // role: 'manager' | 'employee'. login_enabled=false con username/password null.
-      const role = row.role === 'manager' ? 'manager' : 'employee';
+      // role: 'manager' | 'employee'.
+      const role = row.role === 'manager' ? EmployeeRole.MANAGER : EmployeeRole.EMPLOYEE;
+
+      // Credenciales del dump. El CHECK chk_employees_login_requires_credentials
+      // exige username+password no vacíos cuando login_enabled=true; si el dump
+      // viniera incoherente (login=true sin credenciales), degradamos a
+      // login_enabled=false para no abortar la TX del import.
+      const username = asNullableString(row.username);
+      const password = asNullableString(row.password);
+      const hasCredentials =
+        username !== null && username.trim() !== '' && password !== null && password !== '';
+      const loginEnabled = asBoolean(row.login_enabled) && hasCredentials;
+
       const { created_at, updated_at } = readZipDates(row);
       const saved = await repo.save(
         repo.create({
@@ -1164,13 +1306,15 @@ export class ImportZipAction {
           phone: asNullableString(row.phone),
           email: asNullableString(row.email),
           address: asNullableString(row.address),
-          role: role as Employee['role'],
-          login_enabled: false,
-          username: null,
-          password: null,
+          role,
+          login_enabled: loginEnabled,
+          username: hasCredentials ? username : null,
+          password: hasCredentials ? password : null,
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          // `employees.created_by_id` = id del OWNER que creó al empleado
+          // (campo informacional), NO el vendedor. Permanece en el owner cloud.
+          created_by_id: ctx.userIdReal, // owner creador (no remapear)
           user_id: null,
           ...(created_at !== null
             ? { created_at, updated_at: updated_at ?? created_at }
@@ -1179,6 +1323,39 @@ export class ImportZipAction {
       );
       ctx.remapper.set('employees', localId, saved.id);
       count++;
+
+      // Crear el User espejo y registrar el mapeo offline→cloud SOLO para
+      // empleados que (a) tienen credenciales válidas y (b) en el dump
+      // estaban habilitados o ya tenían un User espejo (user_id != null).
+      // El segundo criterio cubre el empleado cuyas ventas históricas se
+      // atribuyeron a su espejo aunque su login esté hoy revocado.
+      const offlineUserId = asNullableString(row.user_id);
+      const shouldMirror = hasCredentials && (loginEnabled || offlineUserId !== null);
+      if (shouldMirror) {
+        // ensureMirrorUserForEmployee es idempotente: si employee.user_id ya
+        // estuviera seteado reusaría el espejo. Aquí siempre es null (recién
+        // insertado), así que crea uno nuevo y muta saved.user_id in-memory.
+        const mirror = await ensureMirrorUserForEmployee({
+          manager: ctx.manager,
+          employee: saved,
+          companyId: Number(ctx.companyIdReal),
+        });
+        mirrors++;
+        // Mapear el `users.id` OFFLINE del espejo (employees.user_id del ZIP)
+        // al `users.id` CLOUD del espejo recién creado. Las ventas/compras/etc
+        // migradas traen `created_by_id = ese user_id offline` y se remapearán
+        // a `mirror.id` vía remapUserId(). Si el dump no trae user_id (login
+        // habilitado sin espejo previo), no hay id offline que remapear: las
+        // ventas de ese empleado caerán al owner (no había id estable offline).
+        if (offlineUserId !== null && !ctx.remapper.has('users', offlineUserId)) {
+          ctx.remapper.set('users', offlineUserId, mirror.id);
+        }
+      }
+    }
+    if (mirrors > 0) {
+      ctx.warnings.push(
+        `employees: ${mirrors} usuario(s) espejo creados para empleados con login (credenciales y atribución de ventas migradas)`,
+      );
     }
     return count;
   }
@@ -1249,7 +1426,7 @@ export class ImportZipAction {
           margin: asNumber(row.margin),
           notes: asNullableString(row.notes),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           is_deleted: asBoolean(row.is_deleted),
           created_at: createdAt,
           updated_at: updatedAt ?? createdAt,
@@ -1531,7 +1708,7 @@ export class ImportZipAction {
           account_type: accountType,
           account_id: accountId,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           uuid: asNullableString(row.uuid),
           created_at,
         }),
@@ -1626,7 +1803,7 @@ export class ImportZipAction {
           total: Math.max(0, asNumber(row.total)),
           reason: asNullableString(row.reason),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           is_deleted: asBoolean(row.is_deleted),
           created_at: createdAt,
           updated_at: updatedAt ?? createdAt,
@@ -1780,7 +1957,7 @@ export class ImportZipAction {
           invoice_date: invoiceDate,
           invoice_number: asNullableString(row.invoice_number),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           is_deleted: asBoolean(row.is_deleted),
           created_at: createdAt,
           updated_at: updatedAt ?? createdAt,
@@ -2039,7 +2216,7 @@ export class ImportZipAction {
           source_id: sourceId,
           notes: asNullableString(row.notes),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           uuid: asNullableString(row.uuid),
           created_at: createdAt,
         }),
@@ -2113,7 +2290,7 @@ export class ImportZipAction {
           notes: asNullableString(row.notes),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
           updated_at: updated_at ?? created_at,
         }),
@@ -2170,7 +2347,7 @@ export class ImportZipAction {
           start_date: asDate(row.start_date),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
@@ -2308,7 +2485,7 @@ export class ImportZipAction {
           phones,
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
@@ -2370,7 +2547,7 @@ export class ImportZipAction {
           cash_register_log_id: null,
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
@@ -2486,7 +2663,7 @@ export class ImportZipAction {
           source_id: sourceId,
           source_name: sourceName,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
         }),
       );
@@ -2679,7 +2856,7 @@ export class ImportZipAction {
           financial_movement_id: fmIdReal,
           description: asNullableString(row.description),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
         }),
       );
@@ -2763,7 +2940,7 @@ export class ImportZipAction {
           cost_after: asNumber(row.cost_after),
           change_pct: asNullableNumber(row.change_pct) ?? 0,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
         }),
       );
@@ -2838,7 +3015,7 @@ export class ImportZipAction {
           margin_before: asNumber(row.margin_before),
           margin_after: asNumber(row.margin_after),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
         }),
       );
@@ -2951,7 +3128,7 @@ export class ImportZipAction {
           destination_id: destination.id,
           reference_code: asNullableString(row.reference_code),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
         }),
       );
@@ -3159,7 +3336,7 @@ export class ImportZipAction {
           reference_code: asNullableString(row.reference_code),
           description: asNullableString(row.description),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
-          created_by_id: ctx.userIdReal,
+          created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
         }),
       );
