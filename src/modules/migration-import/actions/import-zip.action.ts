@@ -567,6 +567,14 @@ export class ImportZipAction {
     for (const table of COMPANY_SCOPED_DELETE_ORDER) {
       if (table === 'users') {
         // El owner se conserva (id estable) y se actualiza en upsertOwnerUser.
+        // Pero los users ESPEJO de empleados (type='employee') SÍ se borran:
+        // `insertEmployees` los recrea, y conservarlos haría colisionar su
+        // email sintético (`${username}.${companyId}@local.placepos`) al
+        // re-migrar → "email sintético ya está en uso". Esto vuelve la
+        // migración idempotente.
+        await manager.query(`DELETE FROM "users" WHERE company_id = $1 AND type = 'employee'`, [
+          companyId,
+        ]);
         continue;
       }
       if (table === 'products') {
