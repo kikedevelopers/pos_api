@@ -80,10 +80,12 @@ export enum PurchaseStatus {
 @Check('chk_purchases_iva_total_non_negative', 'iva_total >= 0')
 @Check(
   'chk_purchases_received_consistency',
+  // Para RECEIVED exigimos receptor + fecha. NO se exige transportista:
+  // la mayoría de compras no tienen flete (carrier_name NULL). Paridad con
+  // placepos, que al recibir solo setea status/received_by/received_at.
   `status = 'PENDING'
    OR (
      received_at IS NOT NULL
-     AND length(btrim(coalesce(carrier_name, ''))) > 0
      AND length(btrim(coalesce(received_by, ''))) > 0
    )`,
 )

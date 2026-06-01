@@ -56,10 +56,10 @@ export class CreatePurchaseLineDto {
   @ApiPropertyOptional({ example: 24, description: 'Unidades base por paquete (snapshot).' })
   @IsOptional()
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 4 },
-    { message: 'packaging_value debe ser número con hasta 4 decimales' },
-  )
+  // Sin tope de decimales: es un valor derivado del cliente (puede venir de
+  // divisiones). Paridad con placepos (que no valida) — la columna
+  // numeric(15,4) y preciseNumber() redondean al persistir.
+  @IsNumber({}, { message: 'packaging_value debe ser un número' })
   @Min(0, { message: 'packaging_value debe ser >= 0' })
   packaging_value?: number | null;
 
@@ -77,16 +77,17 @@ export class CreatePurchaseLineDto {
     description: 'Cantidad total en unidades base (packaging_qty * packaging_value).',
   })
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'unit_qty debe ser número con hasta 4 decimales' })
+  // Derivado (packaging_qty * packaging_value): puede traer muchos decimales.
+  // Sin tope; la columna numeric(15,4) y preciseNumber() redondean. Paridad placepos.
+  @IsNumber({}, { message: 'unit_qty debe ser un número' })
   @Min(0, { message: 'unit_qty debe ser >= 0' })
   unit_qty!: number;
 
   @ApiProperty({ example: 1.5, description: 'Precio por unidad base.' })
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 4 },
-    { message: 'unit_price debe ser número con hasta 4 decimales' },
-  )
+  // Derivado (packaging_price / packaging_value): la división produce decimales
+  // periódicos. Sin tope; numeric(15,4) y preciseNumber() redondean. Paridad placepos.
+  @IsNumber({}, { message: 'unit_price debe ser un número' })
   @Min(0, { message: 'unit_price debe ser >= 0' })
   unit_price!: number;
 
