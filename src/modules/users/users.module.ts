@@ -36,6 +36,8 @@ import { UsersService } from './users.service';
     ListOwnersAction,
     AdminSignatureGuard,
   ],
-  exports: [UsersService, TypeOrmModule],
+  // `ListOwnersAction` se exporta para que `SuperadminModule` reutilice el
+  // listado cross-tenant de owners sin duplicar la query.
+  exports: [UsersService, ListOwnersAction, TypeOrmModule],
 })
 export class UsersModule {}

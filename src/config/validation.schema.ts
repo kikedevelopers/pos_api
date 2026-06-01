@@ -75,4 +75,12 @@ export const validationSchema = Joi.object({
   // esos endpoints firmados. `ADMIN_SIGNATURE_MAX_SKEW_MS` = ventana anti-replay.
   ADMIN_SIGNING_PUBLIC_KEY: Joi.string().allow('').default(''),
   ADMIN_SIGNATURE_MAX_SKEW_MS: Joi.number().integer().min(1000).default(300000),
+
+  // Firma asimétrica para endpoints /superadmin/* (panel kdevs-admin). PAR
+  // DEDICADO, distinto del de /admin/*. Clave pública Ed25519 en base64 (SPKI);
+  // la privada vive SOLO en el navegador del superadmin. Vacío = deshabilita
+  // los endpoints /superadmin/*. `SUPERADMIN_SIGNATURE_MAX_SKEW_MS` = ventana
+  // anti-replay dedicada (más corta: cubre el borrado total de tenant).
+  SUPERADMIN_SIGNING_PUBLIC_KEY: Joi.string().allow('').default(''),
+  SUPERADMIN_SIGNATURE_MAX_SKEW_MS: Joi.number().integer().min(1000).default(120000),
 });

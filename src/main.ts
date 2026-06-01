@@ -16,7 +16,11 @@ Big.RM = Big.roundHalfUp;
 Big.DP = 10;
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // `rawBody: true` expone `req.rawBody` (Buffer) además del body parseado.
+  // Lo necesita `SuperadminSignatureGuard` para hashear el cuerpo EXACTO tal
+  // como lo firmó el navegador (kdevs-admin), sin re-serializar. No altera el
+  // parsing normal del body.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
 
   // Logger estructurado (Pino) reemplaza al logger nativo de Nest.
   app.useLogger(app.get(Logger));

@@ -22,7 +22,20 @@ export interface AppConfig {
    */
   adminSigning: {
     publicKey: string;
+    /**
+     * Clave pública Ed25519 (SPKI en base64) del PAR DEDICADO del superadmin
+     * (kdevs-admin). Es DISTINTA de `publicKey` (par de migration-import): la
+     * privada vive SOLO en el navegador del panel superadmin. Verifica las
+     * rutas `/superadmin/*` vía `SuperadminSignatureGuard`. Vacío = esos
+     * endpoints quedan deshabilitados (503).
+     */
+    superadminPublicKey: string;
     maxSkewMs: number;
+    /**
+     * Ventana anti-replay DEDICADA del superadmin. Más corta que la de admin
+     * porque cubre operaciones destructivas (borrado total de tenant).
+     */
+    superadminMaxSkewMs: number;
   };
 }
 
@@ -45,6 +58,8 @@ export default registerAs<AppConfig>('app', () => ({
   },
   adminSigning: {
     publicKey: process.env.ADMIN_SIGNING_PUBLIC_KEY ?? '',
+    superadminPublicKey: process.env.SUPERADMIN_SIGNING_PUBLIC_KEY ?? '',
     maxSkewMs: parseInt(process.env.ADMIN_SIGNATURE_MAX_SKEW_MS ?? '300000', 10),
+    superadminMaxSkewMs: parseInt(process.env.SUPERADMIN_SIGNATURE_MAX_SKEW_MS ?? '120000', 10),
   },
 }));

@@ -52,6 +52,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { SubscriptionGuard } from './modules/subscriptions/subscription.guard';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { SuperadminModule } from './modules/superadmin/superadmin.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { TicketSettingsModule } from './modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from './modules/users/users.module';
@@ -230,6 +231,11 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // entornos. Lo consume el panel kdevs-admin (genera el ZIP y lo sube
     // firmado). El generador de ZIP vive ahora en kdevs-admin.
     MigrationImportModule,
+    // Panel superadmin (kdevs-admin). Endpoints `/superadmin/*` protegidos por
+    // firma asimétrica DEDICADA (`SUPERADMIN_SIGNING_PUBLIC_KEY`). Cross-tenant:
+    // listar/ver/ajustar-suscripción/borrar tenants. Importa UsersModule para
+    // reutilizar `ListOwnersAction`.
+    SuperadminModule,
     // Restore de backup NATIVO de placepos para el owner autenticado
     // (`POST /backup/restore`). Reutiliza `ImportZipAction` de
     // MigrationImportModule. Protegido por JWT + @Roles('owner') + Subscription.
