@@ -17,11 +17,11 @@ import type { Request } from 'express';
 
 import { Public } from '@/common/decorators/public.decorator';
 
-import { ListOwnersAction } from '@/modules/users/actions/list-owners.action';
 import { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
 
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
+import { ListTenantsAction } from './actions/list-tenants.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
 import {
@@ -29,7 +29,6 @@ import {
   toSuperadminSubscriptionResponseDto,
 } from './dto/superadmin-subscription-response.dto';
 import { SuperadminTenantDetailDto } from './dto/superadmin-tenant-detail.dto';
-import { toSuperadminTenantListItemDto } from './dto/superadmin-tenant-list-item.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
@@ -55,7 +54,7 @@ export class SuperadminController {
   private readonly logger = new Logger(SuperadminController.name);
 
   constructor(
-    private readonly listOwnersAction: ListOwnersAction,
+    private readonly listTenantsAction: ListTenantsAction,
     private readonly getTenantDetailAction: GetTenantDetailAction,
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
     private readonly deleteTenantAction: DeleteTenantAction,
@@ -71,14 +70,14 @@ export class SuperadminController {
     description:
       'Requiere firma superadmin válida (x-kdevs-signature/timestamp/key-id). ' +
       'Paginación limit/offset y búsqueda libre por owner y company (ILIKE). ' +
-      'Reutiliza la lógica de ListOwnersAction.',
+      'Incluye por tenant la vigencia de la suscripción (LEFT JOIN; puede ser null).',
   })
   @ApiResponse({ status: HttpStatus.OK, type: SuperadminTenantsResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Firma ausente/inválida/expirada' })
   async listTenants(@Query() query: ListOwnersQueryDto): Promise<SuperadminTenantsResponseDto> {
-    const result = await this.listOwnersAction.execute(query);
+    const result = await this.listTenantsAction.execute(query);
     return {
-      tenants: result.owners.map(toSuperadminTenantListItemDto),
+      tenants: result.tenants,
       total: result.total,
       limit: result.limit,
       offset: result.offset,

@@ -1,12 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import type { User } from '@/modules/users/entities/user.entity';
-
 /**
- * Fila del listado `GET /superadmin/tenants`. Mapea un `owner` (con su company
- * eager-cargada por `ListOwnersAction`) a una vista plana orientada al panel
- * superadmin. NO incluye `subscriptionExpiresAt` porque `ListOwnersAction` no
- * carga la suscripción; ese dato vive en el detalle.
+ * Fila del listado `GET /superadmin/tenants`. Vista plana de un `owner` con su
+ * company y la vigencia de su suscripción (LEFT JOIN; puede no existir), tal
+ * como la proyecta `ListTenantsAction` para el panel superadmin.
  */
 export class SuperadminTenantListItemDto {
   @ApiProperty({ example: 8, description: 'company_id (bigint serializado a number).' })
@@ -33,20 +30,20 @@ export class SuperadminTenantListItemDto {
     description: 'Fecha de registro del owner (created_at).',
   })
   createdAt!: string;
-}
 
-/**
- * Mapea un `owner` (User con `company` eager) a la fila del listado superadmin.
- * Si por alguna razón la company no viene cargada, los campos de company quedan
- * con un fallback neutro (no debería ocurrir: owner siempre tiene company).
- */
-export function toSuperadminTenantListItemDto(owner: User): SuperadminTenantListItemDto {
-  return {
-    companyId: owner.company ? Number(owner.company.id) : Number(owner.company_id),
-    companyName: owner.company?.name ?? '',
-    ownerName: `${owner.name} ${owner.lastname}`.trim(),
-    ownerEmail: owner.email,
-    documentNumber: owner.company?.document_number ?? null,
-    createdAt: owner.created_at.toISOString(),
-  };
+  @ApiPropertyOptional({
+    example: '2026-05-12T14:30:00.000Z',
+    nullable: true,
+    description: 'Inicio de la suscripción (started_at). null si el tenant no tiene suscripción.',
+  })
+  subscriptionStartedAt!: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-05-22T14:30:00.000Z',
+    nullable: true,
+    description:
+      'Vencimiento de la suscripción (expires_at). null si el tenant no tiene suscripción. ' +
+      'El panel calcula los días restantes a partir de esta fecha.',
+  })
+  subscriptionExpiresAt!: string | null;
 }
