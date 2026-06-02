@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -16,6 +16,29 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+import { preciseNumber } from '@/common/utils/precision';
+
+/**
+ * Redondea campos monetarios DERIVADOS (productos de `quantity`) a la escala de
+ * su columna ANTES de validar. El cliente los pre-calcula sin redondear
+ * (paridad PlacePos); con cantidades fraccionarias superan la escala y
+ * `@IsNumber({ maxDecimalPlaces })` rechazaría la edición. Espejo del helper
+ * homónimo en `create-sale.dto.ts`. Deja pasar null/undefined/no-numérico.
+ */
+const roundToScale = (scale: number) =>
+  Transform(({ value }) => {
+    if (value === null || value === undefined || value === '') {
+      return value;
+    }
+    // Guard: solo redondeamos numéricos finitos; lo demás lo reporta @IsNumber.
+    if (!Number.isFinite(Number(value))) {
+      return value;
+    }
+    // `preciseNumber` redondea con Big.js (toBig().round(scale, ROUND_HALF_UP)).
+    // Pasamos el valor crudo a Big — sin coerción intermedia a `number`.
+    return preciseNumber(value, scale);
+  });
 
 /**
  * Tipos de cuenta receptora aceptados como `credit_correction_source` /
@@ -87,6 +110,7 @@ export class UpdateSaleLineDto {
     description: 'Total de la línea (price * quantity). Pre-calculado por el cliente con Big.js.',
   })
   @Type(() => Number)
+  @roundToScale(2)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'total debe ser número con hasta 2 decimales' })
   @Min(0, { message: 'total debe ser >= 0' })
   total!: number;
@@ -96,6 +120,7 @@ export class UpdateSaleLineDto {
     description: 'Ganancia de la línea ((price - cost) * quantity). Pre-calculada por el cliente.',
   })
   @Type(() => Number)
+  @roundToScale(2)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })
   profit!: number;
 
@@ -104,6 +129,7 @@ export class UpdateSaleLineDto {
     description: 'Margen porcentual de la línea (profit / total * 100). Hasta 4 decimales.',
   })
   @Type(() => Number)
+  @roundToScale(4)
   @IsNumber({ maxDecimalPlaces: 4 }, { message: 'margin debe ser número con hasta 4 decimales' })
   margin!: number;
 
@@ -222,6 +248,7 @@ export class UpdateSaleDto {
   })
   @IsOptional()
   @Type(() => Number)
+  @roundToScale(2)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'total debe ser número con hasta 2 decimales' })
   @Min(0, { message: 'total debe ser >= 0' })
   total?: number;
@@ -232,6 +259,7 @@ export class UpdateSaleDto {
   })
   @IsOptional()
   @Type(() => Number)
+  @roundToScale(2)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'cost debe ser número con hasta 2 decimales' })
   @Min(0, { message: 'cost debe ser >= 0' })
   cost?: number;
@@ -242,6 +270,7 @@ export class UpdateSaleDto {
   })
   @IsOptional()
   @Type(() => Number)
+  @roundToScale(2)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'profit debe ser número con hasta 2 decimales' })
   profit?: number;
 
@@ -251,6 +280,7 @@ export class UpdateSaleDto {
   })
   @IsOptional()
   @Type(() => Number)
+  @roundToScale(4)
   @IsNumber({ maxDecimalPlaces: 4 }, { message: 'margin debe ser número con hasta 4 decimales' })
   margin?: number;
 
