@@ -53,8 +53,10 @@ import { SalesService } from './sales.service';
  * Endpoints `/sales`. Espejo de PlacePos `sales.routes.ts`.
  *
  * Roles:
- *   - GETs y `POST /sales`: cualquier autenticado (owner / manager / employee).
- *   - `PUT /sales/:id`, `POST /sales/:id/void`: owner y manager (no employee).
+ *   - Todos los endpoints (GETs, `POST /sales`, `PUT /sales/:id`,
+ *     `POST /sales/:id/void`): cualquier autenticado
+ *     (owner / manager / employee) — paridad con PlacePos, que no restringe
+ *     edición ni anulación de ventas por tipo de usuario.
  *
  * Multi-tenancy: el `company_id` se propaga vía `@CurrentCompany()` desde
  * el JWT — nunca del payload o query.
@@ -239,7 +241,7 @@ export class SalesController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
       'Editar un ticket. ORDER: reemplazo total de líneas + cliente. SALE: emite ' +
@@ -309,7 +311,7 @@ export class SalesController {
 
   @Post(':id/void')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
       'Anular un ticket. ORDER: soft-delete directo. SALE: emite NC FULL_VOID, ' +
