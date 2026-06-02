@@ -2294,7 +2294,11 @@ export class ImportZipAction {
           source_type: sourceType,
           source_id: sourceId,
           source_name: asNullableString(row.source_name) ?? 'Caja',
-          expense_date: asDate(row.expense_date),
+          // El Expense OFFLINE de PlacePos NO tiene columna `expense_date`
+          // (solo `created_at`). Por eso el ZIP no la trae y `asDate(undefined)`
+          // devolvía `now()` (= día de la migración), corrompiendo el filtro de
+          // gastos por fecha. Cae en `created_at` (la fecha real) cuando falta.
+          expense_date: row.expense_date != null ? asDate(row.expense_date) : created_at,
           notes: asNullableString(row.notes),
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,

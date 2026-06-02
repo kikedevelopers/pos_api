@@ -9,8 +9,15 @@ import {
   Repository,
 } from 'typeorm';
 
+import { APP_TIMEZONE, dayjs } from '@/common/utils/dayjs';
+
 import type { ListExpensesQueryDto } from '../dto/list-expenses-query.dto';
 import { Expense } from '../entities/expense.entity';
+
+/** Inicio del día COLOMBIANO (`YYYY-MM-DD`) como instante UTC. */
+const dayStartBogota = (d: string): Date => dayjs.tz(`${d} 00:00:00.000`, APP_TIMEZONE).toDate();
+/** Fin del día COLOMBIANO (`YYYY-MM-DD`) como instante UTC. */
+const dayEndBogota = (d: string): Date => dayjs.tz(`${d} 23:59:59.999`, APP_TIMEZONE).toDate();
 
 /**
  * Resultado del listado paginado. Espejo PlacePos extendido con `limit`/
@@ -58,20 +65,21 @@ export class FindAllExpensesAction {
       where.is_archived = false;
     }
 
-    // Rango de fechas (usando `expense_date` — la fecha contable, no
-    // created_at; paridad PlacePos que usa created_at pero aquí preferimos
-    // expense_date que es el campo que el usuario controla).
+    // Rango de fechas. Filtramos por `expense_date` (la fecha contable) pero
+    // interpretando los límites en hora COLOMBIA (no UTC) — regla global
+    // dayjs/America/Bogota. Un gasto de la tarde-noche de ayer (Colombia) NO
+    // debe caer en el "hoy" de hoy. Espejo del día colombiano de PlacePos.
     if (query.date_from && query.date_to) {
       where.expense_date = Between(
-        new Date(`${query.date_from}T00:00:00.000Z`),
-        new Date(`${query.date_to}T23:59:59.999Z`),
+        dayStartBogota(query.date_from),
+        dayEndBogota(query.date_to),
       );
     } else if (query.date_from) {
-      where.expense_date = MoreThanOrEqual(new Date(`${query.date_from}T00:00:00.000Z`));
+      where.expense_date = MoreThanOrEqual(dayStartBogota(query.date_from));
     } else if (query.date_to) {
       // MED-1 auditoría: antes se ignoraba silenciosamente `date_to` cuando
       // venía sin `date_from`.
-      where.expense_date = LessThanOrEqual(new Date(`${query.date_to}T23:59:59.999Z`));
+      where.expense_date = LessThanOrEqual(dayEndBogota(query.date_to));
     }
 
     if (query.search) {
