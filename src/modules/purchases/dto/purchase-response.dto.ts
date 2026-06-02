@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+import {
+  CarrierCreditStatus,
+  type CarrierCredit,
+} from '@/modules/carriers/entities/carrier-credit.entity';
+import { type Carrier } from '@/modules/carriers/entities/carrier.entity';
+
 import { PurchaseCreditStatus, type PurchaseCredit } from '../entities/purchase-credit.entity';
 import { type PurchaseLine } from '../entities/purchase-line.entity';
 import {
@@ -223,6 +229,91 @@ export class PurchaseResponseDto {
 
   @ApiProperty({ type: [PurchasePaymentResponseDto] })
   payments!: PurchasePaymentResponseDto[];
+
+  @ApiPropertyOptional({ type: () => CarrierSnapshotResponseDto, nullable: true })
+  carrier!: CarrierSnapshotResponseDto | null;
+
+  @ApiPropertyOptional({ type: () => PurchaseCarrierCreditResponseDto, nullable: true })
+  carrier_credit!: PurchaseCarrierCreditResponseDto | null;
+}
+
+/**
+ * Snapshot del transportista anidado en la compra. Espejo PlacePos
+ * `PurchaseCarrierSnapshot`.
+ */
+export class CarrierSnapshotResponseDto {
+  @ApiProperty({ example: 7 })
+  id!: number;
+
+  @ApiProperty({ example: 'Transportes XYZ' })
+  name!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  identification!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  phone!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  email!: string | null;
+}
+
+/**
+ * Crédito al transportista (flete) anidado en la compra. Espejo PlacePos
+ * `PurchaseCarrierCredit`. `payments` siempre `[]` en cloud: pos_api aún no
+ * modela el historial de abonos al transportista.
+ */
+export class PurchaseCarrierCreditResponseDto {
+  @ApiProperty({ example: 3 })
+  id!: number;
+
+  @ApiProperty({ example: 12 })
+  purchase_id!: number;
+
+  @ApiProperty({ example: 7 })
+  carrier_id!: number;
+
+  @ApiProperty({ example: 10000 })
+  total!: number;
+
+  @ApiProperty({ example: 0 })
+  paid_amount!: number;
+
+  @ApiProperty({ example: 10000 })
+  balance!: number;
+
+  @ApiProperty({ enum: CarrierCreditStatus, example: CarrierCreditStatus.PENDING })
+  status!: CarrierCreditStatus;
+
+  @ApiProperty({ type: [Object], example: [] })
+  payments!: never[];
+
+  @ApiProperty()
+  created_at!: string;
+}
+
+function toCarrierSnapshotResponseDto(carrier: Carrier): CarrierSnapshotResponseDto {
+  return {
+    id: Number(carrier.id),
+    name: carrier.name,
+    identification: carrier.identification,
+    phone: carrier.phone,
+    email: carrier.email,
+  };
+}
+
+function toPurchaseCarrierCreditResponseDto(cc: CarrierCredit): PurchaseCarrierCreditResponseDto {
+  return {
+    id: Number(cc.id),
+    purchase_id: Number(cc.purchase_id),
+    carrier_id: Number(cc.carrier_id),
+    total: Number(cc.total),
+    paid_amount: Number(cc.paid_amount),
+    balance: Number(cc.balance),
+    status: cc.status,
+    payments: [],
+    created_at: cc.created_at.toISOString(),
+  };
 }
 
 export function toPurchaseLineResponseDto(line: PurchaseLine): PurchaseLineResponseDto {
@@ -286,6 +377,8 @@ export function toPurchaseResponseDto(
   lines: PurchaseLine[],
   credit: PurchaseCredit | null,
   payments: PurchasePayment[],
+  carrier: Carrier | null = null,
+  carrierCredit: CarrierCredit | null = null,
 ): PurchaseResponseDto {
   return {
     id: Number(purchase.id),
@@ -319,5 +412,7 @@ export function toPurchaseResponseDto(
     lines: lines.map(toPurchaseLineResponseDto),
     credit: credit ? toPurchaseCreditResponseDto(credit) : null,
     payments: payments.map(toPurchasePaymentResponseDto),
+    carrier: carrier ? toCarrierSnapshotResponseDto(carrier) : null,
+    carrier_credit: carrierCredit ? toPurchaseCarrierCreditResponseDto(carrierCredit) : null,
   };
 }

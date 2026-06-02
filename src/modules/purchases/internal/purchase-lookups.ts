@@ -1,6 +1,9 @@
 import { NotFoundException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 
+import { CarrierCredit } from '@/modules/carriers/entities/carrier-credit.entity';
+import { Carrier } from '@/modules/carriers/entities/carrier.entity';
+
 import { PurchaseCredit } from '../entities/purchase-credit.entity';
 import { PurchaseLine } from '../entities/purchase-line.entity';
 import { PurchasePayment } from '../entities/purchase-payment.entity';
@@ -90,5 +93,36 @@ export async function findPurchasePayments(
   return manager.find(PurchasePayment, {
     where: { purchase_id: String(purchaseId), company_id: String(companyId) },
     order: { created_at: 'ASC' },
+  });
+}
+
+/**
+ * Carga el transportista (snapshot) asociado a la compra por `carrier_id`.
+ * `null` si la compra no tiene carrier. Multi-tenant por `company_id`.
+ */
+export async function findPurchaseCarrier(
+  manager: EntityManager,
+  carrierId: number | null,
+  companyId: number,
+): Promise<Carrier | null> {
+  if (carrierId === null) {
+    return null;
+  }
+  return manager.findOne(Carrier, {
+    where: { id: String(carrierId), company_id: String(companyId) },
+  });
+}
+
+/**
+ * Carga el `CarrierCredit` (deuda al transportista) de una compra, si existe.
+ * El frontend lo usa para el estado/saldo del flete en la sección Transporte.
+ */
+export async function findPurchaseCarrierCredit(
+  manager: EntityManager,
+  purchaseId: number,
+  companyId: number,
+): Promise<CarrierCredit | null> {
+  return manager.findOne(CarrierCredit, {
+    where: { purchase_id: String(purchaseId), company_id: String(companyId) },
   });
 }

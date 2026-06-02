@@ -45,6 +45,8 @@ import { PurchaseLine } from '../entities/purchase-line.entity';
 import { Purchase, PurchaseStatus } from '../entities/purchase.entity';
 import { translatePurchaseConstraintError } from '../internal/constraint-errors';
 import {
+  findPurchaseCarrier,
+  findPurchaseCarrierCredit,
   findPurchaseCredit,
   findPurchaseLines,
   findPurchasePayments,
@@ -146,10 +148,21 @@ export class UpdatePurchaseAction {
       });
     }
 
-    // 1. Validar fecha legible.
-    const invoiceDate = new Date(dto.invoice_date);
-    if (Number.isNaN(invoiceDate.getTime())) {
-      throw new BadRequestException('Fecha de factura inválida');
+    // Update SOLO-transporte: el cliente manda únicamente carrier/transport
+    // (sin `lines`). Solo se actualiza el transportista y se reconcilia su
+    // crédito; NO se tocan líneas, totales, inventario ni crédito al proveedor.
+    const isTransportOnly = !dto.lines || dto.lines.length === 0;
+
+    // 1. Validar fecha legible. En SOLO-transporte es opcional (se conserva la
+    //    actual); en edición completa es obligatoria.
+    let invoiceDate: Date | null = null;
+    if (dto.invoice_date) {
+      invoiceDate = new Date(dto.invoice_date);
+      if (Number.isNaN(invoiceDate.getTime())) {
+        throw new BadRequestException('Fecha de factura inválida');
+      }
+    } else if (!isTransportOnly) {
+      throw new BadRequestException('La fecha de factura es obligatoria');
     }
     const invoiceNumber = dto.invoice_number?.trim() ? dto.invoice_number.trim() : null;
 
@@ -232,8 +245,78 @@ export class UpdatePurchaseAction {
       newCarrierName = carrier.name;
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Rama SOLO-TRANSPORTE: actualiza el transportista + reconcilia su crédito,
+    // SIN tocar líneas, totales, inventario ni crédito al proveedor.
+    // ────────────────────────────────────────────────────────────────────────
+    if (isTransportOnly) {
+      const newTransportCostRounded = preciseNumber(newTransportCostBig, 2);
+      const newTotalKilosRounded =
+        newTotalKilosBig === null ? null : preciseNumber(newTotalKilosBig, 4);
+      try {
+        await manager.update(
+          Purchase,
+          { id: purchase.id, company_id: String(companyId) },
+          {
+            carrier_id: newCarrierId === null ? null : String(newCarrierId),
+            carrier_name: newCarrierName,
+            transport_cost: newTransportCostRounded,
+            total_kilos: newTotalKilosRounded,
+            ...(invoiceDate ? { invoice_date: invoiceDate } : {}),
+            ...(dto.invoice_number !== undefined ? { invoice_number: invoiceNumber } : {}),
+          },
+        );
+      } catch (error) {
+        translatePurchaseConstraintError(error);
+        throw error;
+      }
+
+      await this.reconcileCarrierCredit(
+        manager,
+        companyId,
+        purchase,
+        carrierCredit,
+        newCarrierId,
+        newTransportCostBig,
+        dto.refund_carrier_source_type ?? null,
+        dto.refund_carrier_source_id ?? null,
+        actor,
+      );
+
+      this.logger.log({
+        event: 'purchase.transport_updated',
+        companyId,
+        purchaseId: Number(purchase.id),
+        purchaseNumber: purchase.purchase_number,
+        carrierId: newCarrierId,
+        transportCost: newTransportCostRounded,
+        actorId: actor.id,
+      });
+
+      const refreshedTransport = await manager.findOne(Purchase, {
+        where: { id: purchase.id, company_id: String(companyId) },
+      });
+      if (!refreshedTransport) {
+        throw new NotFoundException('Compra no encontrada tras la edición');
+      }
+      return {
+        purchase: refreshedTransport,
+        lines: await findPurchaseLines(manager, Number(purchase.id), companyId),
+        credit: await findPurchaseCredit(manager, Number(purchase.id), companyId),
+        payments: await findPurchasePayments(manager, Number(purchase.id), companyId),
+        carrier: await findPurchaseCarrier(manager, newCarrierId, companyId),
+        carrierCredit: await findPurchaseCarrierCredit(manager, Number(purchase.id), companyId),
+      };
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Edición COMPLETA (con líneas) a partir de aquí. `dto.lines` está garantizado
+    // no vacío por el guard `isTransportOnly` de arriba.
+    // ────────────────────────────────────────────────────────────────────────
+    const editLines = dto.lines as CreatePurchaseLineDto[];
+
     // 3. Validar productos/packagings de las nuevas líneas.
-    const { productById, packagingById } = await this.validateRefs(manager, dto.lines, companyId);
+    const { productById, packagingById } = await this.validateRefs(manager, editLines, companyId);
 
     // 4. Leer líneas viejas para delta de stock.
     const oldLines = await manager.find(PurchaseLine, {
@@ -254,7 +337,7 @@ export class UpdatePurchaseAction {
     let totalIva: Big = toBig(0);
     let totalGrand: Big = toBig(0);
 
-    const linesData = dto.lines.map((line: CreatePurchaseLineDto) => {
+    const linesData = editLines.map((line: CreatePurchaseLineDto) => {
       const product = productById.get(line.product_id);
       if (!product) {
         // Defensa: ya validado arriba, este branch nunca debería ejecutarse.
@@ -352,7 +435,9 @@ export class UpdatePurchaseAction {
           subtotal: preciseNumber(totalSubtotal, 2),
           iva_total: preciseNumber(totalIva, 2),
           total: totalRounded,
-          invoice_date: invoiceDate,
+          // En edición completa invoiceDate está garantizado no-null (se exige
+          // arriba si no es SOLO-transporte).
+          invoice_date: invoiceDate as Date,
           invoice_number: invoiceNumber,
           carrier_id: newCarrierId === null ? null : String(newCarrierId),
           carrier_name: newCarrierName,
@@ -416,7 +501,20 @@ export class UpdatePurchaseAction {
     const lines = await findPurchaseLines(manager, Number(purchase.id), companyId);
     const creditOut = await findPurchaseCredit(manager, Number(purchase.id), companyId);
     const payments = await findPurchasePayments(manager, Number(purchase.id), companyId);
-    return { purchase: refreshed, lines, credit: creditOut, payments };
+    const carrierOut = await findPurchaseCarrier(manager, newCarrierId, companyId);
+    const carrierCreditOut = await findPurchaseCarrierCredit(
+      manager,
+      Number(purchase.id),
+      companyId,
+    );
+    return {
+      purchase: refreshed,
+      lines,
+      credit: creditOut,
+      payments,
+      carrier: carrierOut,
+      carrierCredit: carrierCreditOut,
+    };
   }
 
   /**

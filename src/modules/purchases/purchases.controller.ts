@@ -115,11 +115,16 @@ export class PurchasesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
   ): Promise<PurchaseResponseDto> {
-    const { purchase, lines, credit, payments } = await this.purchasesService.findOne(
-      id,
-      companyId,
+    const { purchase, lines, credit, payments, carrier, carrierCredit } =
+      await this.purchasesService.findOne(id, companyId);
+    return toPurchaseResponseDto(
+      purchase,
+      lines,
+      credit,
+      payments,
+      carrier ?? null,
+      carrierCredit ?? null,
     );
-    return toPurchaseResponseDto(purchase, lines, credit, payments);
   }
 
   // --------------------------------------------------------------------------
@@ -349,16 +354,19 @@ export class PurchasesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<PurchaseResponseDto> {
-    const { purchase, lines, credit, payments } = await this.purchasesService.update(
-      id,
-      dto,
-      companyId,
-      {
+    const { purchase, lines, credit, payments, carrier, carrierCredit } =
+      await this.purchasesService.update(id, dto, companyId, {
         id: currentUser.user_id,
         fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
         type: currentUser.type ?? null,
-      },
+      });
+    return toPurchaseResponseDto(
+      purchase,
+      lines,
+      credit,
+      payments,
+      carrier ?? null,
+      carrierCredit ?? null,
     );
-    return toPurchaseResponseDto(purchase, lines, credit, payments);
   }
 }

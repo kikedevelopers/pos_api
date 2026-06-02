@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -43,12 +43,16 @@ import { CreatePurchaseLineDto } from './create-purchase.dto';
  * PlacePos). Cambiar de proveedor = archivar + crear nueva compra.
  */
 export class UpdatePurchaseDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: '2026-05-12',
-    description: 'Fecha de la factura del proveedor (ISO 8601 YYYY-MM-DD).',
+    description:
+      'Fecha de la factura del proveedor (ISO 8601 YYYY-MM-DD). OBLIGATORIA en ' +
+      'edición completa (con `lines`); OMITIRLA en un update SOLO-transporte ' +
+      '(solo carrier_id/transport_cost/total_kilos) — el action conserva la actual.',
   })
+  @IsOptional()
   @IsDateString({}, { message: 'invoice_date debe ser una fecha ISO 8601 válida' })
-  invoice_date!: string;
+  invoice_date?: string;
 
   @ApiPropertyOptional({ example: 'F-1234', nullable: true })
   @IsOptional()
@@ -56,15 +60,19 @@ export class UpdatePurchaseDto {
   @MaxLength(64)
   invoice_number?: string | null;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     type: [CreatePurchaseLineDto],
-    description: 'Reemplazo COMPLETO de las líneas. Al menos una.',
+    description:
+      'Reemplazo COMPLETO de las líneas (al menos una). OMITIR en un update ' +
+      'SOLO-transporte: el action conserva las líneas y solo actualiza el ' +
+      'transportista + reconcilia su crédito, sin tocar totales ni inventario.',
   })
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1, { message: 'La compra debe contener al menos un producto' })
   @ValidateNested({ each: true })
   @Type(() => CreatePurchaseLineDto)
-  lines!: CreatePurchaseLineDto[];
+  lines?: CreatePurchaseLineDto[];
 
   @ApiPropertyOptional({
     example: false,

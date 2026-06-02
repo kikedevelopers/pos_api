@@ -2,11 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
+import { CarrierCredit } from '@/modules/carriers/entities/carrier-credit.entity';
+import { Carrier } from '@/modules/carriers/entities/carrier.entity';
+
 import { PurchaseCredit } from '../entities/purchase-credit.entity';
 import { PurchaseLine } from '../entities/purchase-line.entity';
 import { PurchasePayment } from '../entities/purchase-payment.entity';
 import { Purchase } from '../entities/purchase.entity';
 import {
+  findPurchaseCarrier,
+  findPurchaseCarrierCredit,
   findPurchaseCredit,
   findPurchaseInCompany,
   findPurchaseLines,
@@ -15,13 +20,17 @@ import {
 
 /**
  * Resultado completo del detalle de una compra (cabecera + líneas + credit +
- * pagos). Espejo PlacePos `loadFullPurchase`.
+ * pagos + transportista + crédito al transportista). Espejo PlacePos
+ * `loadFullPurchase`. `carrier`/`carrierCredit` son opcionales: solo los
+ * flujos que sirven el detalle (find/update) los pueblan; el resto van null.
  */
 export interface PurchaseAggregate {
   purchase: Purchase;
   lines: PurchaseLine[];
   credit: PurchaseCredit | null;
   payments: PurchasePayment[];
+  carrier?: Carrier | null;
+  carrierCredit?: CarrierCredit | null;
 }
 
 /**
@@ -55,7 +64,10 @@ export class FindPurchaseAction {
     const lines = await findPurchaseLines(manager, Number(purchase.id), companyId);
     const credit = await findPurchaseCredit(manager, Number(purchase.id), companyId);
     const payments = await findPurchasePayments(manager, Number(purchase.id), companyId);
+    const carrierId = purchase.carrier_id === null ? null : Number(purchase.carrier_id);
+    const carrier = await findPurchaseCarrier(manager, carrierId, companyId);
+    const carrierCredit = await findPurchaseCarrierCredit(manager, Number(purchase.id), companyId);
 
-    return { purchase, lines, credit, payments };
+    return { purchase, lines, credit, payments, carrier, carrierCredit };
   }
 }

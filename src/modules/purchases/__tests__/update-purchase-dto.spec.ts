@@ -43,6 +43,6 @@ describe('UpdatePurchaseDto — acepta campos del cliente PlacePos', () => {
 
     expect(result.client_operation_id).toBe('550e8400-e29b-41d4-a716-446655440000');
     expect(result.lines).toHaveLength(1);
-    expect(result.lines[0].product_id).toBe(1);
+    expect(result.lines?.[0]?.product_id).toBe(1);
   });
 });
