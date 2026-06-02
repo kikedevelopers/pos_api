@@ -24,7 +24,7 @@ export class DashboardRangeQueryDto {
 
 /**
  * Query del endpoint `GET /dashboard/today` y `/break-even-progress`. Solo
- * acepta `date` opcional; default = hoy UTC.
+ * acepta `date` opcional; default = hoy (hora Colombia).
  */
 export class DashboardDateQueryDto {
   @ApiPropertyOptional({ example: '2026-05-12' })

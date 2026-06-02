@@ -83,7 +83,7 @@ export async function fetchSalesByDay(
   return dataSource.query<SalesByDayRow[]>(
     `
     SELECT
-      TO_CHAR(si.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+      TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       COALESCE(SUM(si.total), 0)::float AS sales,
       COALESCE(SUM(si.profit), 0)::float AS profit,
       COALESCE(SUM(si.cost), 0)::float AS cost
@@ -131,7 +131,7 @@ export async function fetchNotesByDay(
       GROUP BY cn.id
     )
     SELECT
-      TO_CHAR(si.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+      TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       nc.note_type::text AS note_type,
       COALESCE(SUM(nc.total), 0)::float AS notes_total,
       COALESCE(SUM(nc.total_cost), 0)::float AS notes_cost
@@ -171,7 +171,7 @@ export async function fetchExpensesByDay(
   return dataSource.query<ExpensesByDayRow[]>(
     `
     SELECT
-      TO_CHAR(combined.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+      TO_CHAR(combined.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       COALESCE(SUM(combined.amount), 0)::float AS expenses
     FROM (
       SELECT e.created_at, e.amount
@@ -230,7 +230,7 @@ export async function fetchCreditPaymentsBreakdownByDay(
       GROUP BY cn.sale_invoice_id
     )
     SELECT
-      TO_CHAR(sp.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+      TO_CHAR(sp.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       sp.amount::float AS amount_paid,
       (si.total + COALESCE(na.debit_total, 0) - COALESCE(na.credit_total, 0))::float AS consolidated_total,
       (si.cost  + COALESCE(na.debit_cost, 0)  - COALESCE(na.credit_cost, 0))::float  AS consolidated_cost
@@ -291,7 +291,7 @@ export async function fetchCreditsGeneratedByDay(
   return dataSource.query<CreditsGeneratedRow[]>(
     `
     SELECT
-      TO_CHAR(si.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+      TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       COALESCE(SUM(sc.total_amount), 0)::float AS credits
     FROM sale_credits sc
     INNER JOIN sale_invoices si

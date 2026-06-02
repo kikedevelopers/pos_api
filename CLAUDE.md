@@ -50,6 +50,7 @@ Para que el cliente PlacePos pueda alternar entre los dos modos **sin tocar el f
 - Texto: `text` por defecto.
 - JSON: `jsonb` siempre, nunca `json`.
 - Cálculos: **Big.js** obligatorio para todo lo monetario. Detalle: skill `financial-precision`.
+- Fechas/horas en lógica de negocio: **dayjs** obligatorio (importar desde `@/common/utils/dayjs`), zona por defecto **`America/Bogota`** (UTC-5). NUNCA calcular "hoy"/rangos de día en UTC: convertir los límites del día COLOMBIANO al instante UTC con `dayjs.tz(...)`. Agrupar por día en SQL con `AT TIME ZONE 'America/Bogota'`.
 
 ### 2.6 Idempotencia
 
