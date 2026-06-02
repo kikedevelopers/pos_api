@@ -154,13 +154,12 @@ export async function fetchNotesByDay(
 }
 
 /**
- * Gastos por día (incluye `expenses` no archivados Y abonos a transportistas).
- * Filtro multi-tenant aplicado a ambas ramas.
+ * Gastos por día: SOLO `expenses` no archivados. Filtro multi-tenant.
  *
- * Espejo PlacePos `fetchExpensesByDay` (`dashboard.routes.ts:142`): los abonos
- * a `carrier_payments` también salen de caja y deben restarse en el cálculo
- * de Ganancia Real y de Saldo Líquido. Sin esta unión, el Excedente queda
- * inflado en clientes con flota propia.
+ * Los abonos a transportistas (`carrier_payments`) NO se cuentan como gasto:
+ * el flete ya está capitalizado en el costo del producto (impacta P&L vía COGS
+ * al vender); sumar también el abono lo doble-contaría. El egreso de caja del
+ * abono lo refleja el Saldo Líquido por su `financial_movement`.
  */
 export async function fetchExpensesByDay(
   dataSource: DataSource,
@@ -171,20 +170,12 @@ export async function fetchExpensesByDay(
   return dataSource.query<ExpensesByDayRow[]>(
     `
     SELECT
-      TO_CHAR(combined.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
-      COALESCE(SUM(combined.amount), 0)::float AS expenses
-    FROM (
-      SELECT e.created_at, e.amount
-      FROM expenses e
-      WHERE e.company_id = $1
-        AND e.is_archived = false
-        AND e.created_at BETWEEN $2 AND $3
-      UNION ALL
-      SELECT cp.created_at, cp.amount
-      FROM carrier_payments cp
-      WHERE cp.company_id = $1
-        AND cp.created_at BETWEEN $2 AND $3
-    ) AS combined
+      TO_CHAR(e.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
+      COALESCE(SUM(e.amount), 0)::float AS expenses
+    FROM expenses e
+    WHERE e.company_id = $1
+      AND e.is_archived = false
+      AND e.created_at BETWEEN $2 AND $3
     GROUP BY 1
     `,
     [String(companyId), dateStart, dateEnd],
@@ -445,12 +436,13 @@ export async function fetchProfitTotal(
 }
 
 /**
- * Total de gastos del rango: `expenses` no archivados + `carrier_payments`.
- * Filtro multi-tenant aplicado a ambas ramas.
+ * Total de gastos del rango: SOLO `expenses` no archivados. Filtro multi-tenant.
  *
- * Espejo PlacePos `fetchExpensesTotal` (`dashboard.routes.ts:531`): los abonos
- * a transportistas también son egresos del día. Sin esto, la Ganancia Real
- * queda sobre-estimada.
+ * Los abonos a transportistas (`carrier_payments`) NO son gasto del día: el
+ * costo del transporte ya se capitaliza en el COSTO del producto (prorrata de
+ * flete), por lo que impacta P&L vía COGS al vender. Contar también el abono
+ * como gasto lo DOBLE-CONTARÍA. El abono solo mueve caja (su
+ * `financial_movement`), que el Saldo Líquido refleja por separado.
  */
 export async function fetchExpensesTotal(
   dataSource: DataSource,
@@ -460,19 +452,11 @@ export async function fetchExpensesTotal(
 ): Promise<number> {
   const rows = await dataSource.query<AmountRow[]>(
     `
-    SELECT COALESCE(SUM(amount), 0)::float AS amount
-    FROM (
-      SELECT e.amount
-      FROM expenses e
-      WHERE e.company_id = $1
-        AND e.is_archived = false
-        AND e.created_at BETWEEN $2 AND $3
-      UNION ALL
-      SELECT cp.amount
-      FROM carrier_payments cp
-      WHERE cp.company_id = $1
-        AND cp.created_at BETWEEN $2 AND $3
-    ) AS combined
+    SELECT COALESCE(SUM(e.amount), 0)::float AS amount
+    FROM expenses e
+    WHERE e.company_id = $1
+      AND e.is_archived = false
+      AND e.created_at BETWEEN $2 AND $3
     `,
     [String(companyId), dateStart, dateEnd],
   );
