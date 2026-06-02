@@ -95,6 +95,14 @@ export enum PurchaseStatus {
   'chk_purchases_carrier_required_when_transport',
   `transport_cost = 0 OR carrier_id IS NOT NULL`,
 )
+// Idempotencia de la CREACIÓN de la compra: una misma `client_operation_id`
+// (uuid del cliente) no puede generar dos compras en la misma company. Índice
+// único PARCIAL (solo cuando la llave no es null) — imposibilita físicamente
+// registrar la misma compra dos veces por doble-click / reintento de red.
+@Index('uq_purchases_client_operation', ['company_id', 'client_operation_id'], {
+  unique: true,
+  where: '"client_operation_id" IS NOT NULL',
+})
 export class Purchase {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -236,6 +244,14 @@ export class Purchase {
    */
   @Column({ type: 'varchar', length: 64, nullable: true })
   invoice_number!: string | null;
+
+  /**
+   * UUID v4 generado por el cliente para deduplicar la creación de la compra.
+   * Único por company (índice parcial). Si llega una llave ya usada, el action
+   * devuelve la compra existente en vez de crear otra. null en compras legadas.
+   */
+  @Column({ type: 'text', nullable: true })
+  client_operation_id!: string | null;
 
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;

@@ -106,6 +106,34 @@ export class CreatePurchaseLineDto {
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'iva_rate debe ser número con hasta 2 decimales' })
   @Min(0, { message: 'iva_rate debe ser >= 0' })
   iva_rate?: number;
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Totales de línea PRE-CALCULADOS por el cliente (paridad PlacePos).
+  // El cliente los manda (Big.js), pero el server los RECOMPUTA en el action
+  // (packaging_qty × packaging_price, IVA, total). Se aceptan aquí solo para
+  // que `forbidNonWhitelisted` no rechace el payload — se ignoran al persistir.
+  // ───────────────────────────────────────────────────────────────────────
+
+  @ApiPropertyOptional({ description: 'Subtotal de la línea (pre-calculado por el cliente).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'subtotal debe ser un número' })
+  @Min(0, { message: 'subtotal debe ser >= 0' })
+  subtotal?: number;
+
+  @ApiPropertyOptional({ description: 'IVA de la línea (pre-calculado por el cliente).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'iva_amount debe ser un número' })
+  @Min(0, { message: 'iva_amount debe ser >= 0' })
+  iva_amount?: number;
+
+  @ApiPropertyOptional({ description: 'Total de la línea (pre-calculado por el cliente).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'total debe ser un número' })
+  @Min(0, { message: 'total debe ser >= 0' })
+  total?: number;
 }
 
 /**

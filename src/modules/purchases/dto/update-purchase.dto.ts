@@ -10,8 +10,10 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -165,4 +167,16 @@ export class UpdatePurchaseDto {
   @IsInt({ message: 'refund_carrier_source_id debe ser entero' })
   @Min(1, { message: 'refund_carrier_source_id debe ser >= 1' })
   refund_carrier_source_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    nullable: true,
+    description:
+      'UUID v4 generado por el cliente (idempotencia de la edición). Aceptado por ' +
+      'paridad PlacePos; la idempotencia server-side completa está pendiente.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID('4', { message: 'client_operation_id debe ser un UUID v4 válido' })
+  client_operation_id?: string | null;
 }

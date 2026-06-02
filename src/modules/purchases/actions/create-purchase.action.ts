@@ -5,7 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Big from 'big.js';
-import { DataSource, In } from 'typeorm';
+import { DataSource, In, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import {
@@ -124,7 +124,19 @@ export class CreatePurchaseAction {
       );
     }
 
-    return this.dataSource.transaction<PurchaseAggregate>(async (manager) => {
+    const operationId = dto.client_operation_id?.trim() || null;
+
+    // Fast-path idempotente: si la company ya registró una compra con esta
+    // llave, devolvemos esa misma compra sin crear otra (doble-click / reintento).
+    if (operationId) {
+      const existing = await this.findByClientOperationId(companyId, operationId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    try {
+      return await this.dataSource.transaction<PurchaseAggregate>(async (manager) => {
       // 1. Supplier de la company y activo.
       const supplier = await manager.findOne(Supplier, {
         where: {
@@ -310,6 +322,7 @@ export class CreatePurchaseAction {
         total_kilos: totalKilosRounded,
         invoice_date: invoiceDate,
         invoice_number: invoiceNumber,
+        client_operation_id: operationId,
         received_by: null,
         received_at: null,
         created_by: createdBy.fullName,
@@ -397,6 +410,71 @@ export class CreatePurchaseAction {
       const payments = await findPurchasePayments(manager, Number(savedPurchase.id), companyId);
 
       return { purchase: savedPurchase, lines, credit: creditOut, payments };
+      });
+    } catch (error) {
+      // Carrera real: dos requests con la MISMA llave llegaron casi a la vez; el
+      // índice único parcial dejó pasar solo una. El perdedor recupera la compra
+      // ganadora en vez de propagar el error → nunca se crean dos compras.
+      if (operationId && this.isClientOperationConflict(error)) {
+        const existing = await this.findByClientOperationId(companyId, operationId);
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Carga la compra existente (aggregate) por su `client_operation_id` dentro de
+   * la company. null si no existe. Transacción de solo lectura.
+   */
+  private async findByClientOperationId(
+    companyId: number,
+    operationId: string,
+  ): Promise<PurchaseAggregate | null> {
+    const existing = await this.dataSource.getRepository(Purchase).findOne({
+      where: { company_id: String(companyId), client_operation_id: operationId },
+      select: { id: true },
     });
+    if (!existing) {
+      return null;
+    }
+    return this.dataSource.transaction((manager) =>
+      this.loadAggregate(manager, Number(existing.id), companyId),
+    );
+  }
+
+  /**
+   * Reconstruye el `PurchaseAggregate` (cabecera + líneas + credit + pagos) de
+   * una compra existente. Usado en el replay idempotente.
+   */
+  private async loadAggregate(
+    manager: EntityManager,
+    purchaseId: number,
+    companyId: number,
+  ): Promise<PurchaseAggregate> {
+    const purchase = await manager.findOneOrFail(Purchase, {
+      where: { id: String(purchaseId), company_id: String(companyId) },
+    });
+    const lines = await findPurchaseLines(manager, purchaseId, companyId);
+    const credit = await findPurchaseCredit(manager, purchaseId, companyId);
+    const payments = await findPurchasePayments(manager, purchaseId, companyId);
+    return { purchase, lines, credit, payments };
+  }
+
+  /**
+   * True si el error es la violación del índice único parcial de idempotencia
+   * (`uq_purchases_client_operation`) — i.e. una carrera con la misma llave.
+   */
+  private isClientOperationConflict(error: unknown): boolean {
+    const e = error as {
+      code?: string;
+      constraint?: string;
+      driverError?: { code?: string; constraint?: string };
+    };
+    const code = e?.driverError?.code ?? e?.code;
+    const constraint = e?.driverError?.constraint ?? e?.constraint;
+    return code === '23505' && constraint === 'uq_purchases_client_operation';
   }
 }
