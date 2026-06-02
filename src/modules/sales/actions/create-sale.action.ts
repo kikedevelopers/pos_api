@@ -98,7 +98,19 @@ export class CreateSaleAction {
     companyId: number,
     createdBy: SaleCreator,
   ): Promise<SaleAggregate> {
-    return this.dataSource.transaction<SaleAggregate>(async (manager) => {
+    const operationId = dto.client_operation_id?.trim() || null;
+
+    // Fast-path idempotente: si la company ya registró una venta con esta llave,
+    // devolvemos esa misma venta sin crear otra (doble-click / reintento de red).
+    if (operationId) {
+      const existing = await this.findByClientOperationId(companyId, operationId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    try {
+      return await this.dataSource.transaction<SaleAggregate>(async (manager) => {
       // 1. Customer (opcional). Si viene, validar + lock.
       let customer: Customer | null = null;
       if (typeof dto.customer_id === 'number' && dto.customer_id > 0) {
@@ -162,6 +174,7 @@ export class CreateSaleAction {
         profit: dto.profit,
         margin: dto.margin,
         notes: dto.notes?.trim() || null,
+        client_operation_id: operationId,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
         is_deleted: false,
@@ -250,7 +263,54 @@ export class CreateSaleAction {
       });
 
       return this.loadAggregate(manager, Number(savedSale.id), companyId);
+      });
+    } catch (error) {
+      // Carrera real: dos requests con la MISMA llave llegaron casi a la vez; el
+      // índice único parcial dejó pasar solo una. El perdedor recupera la venta
+      // ganadora en vez de propagar el error → nunca se crean dos facturas.
+      if (operationId && this.isClientOperationConflict(error)) {
+        const existing = await this.findByClientOperationId(companyId, operationId);
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Carga la venta existente (aggregate) por su `client_operation_id` dentro de
+   * la company. null si no existe. Transacción de solo lectura.
+   */
+  private async findByClientOperationId(
+    companyId: number,
+    operationId: string,
+  ): Promise<SaleAggregate | null> {
+    const existing = await this.dataSource.getRepository(SaleInvoice).findOne({
+      where: { company_id: String(companyId), client_operation_id: operationId },
+      select: { id: true },
     });
+    if (!existing) {
+      return null;
+    }
+    return this.dataSource.transaction((manager) =>
+      this.loadAggregate(manager, Number(existing.id), companyId),
+    );
+  }
+
+  /**
+   * True si el error es la violación del índice único parcial de idempotencia
+   * (`uq_sale_invoices_client_operation`) — i.e. una carrera con la misma llave.
+   */
+  private isClientOperationConflict(error: unknown): boolean {
+    const e = error as {
+      code?: string;
+      constraint?: string;
+      driverError?: { code?: string; constraint?: string };
+    };
+    const code = e?.driverError?.code ?? e?.code;
+    const constraint = e?.driverError?.constraint ?? e?.constraint;
+    return code === '23505' && constraint === 'uq_sale_invoices_client_operation';
   }
 
   /**

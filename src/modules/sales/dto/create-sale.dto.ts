@@ -270,6 +270,19 @@ export class CreateSaleDto {
   @Type(() => CreateSaleLineDto)
   items!: CreateSaleLineDto[];
 
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    description:
+      'UUID v4 generado por el cliente para deduplicar la CREACIÓN de la venta. ' +
+      'Si llega una llave ya procesada en la company, se devuelve la venta existente ' +
+      '(idempotente, sin duplicar). El cliente debe generar UNA llave por intento de ' +
+      'registro y reusarla en reintentos/doble-click; regenerarla solo tras éxito. ' +
+      'Garantiza que un doble-click nunca cree dos facturas.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'client_operation_id debe ser un UUID v4 válido' })
+  client_operation_id?: string;
+
   @ApiProperty({
     example: 102,
     description: 'Total de la venta. Σ items.total. Pre-calculado por el cliente con Big.js.',

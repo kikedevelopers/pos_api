@@ -84,6 +84,15 @@ export enum TicketType {
   `ticket_type = 'ORDER'
    OR (ticket_type = 'SALE' AND length(btrim(coalesce(sale_number, ''))) > 0)`,
 )
+// Idempotencia de la CREACIÓN de la venta: una misma `client_operation_id`
+// (uuid del cliente) no puede generar dos facturas en la misma company. Índice
+// único PARCIAL (solo aplica cuando la llave no es null) — hace físicamente
+// imposible registrar la misma venta dos veces, incluso bajo doble-click /
+// reintento de red. Espejo del guard de idempotencia que faltaba en createOrder.
+@Index('uq_sale_invoices_client_operation', ['company_id', 'client_operation_id'], {
+  unique: true,
+  where: '"client_operation_id" IS NOT NULL',
+})
 export class SaleInvoice {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -188,6 +197,15 @@ export class SaleInvoice {
 
   @Column({ type: 'text', nullable: true })
   notes!: string | null;
+
+  /**
+   * UUID v4 generado por el cliente para deduplicar la creación de la venta.
+   * Único por company (índice parcial). Si llega una llave ya usada, el action
+   * devuelve la venta existente en vez de crear otra. null en ventas legadas o
+   * creadas sin idempotencia.
+   */
+  @Column({ type: 'text', nullable: true })
+  client_operation_id!: string | null;
 
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;
