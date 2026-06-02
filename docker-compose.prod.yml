@@ -77,21 +77,36 @@ services:
     networks:
       - pos_network
 
+  # Frontend PWA (SPA estático). Imagen construida por el repo placepos_pwa_app
+  # y publicada en GHCR. Sirve los estáticos en HTTP interno (puerto 80, sin TLS
+  # ni puerto publicado); el edge nginx termina TLS y le hace reverse-proxy en
+  # ${PWA_DOMAIN}.
+  pwa:
+    image: ${PWA_IMAGE_NAME:-ghcr.io/CHANGEME/placepos_pwa_app:latest}
+    container_name: placepos_pwa
+    restart: unless-stopped
+    expose:
+      - '80'
+    networks:
+      - pos_network
+
   nginx:
     image: nginx:1.27-alpine
     container_name: pos_api_nginx
     restart: unless-stopped
     depends_on:
       - api
+      - pwa
     ports:
       - '80:80'
       - '443:443'
     environment:
       DOMAIN: ${DOMAIN}
+      PWA_DOMAIN: ${PWA_DOMAIN}
       API_PORT: ${PORT:-3010}
       # Limita envsubst a estas variables — el resto de `$var` en el config
       # nginx (ej: $host, $request_uri) NO se intentan sustituir.
-      NGINX_ENVSUBST_TEMPLATE_VARS: 'DOMAIN,API_PORT'
+      NGINX_ENVSUBST_TEMPLATE_VARS: 'DOMAIN,API_PORT,PWA_DOMAIN'
     volumes:
       - ./nginx/conf.d:/etc/nginx/templates:ro
       - ./certbot/conf:/etc/letsencrypt:ro

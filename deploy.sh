@@ -63,6 +63,13 @@ fi
 echo "[deploy] Pulleando $IMAGE_NAME ..."
 docker pull "$IMAGE_NAME"
 
+# Frontend PWA (servido por el edge en ${PWA_DOMAIN}). Si está configurado,
+# pulleamos su imagen también para que `compose up` la recree actualizada.
+if [ -n "${PWA_IMAGE_NAME:-}" ]; then
+  echo "[deploy] Pulleando $PWA_IMAGE_NAME ..."
+  docker pull "$PWA_IMAGE_NAME" || echo "[deploy] (aviso: no se pudo pullear la imagen PWA; se usará la cacheada si existe)"
+fi
+
 # --- 4. Bootstrap TLS si es primera vez ------------------------------------
 
 CERTS_PATH="./certbot/conf/live/$DOMAIN"
