@@ -51,6 +51,12 @@ import {
   findPurchaseLines,
   findPurchasePayments,
 } from '../internal/purchase-lookups';
+import {
+  recalcCostFromLastActivePurchase,
+  recalculateProductCosts,
+  type SkippedChild,
+} from '../internal/recalculate-product-costs.helper';
+import { ProductCostHistoryEvent } from '@/modules/product-history/entities/product-cost-history.entity';
 import type { PurchaseAggregate } from './find-purchase.action';
 
 /**
@@ -409,8 +415,44 @@ export class UpdatePurchaseAction {
 
     await manager.insert(PurchaseLine, linesData);
 
-    // 7. Ajuste de inventario diferencial solo si la compra está RECEIVED.
+    // 7. Ajuste de inventario diferencial + recálculo de costo, solo si la
+    //    compra está RECEIVED.
     if (purchase.status === PurchaseStatus.RECEIVED) {
+      // Snapshot de stockBefore por producto ANTES de aplicar el delta. Para
+      // el promedio ponderado, stockBefore debe representar "stock antes de
+      // que esta compra existiera":
+      //   stockBefore = stockNow_preDelta − oldUnitsDeEstaCompra  (clamp a 0)
+      // Paridad placepos `editPurchase`. unit_qty es la unidad mínima en pos_api
+      // (embalaje informativo), por eso es la magnitud del aporte de stock.
+      const oldUnitsByProduct = new Map<number, Big>();
+      for (const l of oldLines) {
+        const pid = Number(l.product_id);
+        oldUnitsByProduct.set(
+          pid,
+          (oldUnitsByProduct.get(pid) ?? toBig(0)).plus(toBig(l.unit_qty)),
+        );
+      }
+      const snapshotIds = Array.from(
+        new Set([
+          ...oldLines.map((l) => Number(l.product_id)),
+          ...linesData.map((l) => Number(l.product_id)),
+        ]),
+      ).sort((a, b) => a - b);
+      const stockBeforeOverrides = new Map<number, Big>();
+      for (const productId of snapshotIds) {
+        const p = await manager.findOne(Product, {
+          where: { id: String(productId), company_id: String(companyId) },
+          select: { id: true, stock: true },
+        });
+        if (!p) {
+          continue;
+        }
+        const stockNow = toBig(p.stock);
+        const oldUnits = oldUnitsByProduct.get(productId) ?? toBig(0);
+        const base = stockNow.minus(oldUnits);
+        stockBeforeOverrides.set(productId, base.lt(0) ? toBig(0) : base);
+      }
+
       await this.applyInventoryDelta(
         manager,
         companyId,
@@ -420,6 +462,44 @@ export class UpdatePurchaseAction {
         purchase.purchase_number,
         actor,
       );
+
+      // Releer las líneas nuevas ya persistidas (con ids/valores normalizados)
+      // para alimentar el recálculo de costo.
+      const newLines = await manager.find(PurchaseLine, {
+        where: { purchase_id: purchase.id, company_id: String(companyId) },
+      });
+
+      // Productos que siguen presentes → promedio ponderado con las líneas
+      // actuales. Productos removidos del payload → recálculo contra la última
+      // compra activa que los contenga.
+      const newProductIds = new Set(newLines.map((l) => Number(l.product_id)));
+      const removedProductIds = Array.from(
+        new Set(oldLines.map((l) => Number(l.product_id)).filter((pid) => !newProductIds.has(pid))),
+      ).sort((a, b) => a - b);
+
+      const skipped: SkippedChild[] = [];
+      if (newLines.length > 0) {
+        await recalculateProductCosts(manager, newLines, {
+          eventType: ProductCostHistoryEvent.EDIT,
+          purchaseId: Number(purchase.id),
+          companyId,
+          transportCost: newTransportCostBig.toNumber(),
+          actor: { id: actor.id, fullName: actor.fullName },
+          stockBeforeOverrides,
+        });
+      }
+      for (const productId of removedProductIds) {
+        await recalcCostFromLastActivePurchase({
+          manager,
+          companyId,
+          productId,
+          eventType: ProductCostHistoryEvent.EDIT,
+          currentPurchaseId: Number(purchase.id),
+          actor: { id: actor.id, fullName: actor.fullName },
+          skipped,
+          stockBeforeOverride: stockBeforeOverrides.get(productId),
+        });
+      }
     }
 
     // 8. UPDATE Purchase con nuevos totales + invoice metadata + carrier.
@@ -437,7 +517,7 @@ export class UpdatePurchaseAction {
           total: totalRounded,
           // En edición completa invoiceDate está garantizado no-null (se exige
           // arriba si no es SOLO-transporte).
-          invoice_date: invoiceDate as Date,
+          invoice_date: invoiceDate,
           invoice_number: invoiceNumber,
           carrier_id: newCarrierId === null ? null : String(newCarrierId),
           carrier_name: newCarrierName,

@@ -4,6 +4,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { recordInventoryMovement } from '@/modules/products/internal/adjust-inventory.helper';
 import { Product } from '@/modules/products/entities/product.entity';
+import { ProductCostHistoryEvent } from '@/modules/product-history/entities/product-cost-history.entity';
 
 import type { ReceivePurchaseDto } from '../dto/receive-purchase.dto';
 import { PurchaseLine } from '../entities/purchase-line.entity';
@@ -14,6 +15,7 @@ import {
   findPurchaseLines,
   findPurchasePayments,
 } from '../internal/purchase-lookups';
+import { recalculateProductCosts } from '../internal/recalculate-product-costs.helper';
 import type { PurchaseAggregate } from './find-purchase.action';
 
 /**
@@ -86,6 +88,19 @@ export class MarkPurchaseReceivedAction {
       const purchaseLines = await manager.find(PurchaseLine, {
         where: { purchase_id: String(id), company_id: String(companyId) },
       });
+
+      // IMPORTANTE: el recálculo de costos (promedio ponderado con flete) debe
+      // correr ANTES del increment del stock, para que el `stockBefore` que usa
+      // la fórmula sea el stock previo a esta compra (lee Product.stock actual).
+      // Paridad placepos `receivePurchase`.
+      await recalculateProductCosts(manager, purchaseLines, {
+        eventType: ProductCostHistoryEvent.RECEIVE,
+        purchaseId: id,
+        companyId,
+        transportCost: Number(purchase.transport_cost),
+        actor: { id: actorId, fullName: dto.received_by.trim() },
+      });
+
       await this.applyStockIncrements(
         manager,
         companyId,

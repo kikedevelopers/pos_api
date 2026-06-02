@@ -47,6 +47,11 @@ import {
   findPurchaseInCompany,
   findPurchasePayments,
 } from '../internal/purchase-lookups';
+import {
+  recalcCostFromLastActivePurchase,
+  type SkippedChild,
+} from '../internal/recalculate-product-costs.helper';
+import { ProductCostHistoryEvent } from '@/modules/product-history/entities/product-cost-history.entity';
 
 /**
  * Snapshot del actor — para `created_by`/`created_by_id` en los logs y
@@ -173,7 +178,33 @@ export class ArchivePurchaseAction {
 
       // Reversión de stock si la compra estaba RECEIVED.
       if (purchase.status === PurchaseStatus.RECEIVED) {
-        await this.revertStock(manager, companyId, purchase, forceStockAdjustment, actor);
+        const affectedProductIds = await this.revertStock(
+          manager,
+          companyId,
+          purchase,
+          forceStockAdjustment,
+          actor,
+        );
+
+        // Tras revertir stock, el costo de cada producto afectado debe
+        // recalcularse contra la última compra activa que lo contenga (esta
+        // compra deja de existir como referencia de costo). El `stockBefore`
+        // de la ponderación es el stock YA revertido que el helper lee de la
+        // DB (lockProduct), por lo que NO se pasa stockBeforeOverride —
+        // paridad exacta con placepos `archivePurchase`. Si no hay compra
+        // previa activa, conserva el costo actual pero registra el evento.
+        const skipped: SkippedChild[] = [];
+        for (const productId of affectedProductIds) {
+          await recalcCostFromLastActivePurchase({
+            manager,
+            companyId,
+            productId,
+            eventType: ProductCostHistoryEvent.ARCHIVE,
+            currentPurchaseId: Number(purchase.id),
+            actor: { id: actor.id, fullName: actor.fullName },
+            skipped,
+          });
+        }
       }
 
       // Despachar reembolsos a la cuenta seleccionada. Uno por cada pago
@@ -280,10 +311,16 @@ export class ArchivePurchaseAction {
     purchase: Purchase,
     forceStockAdjustment: boolean,
     actor: ArchivePurchaseActor,
-  ): Promise<void> {
+  ): Promise<number[]> {
     const lines = await manager.find(PurchaseLine, {
       where: { purchase_id: purchase.id, company_id: String(companyId) },
     });
+
+    // Productos tocados por la compra (aunque su unit_qty sea 0) — el recálculo
+    // de costo posterior debe registrar el evento para todos ellos.
+    const affectedProductIds = Array.from(new Set(lines.map((l) => Number(l.product_id)))).sort(
+      (a, b) => a - b,
+    );
 
     const totals = new Map<number, Big>();
     for (const l of lines) {
@@ -303,7 +340,7 @@ export class ArchivePurchaseAction {
     }
 
     if (deduct.length === 0) {
-      return;
+      return affectedProductIds;
     }
 
     await adjustInventory(manager, companyId, deduct, 'DEDUCT', {
@@ -316,6 +353,8 @@ export class ArchivePurchaseAction {
       actorUserId: actor.id,
       overrideStock: forceStockAdjustment,
     });
+
+    return affectedProductIds;
   }
 
   /**
