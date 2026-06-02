@@ -10,8 +10,10 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -306,4 +308,30 @@ export class UpdateSaleDto {
   @IsOptional()
   @IsBoolean()
   override_margin?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Solicita permitir que la edición deje el stock negativo (al añadir/incrementar ' +
+      'líneas que generan ND). Solo lo respeta el ajuste de inventario si el actor es ' +
+      'owner / superadmin — paridad PlacePos `editSale` (override_stock).',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  override_stock?: boolean;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    nullable: true,
+    description:
+      'UUID v4 generado por el cliente para deduplicar reintentos de edición. Aceptado ' +
+      'por paridad PlacePos (`client_operation_id`); la idempotencia server-side completa ' +
+      'está pendiente (la transacción SERIALIZABLE es el guard de concurrencia actual). ' +
+      'El cliente Electron lo genera al abrir el editor y reusa la misma llave en un doble-click.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID(4)
+  client_operation_id?: string | null;
 }

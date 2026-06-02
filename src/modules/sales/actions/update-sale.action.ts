@@ -346,6 +346,11 @@ export class UpdateSaleAction {
         lines: addedOrIncreased,
         actor,
         source: dto.debit_correction_source ?? null,
+        // override_stock solo lo respeta el ajuste si el actor es owner/superadmin
+        // — paridad PlacePos `editSale` (processDebitPart: allowOverride).
+        overrideStock:
+          dto.override_stock === true &&
+          (actor.type === 'owner' || actor.type === 'superadmin'),
       });
       debitNoteId = debit.id;
       debitNoteNumber = debit.number;
@@ -626,6 +631,7 @@ export class UpdateSaleAction {
       lines: PlacePosLineDifference[];
       actor: UpdateSaleActor;
       source: SaleCorrectionSourceDto | null;
+      overrideStock: boolean;
     },
   ): Promise<{ id: number; number: string }> {
     const ticket = await this.incrementTicketNumberAction.execute(
@@ -682,9 +688,9 @@ export class UpdateSaleAction {
         description: `ND por edición — ${saved.note_number}`,
         actorName: params.actor.fullName,
         actorUserId: params.actor.id,
-        // El override de stock viene de update-sale `dto.override_margin` y
-        // se inyecta vía params en el caller superior. Si en el futuro se
-        // añade `override_stock` independiente, propagarlo aquí.
+        // `override_stock` (autorizado solo a owner/superadmin en el caller)
+        // permite que la ND deje el stock negativo — paridad PlacePos editSale.
+        overrideStock: params.overrideStock,
       },
     );
 
