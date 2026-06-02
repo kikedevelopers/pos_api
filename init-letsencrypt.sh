@@ -81,6 +81,9 @@ for d in $DOMAINS; do
     rm -Rf /etc/letsencrypt/renewal/$d.conf" certbot
 
   echo "### Solicitando certificado real para $d ..."
+  # --cert-name $d FUERZA el nombre del linaje = el dominio, para que el cert
+  # quede SIEMPRE en live/$d/ (sin sufijos -0001 aunque existieran linajes
+  # previos). nginx referencia live/$d/ exacto.
   $COMPOSE run --rm --entrypoint "\
     certbot certonly --webroot -w /var/www/certbot \
       $STAGING_ARG \
@@ -88,6 +91,7 @@ for d in $DOMAINS; do
       --agree-tos \
       --no-eff-email \
       --rsa-key-size $RSA_KEY_SIZE \
+      --cert-name $d \
       --force-renewal \
       -d $d" certbot
 done
