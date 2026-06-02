@@ -31,12 +31,51 @@ async function bootstrap(): Promise<void> {
   // Seguridad HTTP headers.
   app.use(helmet());
 
-  // CORS — orígenes desde env. Lista vacía = reflejo del Origin (solo dev).
+  // CORS.
+  //   - Producción/staging: SOLO la whitelist `CORS_ORIGINS` (estricto).
+  //   - Desarrollo: además de la whitelist, se aceptan automáticamente
+  //     localhost y cualquier IP de red privada (LAN) en cualquier puerto, para
+  //     poder probar la PWA desde el navegador local o desde el celular
+  //     (`http://192.168.x.x:5180`) sin tocar config en cada cambio de IP/puerto.
+  const isProdLikeEnv =
+    appConfig.nodeEnv === 'production' || appConfig.nodeEnv === 'staging';
+  // localhost / 127.0.0.1 / [::1] y rangos privados 10.x, 172.16–31.x, 192.168.x.
+  const privateLanOriginRe =
+    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})(:\d+)?$/;
+
   app.enableCors({
-    origin: appConfig.corsOrigins.length > 0 ? appConfig.corsOrigins : true,
+    origin: (origin, callback) => {
+      // Requests sin header Origin (curl, apps nativas, same-origin): pasan.
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (appConfig.corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      if (!isProdLikeEnv && privateLanOriginRe.test(origin)) {
+        callback(null, true);
+        return;
+      }
+      // Dev sin whitelist configurada: reflejar todo (comportamiento previo).
+      if (!isProdLikeEnv && appConfig.corsOrigins.length === 0) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    // `ngrok-skip-browser-warning` lo envía el cliente PWA cuando el API se
+    // expone por un túnel ngrok en dev (salta la interstitial de ngrok). Sin
+    // él en la whitelist, el preflight del navegador falla con "Error de CORS".
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Request-Id',
+      'ngrok-skip-browser-warning',
+    ],
   });
 
   // Prefijo global. Por defecto vacío — el cliente PlacePos llama al API en
