@@ -268,8 +268,11 @@ export async function fetchExpensesTotal(
 }
 
 /**
- * Saldo total pendiente (POINT-IN-TIME) de TODOS los créditos de la company:
- * `SUM(balance)` de `sale_credits` con `status != 'PAID'`. Sin rango.
+ * Saldo total pendiente (POINT-IN-TIME) de los créditos que REALMENTE se deben:
+ * `SUM(balance)` de `sale_credits` con saldo > 0 cuya factura sea una VENTA NO
+ * anulada. El INNER JOIN a `sale_invoices` (ticket_type='SALE', is_deleted=false)
+ * es CLAVE: sin él se contarían créditos de ventas anuladas, inflando la cartera.
+ * Coincide con el Reporte de Créditos (filtro "Pendientes").
  */
 export async function fetchTotalPendingCredits(
   dataSource: DataSource,
@@ -279,12 +282,17 @@ export async function fetchTotalPendingCredits(
     `
       SELECT
         COUNT(*) AS pending_count,
-        COALESCE(SUM(total_amount), 0)::float AS total_amount,
-        COALESCE(SUM(paid_amount), 0)::float AS paid_amount,
-        COALESCE(SUM(balance), 0)::float AS balance
-      FROM sale_credits
-      WHERE company_id = $1
-        AND status != 'PAID'
+        COALESCE(SUM(sc.total_amount), 0)::float AS total_amount,
+        COALESCE(SUM(sc.paid_amount), 0)::float AS paid_amount,
+        COALESCE(SUM(sc.balance), 0)::float AS balance
+      FROM sale_credits sc
+      INNER JOIN sale_invoices si
+        ON si.id = sc.sale_invoice_id
+       AND si.company_id = $1
+      WHERE sc.company_id = $1
+        AND sc.balance > 0
+        AND si.ticket_type = 'SALE'
+        AND si.is_deleted = false
       `,
     [cid],
   );
