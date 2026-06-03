@@ -1,7 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
-export const CREDIT_REPORT_STATUSES = ['ALL', 'PENDING', 'PARTIALLY_PAID', 'PAID'] as const;
+export const CREDIT_REPORT_STATUSES = [
+  'ALL',
+  'OWED', // pendientes (saldo > 0) — filtro por defecto
+  'OVERDUE', // vencidas (saldo > 0 y due_date < hoy)
+  'PENDING',
+  'PARTIALLY_PAID',
+  'PAID',
+] as const;
 export type CreditReportStatus = (typeof CREDIT_REPORT_STATUSES)[number];
 
 /**

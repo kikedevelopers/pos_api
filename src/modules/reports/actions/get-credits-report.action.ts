@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import Big from 'big.js';
 import { DataSource } from 'typeorm';
 
+import { nowBogota } from '@/common/utils/dayjs';
+
 import type { CreditsReportQueryDto } from '../dto/credits-report-query.dto';
 import { parseUtcRange } from '../internal/range';
 
@@ -113,8 +115,20 @@ export class GetCreditsReportAction {
     }
 
     if (filters.status && filters.status !== 'ALL') {
-      const ph = placeholder(filters.status);
-      conditions.push(`sc.status::text = ${ph}`);
+      if (filters.status === 'OWED') {
+        // Pendientes: ventas a crédito que aún se deben (saldo > 0). Equivale a
+        // status != PAID por el CHECK paid+balance=total.
+        conditions.push(`sc.balance > 0`);
+      } else if (filters.status === 'OVERDUE') {
+        // Vencidas: pendientes cuya fecha de pago ya pasó (hora Colombia).
+        const today = nowBogota().format('YYYY-MM-DD');
+        conditions.push(
+          `sc.balance > 0 AND sc.due_date IS NOT NULL AND sc.due_date < ${placeholder(today)}::date`,
+        );
+      } else {
+        const ph = placeholder(filters.status);
+        conditions.push(`sc.status::text = ${ph}`);
+      }
     }
 
     const sql = `
