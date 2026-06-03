@@ -12,6 +12,7 @@ import { FinancialMovementsModule } from '@/modules/financial-movements/financia
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product } from '@/modules/products/entities/product.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
+import { RealtimeModule } from '@/modules/realtime/realtime.module';
 import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.module';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
@@ -70,6 +71,9 @@ import { SalesService } from './sales.service';
     CashRegisterModule,
     FinancialMovementsModule,
     CustomersModule,
+    // Tiempo real: expone `RealtimeGateway` para notificar `ticket:changed`
+    // tras crear una venta (best-effort, no altera la respuesta HTTP).
+    RealtimeModule,
   ],
   controllers: [SalesController],
   providers: [

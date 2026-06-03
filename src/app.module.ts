@@ -48,6 +48,7 @@ import { PosReportsModule } from './modules/pos-reports/pos-reports.module';
 import { ProductHistoryModule } from './modules/product-history/product-history.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { SubscriptionGuard } from './modules/subscriptions/subscription.guard';
@@ -193,6 +194,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // Fase 2A — Fuentes de efectivo (wallets + banks + caja del usuario).
     CashSourcesModule,
     AccountsModule,
+    // Tiempo real (Socket.IO) — gateway `ticket:changed`. Reusa el mismo
+    // servidor HTTP/puerto que la API. SalesModule lo importa para emitir al
+    // crear venta; se declara aquí para activar el IoAdapter por defecto.
+    RealtimeModule,
     // Fase 6 — Ventas.
     SalesModule,
     // Fase 7 — Notas crédito/débito (depende de Sales).

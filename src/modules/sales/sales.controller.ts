@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -25,6 +26,7 @@ import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
+import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import type { LastSaleResult } from './actions/get-last-sale.action';
 import { CreateSaleResponseDto, toCreateSaleResponseDto } from './dto/create-sale-response.dto';
@@ -68,7 +70,12 @@ import { SalesService } from './sales.service';
 @ApiBearerAuth('bearer')
 @Controller('sales')
 export class SalesController {
-  constructor(private readonly salesService: SalesService) {}
+  private readonly logger = new Logger(SalesController.name);
+
+  constructor(
+    private readonly salesService: SalesService,
+    private readonly realtimeGateway: RealtimeGateway,
+  ) {}
 
   // --------------------------------------------------------------------------
   // GET /sales/last
@@ -232,6 +239,25 @@ export class SalesController {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
+
+    // Notificación de tiempo real (best-effort): tras el commit de la venta,
+    // señala a los clientes que su lista de tickets cambió para que la
+    // invaliden. NUNCA debe romper la creación: cualquier fallo de socket se
+    // traga y se loguea. El `sellerId` es el creador (actor). `company_id`
+    // viene del JWT, jamás del cliente.
+    try {
+      this.realtimeGateway.emitTicketChanged(companyId, currentUser.user_id, {
+        invoiceId: Number(sale.id),
+        ticketNumber: sale.ticket_number,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Fallo emitiendo ticket:changed (venta ${String(sale.id)}, company ${companyId}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number);
   }
 

@@ -79,6 +79,23 @@ server {
         root /var/www/certbot;
     }
 
+    # WebSocket (Socket.IO) → mismo upstream que la API. Necesita su PROPIO
+    # location porque el `location /` de abajo limpia `Connection ""` (lo que
+    # rompería el handshake de upgrade). Va ANTES de `location /` para ganar la
+    # coincidencia de prefijo. Timeouts largos para conexiones persistentes.
+    location /socket.io/ {
+        proxy_pass http://api:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
     location / {
         proxy_pass http://api:${API_PORT};
         proxy_http_version 1.1;

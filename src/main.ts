@@ -1,6 +1,7 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import Big from 'big.js';
 import helmet from 'helmet';
@@ -24,6 +25,13 @@ async function bootstrap(): Promise<void> {
 
   // Logger estructurado (Pino) reemplaza al logger nativo de Nest.
   app.useLogger(app.get(Logger));
+
+  // Adapter Socket.IO. Lo registramos explícitamente para garantizar que el
+  // servidor WebSocket se adjunta al MISMO servidor HTTP/puerto que la API
+  // (3010), sin abrir un puerto aparte. El CORS del handshake lo define cada
+  // `@WebSocketGateway` (RealtimeGateway: origin reflejado, sin credenciales),
+  // independiente del CORS HTTP de Express configurado más abajo.
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   const configService = app.get(ConfigService);
   const appConfig = configService.getOrThrow<AppConfig>('app');
