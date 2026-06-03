@@ -8,6 +8,7 @@ import { CreditsReportQueryDto } from './dto/credits-report-query.dto';
 import { CustomersRfmDayTicketsQueryDto } from './dto/customers-rfm-day-tickets-query.dto';
 import { CustomersRfmQueryDto } from './dto/customers-rfm-query.dto';
 import { DailyClosureQueryDto } from './dto/daily-closure-query.dto';
+import { ExtendedSummaryQueryDto } from './dto/extended-summary-query.dto';
 import { ReportsService } from './reports.service';
 import type {
   CreditsReportResult,
@@ -15,6 +16,7 @@ import type {
   CustomersRfmPaginatedResult,
   CustomersRfmResult,
   DailyClosureResult,
+  ExtendedSummaryResult,
 } from './reports.service';
 
 /**
@@ -49,6 +51,22 @@ export class ReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<DailyClosureResult> {
     return this.reportsService.getDailyClosure(companyId, query.date);
+  }
+
+  @Get('extended-summary')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary:
+      'Resumen financiero extendido sobre un rango [from, to] (hora Colombia): ventas, gastos, ganancia real, cartera, compras/transportistas y cajas.',
+    description:
+      'Defaults en hora Colombia: `from` = primer día del mes actual, `to` = hoy. cartera, saldosPorPagar y abonosTransportistasPendientes son point-in-time (no por rango).',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  extendedSummary(
+    @Query() query: ExtendedSummaryQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<ExtendedSummaryResult> {
+    return this.reportsService.getExtendedSummary(companyId, query.from, query.to);
   }
 
   @Get('credits')

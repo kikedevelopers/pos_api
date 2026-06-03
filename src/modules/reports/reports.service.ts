@@ -15,6 +15,10 @@ import {
   type CustomersRfmDayTicketsResult,
 } from './actions/get-customers-rfm-day-tickets.action';
 import { GetDailyClosureAction, type DailyClosureResult } from './actions/get-daily-closure.action';
+import {
+  GetExtendedSummaryAction,
+  type ExtendedSummaryResult,
+} from './actions/get-extended-summary.action';
 import type { CreditsReportQueryDto } from './dto/credits-report-query.dto';
 
 export type {
@@ -23,6 +27,7 @@ export type {
   CustomersRfmPaginatedResult,
   CustomersRfmResult,
   DailyClosureResult,
+  ExtendedSummaryResult,
 };
 
 /**
@@ -32,6 +37,7 @@ export type {
 export class ReportsService {
   constructor(
     private readonly dailyClosure: GetDailyClosureAction,
+    private readonly extendedSummary: GetExtendedSummaryAction,
     private readonly creditsReport: GetCreditsReportAction,
     private readonly customersRfm: GetCustomersRfmAction,
     private readonly customersRfmDayTickets: GetCustomersRfmDayTicketsAction,
@@ -39,6 +45,14 @@ export class ReportsService {
 
   getDailyClosure(companyId: number, date?: string): Promise<DailyClosureResult> {
     return this.dailyClosure.execute(companyId, date);
+  }
+
+  getExtendedSummary(
+    companyId: number,
+    from?: string,
+    to?: string,
+  ): Promise<ExtendedSummaryResult> {
+    return this.extendedSummary.execute(companyId, from, to);
   }
 
   getCreditsReport(

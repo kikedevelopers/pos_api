@@ -1,0 +1,337 @@
+import type { DataSource } from 'typeorm';
+
+import { toBig } from '@/common/utils/precision';
+
+/**
+ * Agregaciones de VENTAS compartidas entre `get-daily-closure.action.ts` y
+ * `get-extended-summary.action.ts`.
+ *
+ * Toda la lógica opera sobre un rango `[dateStart, dateEnd]` (instantes UTC ya
+ * resueltos por quien llame — el cierre usa `parseUtcRange`, el resumen
+ * extendido usa `parseDateRange`/Colombia). El helper es NEUTRO a la zona: solo
+ * recibe los `Date` límite. Así ambas acciones reutilizan EXACTAMENTE las
+ * mismas queries y el mismo cálculo de netos/utilidad sin divergir.
+ *
+ * --------------------------------------------------------------------------
+ * Multi-tenancy
+ * --------------------------------------------------------------------------
+ *
+ * TODAS las queries filtran por `company_id = $1` en cada tabla del JOIN. Si
+ * una rama lo omitiera, una company vería datos de otra — bug CRÍTICO.
+ *
+ * --------------------------------------------------------------------------
+ * Reglas financieras (espejo PlacePos byte-por-byte)
+ * --------------------------------------------------------------------------
+ *
+ *   - Ventas en efectivo NETAS = gross - NC(CREDIT) + ND(DEBIT) sobre el rango.
+ *   - Consignaciones (TRANSFER) brutas + costo para utilidad.
+ *   - Créditos nuevos = ventas a crédito generadas en el rango.
+ *   - Big.js para todo cálculo/redondeo monetario.
+ */
+
+export interface SalesRow {
+  gross_sales: number;
+  gross_cost: number;
+}
+
+export interface NotesRow {
+  notes_total: number;
+  notes_cost: number;
+}
+
+export interface ConsigRow {
+  consig_total: number;
+  consig_cost: number;
+}
+
+export interface ConsigDetalleRow {
+  bank_name: string;
+  amount: number;
+}
+
+export interface NewCreditsRow {
+  new_credits_count: string | number;
+  new_credits_total: number;
+  pending_balance: number;
+}
+
+export interface PendingCreditsRow {
+  pending_count: string | number;
+  total_amount: number;
+  paid_amount: number;
+  balance: number;
+}
+
+const round2 = (n: unknown): number => Number(toBig(n).round(2).toString());
+
+/**
+ * Ventas en efectivo BRUTAS del rango (gross_sales + gross_cost). Excluye
+ * facturas que generaron crédito (`sale_credits`) — esas se cuentan como
+ * créditos nuevos, no como venta de contado.
+ */
+export async function fetchCashSales(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<SalesRow> {
+  const rows = await dataSource.query<SalesRow[]>(
+    `
+      SELECT
+        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS gross_sales,
+        COALESCE(SUM(si.cost), 0)::float AS gross_cost
+      FROM sale_payments sp
+      INNER JOIN sale_invoices si
+        ON sp.sale_invoice_id = si.id
+       AND si.company_id = $1
+      WHERE sp.company_id = $1
+        AND si.ticket_type = 'SALE'
+        AND si.is_deleted = false
+        AND sp.payment_method = 'CASH'
+        AND si.created_at BETWEEN $2 AND $3
+        AND NOT EXISTS (
+          SELECT 1 FROM sale_credits sc
+          WHERE sc.sale_invoice_id = si.id
+            AND sc.company_id = $1
+        )
+      `,
+    [cid, dateStart, dateEnd],
+  );
+  return rows[0] ?? { gross_sales: 0, gross_cost: 0 };
+}
+
+/**
+ * Notas de ajuste (CREDIT/DEBIT) aplicadas a facturas de contado del rango.
+ * Devuelve total y costo para netear ventas y utilidad.
+ */
+export async function fetchCashNotes(
+  dataSource: DataSource,
+  cid: string,
+  noteType: 'CREDIT' | 'DEBIT',
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<NotesRow> {
+  const rows = await dataSource.query<NotesRow[]>(
+    `
+      SELECT
+        COALESCE(SUM(cn.total), 0)::float AS notes_total,
+        COALESCE(SUM(cnl.unit_cost * cnl.quantity), 0)::float AS notes_cost
+      FROM credit_notes cn
+      INNER JOIN sale_invoices si
+        ON cn.sale_invoice_id = si.id
+       AND si.company_id = $1
+      INNER JOIN sale_payments sp
+        ON sp.sale_invoice_id = si.id
+       AND sp.company_id = $1
+      LEFT JOIN credit_note_lines cnl
+        ON cnl.credit_note_id = cn.id
+       AND cnl.company_id = $1
+      WHERE cn.company_id = $1
+        AND cn.is_deleted = false
+        AND cn.note_type = $2::note_type
+        AND sp.payment_method = 'CASH'
+        AND si.is_deleted = false
+        AND si.created_at BETWEEN $3 AND $4
+        AND NOT EXISTS (
+          SELECT 1 FROM sale_credits sc
+          WHERE sc.sale_invoice_id = si.id
+            AND sc.company_id = $1
+        )
+      `,
+    [cid, noteType, dateStart, dateEnd],
+  );
+  return rows[0] ?? { notes_total: 0, notes_cost: 0 };
+}
+
+/**
+ * Consignaciones (ventas TRANSFER) del rango: totales (con costo) + detalle
+ * por banco.
+ */
+export async function fetchTransferSales(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<{ totals: ConsigRow; detalle: ConsigDetalleRow[] }> {
+  const totals = await dataSource.query<ConsigRow[]>(
+    `
+      SELECT
+        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS consig_total,
+        COALESCE(SUM(si.cost), 0)::float AS consig_cost
+      FROM sale_payments sp
+      INNER JOIN sale_invoices si
+        ON sp.sale_invoice_id = si.id
+       AND si.company_id = $1
+      WHERE sp.company_id = $1
+        AND si.ticket_type = 'SALE'
+        AND si.is_deleted = false
+        AND sp.payment_method = 'TRANSFER'
+        AND si.created_at BETWEEN $2 AND $3
+        AND NOT EXISTS (
+          SELECT 1 FROM sale_credits sc
+          WHERE sc.sale_invoice_id = si.id
+            AND sc.company_id = $1
+        )
+      `,
+    [cid, dateStart, dateEnd],
+  );
+
+  const detalle = await dataSource.query<ConsigDetalleRow[]>(
+    `
+      SELECT
+        COALESCE(sp.bank_name, 'Sin especificar') AS bank_name,
+        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS amount
+      FROM sale_payments sp
+      INNER JOIN sale_invoices si
+        ON sp.sale_invoice_id = si.id
+       AND si.company_id = $1
+      WHERE sp.company_id = $1
+        AND si.ticket_type = 'SALE'
+        AND si.is_deleted = false
+        AND sp.payment_method = 'TRANSFER'
+        AND si.created_at BETWEEN $2 AND $3
+        AND NOT EXISTS (
+          SELECT 1 FROM sale_credits sc
+          WHERE sc.sale_invoice_id = si.id
+            AND sc.company_id = $1
+        )
+      GROUP BY sp.bank_name
+      ORDER BY amount DESC
+      `,
+    [cid, dateStart, dateEnd],
+  );
+
+  return { totals: totals[0] ?? { consig_total: 0, consig_cost: 0 }, detalle };
+}
+
+/**
+ * Créditos nuevos del rango = ventas a crédito (ticket SALE con `sale_credits`)
+ * generadas en `[dateStart, dateEnd]`. Devuelve conteo, total y saldo pendiente.
+ */
+export async function fetchNewCredits(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<NewCreditsRow> {
+  const rows = await dataSource.query<NewCreditsRow[]>(
+    `
+      SELECT
+        COUNT(*) AS new_credits_count,
+        COALESCE(SUM(sc.total_amount), 0)::float AS new_credits_total,
+        COALESCE(SUM(sc.balance), 0)::float AS pending_balance
+      FROM sale_credits sc
+      INNER JOIN sale_invoices si
+        ON si.id = sc.sale_invoice_id
+       AND si.company_id = $1
+      WHERE sc.company_id = $1
+        AND si.created_at BETWEEN $2 AND $3
+        AND si.ticket_type = 'SALE'
+        AND si.is_deleted = false
+      `,
+    [cid, dateStart, dateEnd],
+  );
+  return (
+    rows[0] ?? {
+      new_credits_count: 0,
+      new_credits_total: 0,
+      pending_balance: 0,
+    }
+  );
+}
+
+/**
+ * Total de "Gastos" del periodo: SOLO `expenses` no archivados.
+ *
+ * Los abonos a transportistas (`carrier_payments`) NO son gasto: el flete ya
+ * está capitalizado en el COSTO del producto (prorrata) e impacta P&L vía COGS
+ * al vender; contarlo además como gasto lo doble-contaría. Espejo de la misma
+ * exclusión en el dashboard (`aggregations.ts`).
+ */
+export async function fetchExpensesTotal(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<number> {
+  const rows = await dataSource.query<{ expenses_total: number }[]>(
+    `
+      SELECT COALESCE(SUM(e.amount), 0)::float AS expenses_total
+      FROM expenses e
+      WHERE e.company_id = $1
+        AND e.created_at BETWEEN $2 AND $3
+        AND e.is_archived = false
+      `,
+    [cid, dateStart, dateEnd],
+  );
+  return Number(rows[0]?.expenses_total ?? 0);
+}
+
+/**
+ * Saldo total pendiente (POINT-IN-TIME) de TODOS los créditos de la company:
+ * `SUM(balance)` de `sale_credits` con `status != 'PAID'`. Sin rango.
+ */
+export async function fetchTotalPendingCredits(
+  dataSource: DataSource,
+  cid: string,
+): Promise<PendingCreditsRow> {
+  const rows = await dataSource.query<PendingCreditsRow[]>(
+    `
+      SELECT
+        COUNT(*) AS pending_count,
+        COALESCE(SUM(total_amount), 0)::float AS total_amount,
+        COALESCE(SUM(paid_amount), 0)::float AS paid_amount,
+        COALESCE(SUM(balance), 0)::float AS balance
+      FROM sale_credits
+      WHERE company_id = $1
+        AND status != 'PAID'
+      `,
+    [cid],
+  );
+  return (
+    rows[0] ?? {
+      pending_count: 0,
+      total_amount: 0,
+      paid_amount: 0,
+      balance: 0,
+    }
+  );
+}
+
+export interface NetSalesResult {
+  netSales: number;
+  netCost: number;
+  netProfit: number;
+}
+
+/**
+ * Ventas en efectivo NETAS de NC/ND y su utilidad. Espejo PlacePos:
+ *   netSales = gross - NC + ND ; netCost = grossCost - ncCost + ndCost.
+ */
+export function computeNetCashSales(
+  sales: SalesRow,
+  creditNotes: NotesRow,
+  debitNotes: NotesRow,
+): NetSalesResult {
+  const netSales = round2(
+    toBig(sales.gross_sales)
+      .minus(toBig(creditNotes.notes_total))
+      .plus(toBig(debitNotes.notes_total))
+      .toNumber(),
+  );
+  const netCost = round2(
+    toBig(sales.gross_cost)
+      .minus(toBig(creditNotes.notes_cost))
+      .plus(toBig(debitNotes.notes_cost))
+      .toNumber(),
+  );
+  const netProfit = round2(toBig(netSales).minus(toBig(netCost)).toNumber());
+  return { netSales, netCost, netProfit };
+}
+
+/**
+ * Utilidad de consignaciones (TRANSFER) = total - costo.
+ */
+export function computeConsignacionesProfit(consig: ConsigRow): number {
+  return round2(toBig(consig.consig_total).minus(toBig(consig.consig_cost)).toNumber());
+}

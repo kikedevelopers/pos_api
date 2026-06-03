@@ -5,28 +5,19 @@ import { DataSource } from 'typeorm';
 import { toBig } from '@/common/utils/precision';
 
 import { parseUtcRange, todayUtcDate } from '../internal/range';
+import {
+  computeConsignacionesProfit,
+  computeNetCashSales,
+  fetchCashNotes,
+  fetchCashSales,
+  fetchExpensesTotal,
+  fetchNewCredits,
+  fetchTotalPendingCredits,
+  fetchTransferSales,
+  type ConsigDetalleRow,
+} from '../internal/sales-aggregations';
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
-
-interface SalesRow {
-  gross_sales: number;
-  gross_cost: number;
-}
-
-interface NotesRow {
-  notes_total: number;
-  notes_cost: number;
-}
-
-interface ConsigRow {
-  consig_total: number;
-  consig_cost: number;
-}
-
-interface ConsigDetalleRow {
-  bank_name: string;
-  amount: number;
-}
 
 interface AbonosRow {
   abonos_total: number;
@@ -34,23 +25,6 @@ interface AbonosRow {
 
 interface AbonosProfitRow {
   abonos_profit: number;
-}
-
-interface ExpensesRow {
-  expenses_total: number;
-}
-
-interface NewCreditsRow {
-  new_credits_count: string | number;
-  new_credits_total: number;
-  pending_balance: number;
-}
-
-interface PendingCreditsRow {
-  pending_count: string | number;
-  total_amount: number;
-  paid_amount: number;
-  balance: number;
 }
 
 interface AdjustmentNoteRow {
@@ -147,33 +121,21 @@ export class GetDailyClosureAction {
 
     const [salesData, creditNotesData, debitNotesData, consigData, expensesTotal] =
       await Promise.all([
-        this.fetchCashSales(cid, dateStart, dateEnd),
-        this.fetchCashNotes(cid, 'CREDIT', dateStart, dateEnd),
-        this.fetchCashNotes(cid, 'DEBIT', dateStart, dateEnd),
-        this.fetchTransferSales(cid, dateStart, dateEnd),
-        this.fetchExpensesTotal(cid, dateStart, dateEnd),
+        fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
+        fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
+        fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
+        fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
+        fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
       ]);
 
     const grossSales = salesData.gross_sales;
-    const grossCost = salesData.gross_cost;
     const creditNotes = creditNotesData.notes_total;
-    const creditNotesCost = creditNotesData.notes_cost;
     const debitNotes = debitNotesData.notes_total;
-    const debitNotesCost = debitNotesData.notes_cost;
 
-    const netSales = round2(
-      toBig(grossSales).minus(toBig(creditNotes)).plus(toBig(debitNotes)).toNumber(),
-    );
-    const netCost = round2(
-      toBig(grossCost).minus(toBig(creditNotesCost)).plus(toBig(debitNotesCost)).toNumber(),
-    );
-    const netProfit = round2(toBig(netSales).minus(toBig(netCost)).toNumber());
+    const { netSales, netProfit } = computeNetCashSales(salesData, creditNotesData, debitNotesData);
 
     const consignacionesVentas = consigData.totals.consig_total;
-    const consignacionesCost = consigData.totals.consig_cost;
-    const consignacionesProfit = round2(
-      toBig(consignacionesVentas).minus(toBig(consignacionesCost)).toNumber(),
-    );
+    const consignacionesProfit = computeConsignacionesProfit(consigData.totals);
     const consignacionesDetalle = consigData.detalle.map((r) => ({
       bankName: r.bank_name,
       amount: round2(r.amount),
@@ -205,8 +167,8 @@ export class GetDailyClosureAction {
     );
 
     const [newCreditsData, totalPendingData, adjustmentNotesRows] = await Promise.all([
-      this.fetchNewCredits(cid, dateStart, dateEnd),
-      this.fetchTotalPendingCredits(cid),
+      fetchNewCredits(this.dataSource, cid, dateStart, dateEnd),
+      fetchTotalPendingCredits(this.dataSource, cid),
       this.fetchAdjustmentNotes(cid, dateStart, dateEnd),
     ]);
 
@@ -297,126 +259,6 @@ export class GetDailyClosureAction {
   }
 
   // ─── Helpers privados (paridad PlacePos con company_id) ────────────────────
-
-  private async fetchCashSales(cid: string, dateStart: Date, dateEnd: Date): Promise<SalesRow> {
-    const rows = await this.dataSource.query<SalesRow[]>(
-      `
-      SELECT
-        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS gross_sales,
-        COALESCE(SUM(si.cost), 0)::float AS gross_cost
-      FROM sale_payments sp
-      INNER JOIN sale_invoices si
-        ON sp.sale_invoice_id = si.id
-       AND si.company_id = $1
-      WHERE sp.company_id = $1
-        AND si.ticket_type = 'SALE'
-        AND si.is_deleted = false
-        AND sp.payment_method = 'CASH'
-        AND si.created_at BETWEEN $2 AND $3
-        AND NOT EXISTS (
-          SELECT 1 FROM sale_credits sc
-          WHERE sc.sale_invoice_id = si.id
-            AND sc.company_id = $1
-        )
-      `,
-      [cid, dateStart, dateEnd],
-    );
-    return rows[0] ?? { gross_sales: 0, gross_cost: 0 };
-  }
-
-  private async fetchCashNotes(
-    cid: string,
-    noteType: 'CREDIT' | 'DEBIT',
-    dateStart: Date,
-    dateEnd: Date,
-  ): Promise<NotesRow> {
-    const rows = await this.dataSource.query<NotesRow[]>(
-      `
-      SELECT
-        COALESCE(SUM(cn.total), 0)::float AS notes_total,
-        COALESCE(SUM(cnl.unit_cost * cnl.quantity), 0)::float AS notes_cost
-      FROM credit_notes cn
-      INNER JOIN sale_invoices si
-        ON cn.sale_invoice_id = si.id
-       AND si.company_id = $1
-      INNER JOIN sale_payments sp
-        ON sp.sale_invoice_id = si.id
-       AND sp.company_id = $1
-      LEFT JOIN credit_note_lines cnl
-        ON cnl.credit_note_id = cn.id
-       AND cnl.company_id = $1
-      WHERE cn.company_id = $1
-        AND cn.is_deleted = false
-        AND cn.note_type = $2::note_type
-        AND sp.payment_method = 'CASH'
-        AND si.is_deleted = false
-        AND si.created_at BETWEEN $3 AND $4
-        AND NOT EXISTS (
-          SELECT 1 FROM sale_credits sc
-          WHERE sc.sale_invoice_id = si.id
-            AND sc.company_id = $1
-        )
-      `,
-      [cid, noteType, dateStart, dateEnd],
-    );
-    return rows[0] ?? { notes_total: 0, notes_cost: 0 };
-  }
-
-  private async fetchTransferSales(
-    cid: string,
-    dateStart: Date,
-    dateEnd: Date,
-  ): Promise<{ totals: ConsigRow; detalle: ConsigDetalleRow[] }> {
-    const totals = await this.dataSource.query<ConsigRow[]>(
-      `
-      SELECT
-        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS consig_total,
-        COALESCE(SUM(si.cost), 0)::float AS consig_cost
-      FROM sale_payments sp
-      INNER JOIN sale_invoices si
-        ON sp.sale_invoice_id = si.id
-       AND si.company_id = $1
-      WHERE sp.company_id = $1
-        AND si.ticket_type = 'SALE'
-        AND si.is_deleted = false
-        AND sp.payment_method = 'TRANSFER'
-        AND si.created_at BETWEEN $2 AND $3
-        AND NOT EXISTS (
-          SELECT 1 FROM sale_credits sc
-          WHERE sc.sale_invoice_id = si.id
-            AND sc.company_id = $1
-        )
-      `,
-      [cid, dateStart, dateEnd],
-    );
-
-    const detalle = await this.dataSource.query<ConsigDetalleRow[]>(
-      `
-      SELECT
-        COALESCE(sp.bank_name, 'Sin especificar') AS bank_name,
-        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS amount
-      FROM sale_payments sp
-      INNER JOIN sale_invoices si
-        ON sp.sale_invoice_id = si.id
-       AND si.company_id = $1
-      WHERE sp.company_id = $1
-        AND si.ticket_type = 'SALE'
-        AND si.is_deleted = false
-        AND sp.payment_method = 'TRANSFER'
-        AND si.created_at BETWEEN $2 AND $3
-        AND NOT EXISTS (
-          SELECT 1 FROM sale_credits sc
-          WHERE sc.sale_invoice_id = si.id
-            AND sc.company_id = $1
-        )
-      GROUP BY sp.bank_name
-      ORDER BY amount DESC
-      `,
-      [cid, dateStart, dateEnd],
-    );
-
-    return { totals: totals[0] ?? { consig_total: 0, consig_cost: 0 }, detalle };
-  }
 
   private async fetchAbonos(
     cid: string,
@@ -511,84 +353,6 @@ export class GetDailyClosureAction {
       [cid, dateStart, dateEnd],
     );
     return Number(rows[0]?.abonos_profit ?? 0);
-  }
-
-  /**
-   * Total de "Gastos del día" del cierre: SOLO `expenses` no archivados.
-   *
-   * Los abonos a transportistas (`carrier_payments`) NO son gasto del día: el
-   * flete ya está capitalizado en el COSTO del producto (prorrata), impacta P&L
-   * vía COGS al vender; contarlo además como gasto lo doble-contaría. El abono
-   * solo mueve caja (su `financial_movement`), que el arqueo refleja aparte.
-   * Espejo de la misma exclusión en el dashboard (`aggregations.ts`).
-   */
-  private async fetchExpensesTotal(cid: string, dateStart: Date, dateEnd: Date): Promise<number> {
-    const rows = await this.dataSource.query<ExpensesRow[]>(
-      `
-      SELECT COALESCE(SUM(e.amount), 0)::float AS expenses_total
-      FROM expenses e
-      WHERE e.company_id = $1
-        AND e.created_at BETWEEN $2 AND $3
-        AND e.is_archived = false
-      `,
-      [cid, dateStart, dateEnd],
-    );
-    return Number(rows[0]?.expenses_total ?? 0);
-  }
-
-  private async fetchNewCredits(
-    cid: string,
-    dateStart: Date,
-    dateEnd: Date,
-  ): Promise<NewCreditsRow> {
-    const rows = await this.dataSource.query<NewCreditsRow[]>(
-      `
-      SELECT
-        COUNT(*) AS new_credits_count,
-        COALESCE(SUM(sc.total_amount), 0)::float AS new_credits_total,
-        COALESCE(SUM(sc.balance), 0)::float AS pending_balance
-      FROM sale_credits sc
-      INNER JOIN sale_invoices si
-        ON si.id = sc.sale_invoice_id
-       AND si.company_id = $1
-      WHERE sc.company_id = $1
-        AND si.created_at BETWEEN $2 AND $3
-        AND si.ticket_type = 'SALE'
-        AND si.is_deleted = false
-      `,
-      [cid, dateStart, dateEnd],
-    );
-    return (
-      rows[0] ?? {
-        new_credits_count: 0,
-        new_credits_total: 0,
-        pending_balance: 0,
-      }
-    );
-  }
-
-  private async fetchTotalPendingCredits(cid: string): Promise<PendingCreditsRow> {
-    const rows = await this.dataSource.query<PendingCreditsRow[]>(
-      `
-      SELECT
-        COUNT(*) AS pending_count,
-        COALESCE(SUM(total_amount), 0)::float AS total_amount,
-        COALESCE(SUM(paid_amount), 0)::float AS paid_amount,
-        COALESCE(SUM(balance), 0)::float AS balance
-      FROM sale_credits
-      WHERE company_id = $1
-        AND status != 'PAID'
-      `,
-      [cid],
-    );
-    return (
-      rows[0] ?? {
-        pending_count: 0,
-        total_amount: 0,
-        paid_amount: 0,
-        balance: 0,
-      }
-    );
   }
 
   private async fetchAdjustmentNotes(
