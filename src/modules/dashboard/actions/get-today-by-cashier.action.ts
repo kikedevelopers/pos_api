@@ -128,7 +128,12 @@ export class GetTodayByCashierAction {
 
     const byUser = new Map<number, Bucket>();
     const ensure = (userId: number | null, userName: string): Bucket => {
-      const key = userId ?? 0;
+      // pg entrega `bigint` (created_by_id) como STRING. Unas queries keyean con
+      // string ("6") y otras (salesCount/abonosProfitShare) con Number(6). Como
+      // un Map distingue "6" de 6, el mismo cajero se partía en DOS: uno con
+      // nombre+recaudo y otro "Sin asignar" con el conteo. Coercemos SIEMPRE a
+      // número para unificar la clave.
+      const key = userId == null ? 0 : Number(userId);
       const existing = byUser.get(key);
       if (existing) {
         // Promueve el nombre si veníamos del fallback "Sin asignar".
