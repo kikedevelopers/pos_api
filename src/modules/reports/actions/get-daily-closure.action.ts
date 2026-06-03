@@ -514,27 +514,22 @@ export class GetDailyClosureAction {
   }
 
   /**
-   * Total de egresos del día: `expenses` no archivados + abonos a transportistas
-   * (`carrier_payments`). Espejo PlacePos `fetchExpensesTotal`
-   * (`reports.routes.ts:253`): ambos restan al Saldo Líquido del cierre.
-   * Multi-tenant en ambas ramas.
+   * Total de "Gastos del día" del cierre: SOLO `expenses` no archivados.
+   *
+   * Los abonos a transportistas (`carrier_payments`) NO son gasto del día: el
+   * flete ya está capitalizado en el COSTO del producto (prorrata), impacta P&L
+   * vía COGS al vender; contarlo además como gasto lo doble-contaría. El abono
+   * solo mueve caja (su `financial_movement`), que el arqueo refleja aparte.
+   * Espejo de la misma exclusión en el dashboard (`aggregations.ts`).
    */
   private async fetchExpensesTotal(cid: string, dateStart: Date, dateEnd: Date): Promise<number> {
     const rows = await this.dataSource.query<ExpensesRow[]>(
       `
-      SELECT COALESCE(SUM(amount), 0)::float AS expenses_total
-      FROM (
-        SELECT e.amount
-        FROM expenses e
-        WHERE e.company_id = $1
-          AND e.created_at BETWEEN $2 AND $3
-          AND e.is_archived = false
-        UNION ALL
-        SELECT cp.amount
-        FROM carrier_payments cp
-        WHERE cp.company_id = $1
-          AND cp.created_at BETWEEN $2 AND $3
-      ) AS combined
+      SELECT COALESCE(SUM(e.amount), 0)::float AS expenses_total
+      FROM expenses e
+      WHERE e.company_id = $1
+        AND e.created_at BETWEEN $2 AND $3
+        AND e.is_archived = false
       `,
       [cid, dateStart, dateEnd],
     );
