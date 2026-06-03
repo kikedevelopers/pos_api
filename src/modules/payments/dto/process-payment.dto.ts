@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -12,6 +14,7 @@ import {
   IsUUID,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 /**
@@ -21,6 +24,8 @@ import {
  *   - `CASH`     → impacta caja del actor (cash_register).
  *   - `TRANSFER` → impacta `Bank` (requiere `bank_id` + `bank_name`).
  *   - `CREDIT`   → NO crea `SalePayment`; sólo se registra el `SaleCredit`.
+ *     En el nuevo contrato de PAGO DIVIDIDO el crédito ya NO viaja dentro de
+ *     `payments[]`: se expresa con `is_credit` + `credit_amount` a nivel raíz.
  */
 export enum ProcessPaymentMethod {
   CASH = 'CASH',
@@ -29,23 +34,91 @@ export enum ProcessPaymentMethod {
 }
 
 /**
- * Payload de `POST /payments` — espejo de `ProcessPaymentPayload` de PlacePos.
+ * Un tender (entrega) dentro de un pago dividido. NUNCA representa crédito —
+ * el crédito por remanente vive en los campos raíz `is_credit`/`credit_amount`.
+ *
+ * Invariantes (validadas en la action, no aquí, para devolver códigos de
+ * negocio con el shape PlacePos):
+ *
+ *   - `amount_paid > 0` siempre (un tender de 0 no tiene sentido).
+ *   - `TRANSFER` ⇒ `bank_id` no-null.
+ *   - `change_amount > 0` sólo tiene sentido en `CASH` (sobrepago en efectivo).
+ *     En `TRANSFER` debe ser 0 (no se da vuelto por transferencia).
+ */
+export class ProcessPaymentTenderDto {
+  @ApiProperty({
+    description: 'Método de este tender. CREDIT no es válido aquí.',
+    enum: [ProcessPaymentMethod.CASH, ProcessPaymentMethod.TRANSFER],
+    example: ProcessPaymentMethod.CASH,
+  })
+  @IsEnum(ProcessPaymentMethod)
+  payment_method!: ProcessPaymentMethod;
+
+  @ApiProperty({
+    description: 'Monto entregado por este método.',
+    example: 100.0,
+  })
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Type(() => Number)
+  amount_paid!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Vuelto devuelto al cliente. Sólo CASH con sobrepago; TRANSFER siempre 0. Default 0.',
+    example: 0,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Type(() => Number)
+  change_amount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Id del banco receptor. Requerido cuando `payment_method=TRANSFER`.',
+    example: 7,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsInt()
+  @IsPositive()
+  bank_id?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Nombre del banco (snapshot persistido en el SalePayment).',
+    example: 'Bancolombia Ahorros',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsString()
+  bank_name?: string | null;
+}
+
+/**
+ * Payload de `POST /payments` — soporta PAGO DIVIDIDO (split tender).
  *
  * --------------------------------------------------------------------------
- * Notas de contrato (paridad cliente PlacePos / Electron)
+ * Nuevo contrato (paridad front nuevo)
  * --------------------------------------------------------------------------
  *
- * - El payload NO es array. Es un único cobro plano con todos los datos del
- *   método (caja, banco o crédito) en el mismo objeto.
- * - El cliente envía números (`number`) para `amount_due`, `amount_paid`,
- *   `change_amount` y `credit_amount`. Internamente la action los pasa por
- *   `toBig(...)` para todo cálculo monetario.
- * - `bank_id` y `bank_name` SOLO son requeridos cuando `payment_method` es
- *   `TRANSFER`. PlacePos envía siempre ambos en ese caso (validamos el id).
- * - `due_date` solo tiene sentido si `is_credit && credit_amount > 0`.
- * - `override_margin` lo habilita el operador en la UI; el server solo aplica
- *   override si el actor es `owner` o `superadmin` (lo decide la action al
- *   invocar `assertMarginAboveMinimum`).
+ * - `payments[]`: 1..N tenders (CASH/TRANSFER). El front nuevo SIEMPRE manda
+ *   este array.
+ * - `is_credit` + `credit_amount`: el remanente que va a crédito (ya calculado
+ *   por el cliente). El crédito NO es un tender.
+ * - Invariante de cuadre (validado en la action):
+ *     Σ(amount_paid − change_amount) + credit_amount ≈ amount_due  (±0.01).
+ *
+ * --------------------------------------------------------------------------
+ * Retrocompatibilidad (shape viejo plano)
+ * --------------------------------------------------------------------------
+ *
+ * Callers viejos enviaban `payment_method` + `amount_paid` + `change_amount` +
+ * `bank_id`/`bank_name` en la raíz, sin `payments[]`. La action normaliza ese
+ * shape a `payments: [{ ... }]` cuando `payments` no llega. Los campos planos
+ * se mantienen OPCIONALES aquí únicamente para no romper esos clientes; el
+ * front nuevo no los envía.
  */
 export class ProcessPaymentDto {
   @ApiProperty({
@@ -57,14 +130,6 @@ export class ProcessPaymentDto {
   invoice_id!: number;
 
   @ApiProperty({
-    description: 'Método de pago.',
-    enum: ProcessPaymentMethod,
-    example: ProcessPaymentMethod.CASH,
-  })
-  @IsEnum(ProcessPaymentMethod)
-  payment_method!: ProcessPaymentMethod;
-
-  @ApiProperty({
     description: 'Total adeudado por la venta. Debe coincidir (±0.01) con `sale.total`.',
     example: 150.0,
   })
@@ -73,23 +138,17 @@ export class ProcessPaymentDto {
   @Type(() => Number)
   amount_due!: number;
 
-  @ApiProperty({
-    description: 'Monto que el cliente entrega. `0` si es CRÉDITO puro sin abono inicial.',
-    example: 200.0,
+  @ApiPropertyOptional({
+    description:
+      'Tenders del pago dividido (1..N). El front nuevo SIEMPRE lo envía. Si se omite, la action intenta normalizar el shape plano legado (`payment_method`/`amount_paid`/...).',
+    type: [ProcessPaymentTenderDto],
   })
-  @IsNumber({ maxDecimalPlaces: 4 })
-  @Min(0)
-  @Type(() => Number)
-  amount_paid!: number;
-
-  @ApiProperty({
-    description: 'Vuelto devuelto al cliente. `0` si no hay vuelto.',
-    example: 50.0,
-  })
-  @IsNumber({ maxDecimalPlaces: 4 })
-  @Min(0)
-  @Type(() => Number)
-  change_amount!: number;
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ProcessPaymentTenderDto)
+  payments?: ProcessPaymentTenderDto[];
 
   @ApiProperty({
     description:
@@ -100,7 +159,7 @@ export class ProcessPaymentDto {
   is_credit!: boolean;
 
   @ApiProperty({
-    description: 'Monto del crédito generado. Debe ser `0` si `is_credit=false`.',
+    description: 'Monto del remanente que va a crédito. `0` si todo se pagó con tender.',
     example: 0,
   })
   @IsNumber({ maxDecimalPlaces: 4 })
@@ -116,11 +175,44 @@ export class ProcessPaymentDto {
   @IsOptional()
   @ValidateIf((_o, v) => v !== null)
   @IsDateString()
-  due_date!: string | null;
+  due_date?: string | null;
+
+  // ------------------------------------------------------------------------
+  // Campos planos LEGADOS (retrocompat). Opcionales — el front nuevo no los
+  // envía. La action los usa sólo si `payments` no llega.
+  // ------------------------------------------------------------------------
 
   @ApiPropertyOptional({
-    description:
-      'Id del banco receptor. Requerido cuando `payment_method=TRANSFER`; debe ser `null` en otros casos.',
+    description: '[LEGADO] Método de pago plano. Use `payments[]` en su lugar.',
+    enum: ProcessPaymentMethod,
+    example: ProcessPaymentMethod.CASH,
+  })
+  @IsOptional()
+  @IsEnum(ProcessPaymentMethod)
+  payment_method?: ProcessPaymentMethod;
+
+  @ApiPropertyOptional({
+    description: '[LEGADO] Monto entregado plano. Use `payments[]` en su lugar.',
+    example: 200.0,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Type(() => Number)
+  amount_paid?: number;
+
+  @ApiPropertyOptional({
+    description: '[LEGADO] Vuelto plano. Use `payments[]` en su lugar.',
+    example: 50.0,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Type(() => Number)
+  change_amount?: number;
+
+  @ApiPropertyOptional({
+    description: '[LEGADO] Id del banco plano. Use `payments[]` en su lugar.',
     example: 7,
     nullable: true,
   })
@@ -128,18 +220,17 @@ export class ProcessPaymentDto {
   @ValidateIf((_o, v) => v !== null)
   @IsInt()
   @IsPositive()
-  bank_id!: number | null;
+  bank_id?: number | null;
 
   @ApiPropertyOptional({
-    description:
-      'Nombre del banco (snapshot persistido en el SalePayment). Requerido para TRANSFER.',
+    description: '[LEGADO] Nombre del banco plano. Use `payments[]` en su lugar.',
     example: 'Bancolombia Ahorros',
     nullable: true,
   })
   @IsOptional()
   @ValidateIf((_o, v) => v !== null)
   @IsString()
-  bank_name!: string | null;
+  bank_name?: string | null;
 
   @ApiPropertyOptional({
     description:

@@ -278,7 +278,10 @@ export class VoidSaleAction {
     // `registerCreditNoteFullVoid`.
     let cashRefunded = new Big(0);
     for (const cashPayment of cashPayments) {
-      const amt = toBig(cashPayment.amount);
+      // Reembolsamos el NETO que entró a caja al cobrar (amount − change), NO
+      // el bruto entregado por el cliente. Si hubo sobrepago (change>0), la
+      // caja subió sólo por el neto; descontar el bruto la dejaría negativa.
+      const amt = toBig(cashPayment.amount).minus(toBig(cashPayment.change_amount));
       if (amt.lte(0)) {
         continue;
       }
@@ -301,7 +304,11 @@ export class VoidSaleAction {
     if (transferPayments.length > 0 && refundSource) {
       const target = await this.resolveRefundTarget(manager, companyId, refundSource);
       for (const transfer of transferPayments) {
-        const amt = toBig(transfer.amount);
+        // Reversamos el mismo NETO que se acreditó al cobrar. En TRANSFER el
+        // vuelto siempre es 0, así que el neto iguala `amount`; restamos
+        // `change_amount` por defensa para no divergir si un dato legado lo
+        // trajera distinto de 0.
+        const amt = toBig(transfer.amount).minus(toBig(transfer.change_amount));
         if (amt.lte(0)) {
           continue;
         }

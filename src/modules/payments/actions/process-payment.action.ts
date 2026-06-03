@@ -27,7 +27,11 @@ import {
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
-import { ProcessPaymentDto, ProcessPaymentMethod } from '../dto/process-payment.dto';
+import {
+  ProcessPaymentDto,
+  ProcessPaymentMethod,
+  ProcessPaymentTenderDto,
+} from '../dto/process-payment.dto';
 
 /**
  * Actor que procesa el pago (User u Employee logueado). Sólo capturamos los
@@ -59,6 +63,12 @@ export interface ProcessPaymentResult {
   success: boolean;
   message: string;
   payment_id: number | null;
+  /**
+   * Todos los ids de SalePayment creados en este pago dividido (split tender),
+   * en el mismo orden que `payments[]`. `payment_id` queda como el primero por
+   * compatibilidad con el front viejo. Vacío si no hubo tender (crédito puro).
+   */
+  payment_ids?: number[];
   credit_id: number | null;
   /**
    * Folio SALE generado al convertir ORDER → SALE. El cliente PlacePos lo
@@ -86,6 +96,16 @@ const ERR = {
   INVOICE_NOT_FOUND: 'INVOICE_NOT_FOUND',
   INVOICE_NOT_ORDER: 'INVOICE_NOT_ORDER',
   AMOUNT_MISMATCH: 'AMOUNT_MISMATCH',
+  /** El desglose de tenders + crédito no suma `amount_due` (±0.01). */
+  PAYMENT_BREAKDOWN_MISMATCH: 'PAYMENT_BREAKDOWN_MISMATCH',
+  /** `payments[]` vacío o un tender con `amount_paid <= 0`. */
+  INVALID_PAYMENT_ITEM: 'INVALID_PAYMENT_ITEM',
+  /**
+   * Vuelto inválido en un tender: `change_amount < 0`, `change_amount >
+   * amount_paid` (neto negativo restaría de caja), o `change_amount > 0` en
+   * TRANSFER (en transferencia no hay vuelto).
+   */
+  INVALID_CHANGE_AMOUNT: 'INVALID_CHANGE_AMOUNT',
   CREDIT_REQUIRES_CUSTOMER: 'CREDIT_REQUIRES_CUSTOMER',
   TRANSFER_REQUIRES_BANK: 'TRANSFER_REQUIRES_BANK',
   BANK_NOT_FOUND: 'BANK_NOT_FOUND',
@@ -243,19 +263,76 @@ export class ProcessPaymentAction {
       return this.fail('El monto del ticket no coincide con el monto enviado', ERR.AMOUNT_MISMATCH);
     }
 
-    // 4. Crédito requiere customer.
-    if (dto.is_credit && toBig(dto.credit_amount).gt(0) && !sale.customer_id) {
+    // 3.5. Normalizar tenders. El front nuevo manda `payments[]`; los callers
+    //      viejos mandan el shape plano (`payment_method`/`amount_paid`/...).
+    //      `normalizeTenders` unifica ambos a un array de tenders.
+    const tenders = this.normalizeTenders(dto);
+
+    // 4. Validaciones de tenders:
+    //    a) array no vacío.
+    if (tenders.length === 0) {
+      return this.fail('Debe enviar al menos un método de pago', ERR.INVALID_PAYMENT_ITEM);
+    }
+    //    b) cada tender con amount_paid > 0, vuelto coherente y TRANSFER con
+    //       bank_id.
+    for (const tender of tenders) {
+      const amountPaidBig = toBig(tender.amount_paid);
+      const changeBig = toBig(tender.change_amount ?? 0);
+      if (!amountPaidBig.gt(0)) {
+        return this.fail(
+          'Cada método de pago debe tener un monto mayor a cero',
+          ERR.INVALID_PAYMENT_ITEM,
+        );
+      }
+      // Vuelto: no negativo y nunca mayor que lo entregado (neto negativo
+      // RESTARÍA de caja). Validamos en runtime aunque el DTO ya tenga Min(0):
+      // el shape plano legado o un caller no-DTO podrían saltarse el pipe.
+      if (changeBig.lt(0)) {
+        return this.fail('El vuelto no puede ser negativo', ERR.INVALID_CHANGE_AMOUNT);
+      }
+      if (changeBig.gt(amountPaidBig)) {
+        return this.fail(
+          'El vuelto no puede ser mayor que el monto entregado',
+          ERR.INVALID_CHANGE_AMOUNT,
+        );
+      }
+      // En transferencia NO hay vuelto: rechazamos change>0 para no divergir
+      // del cuadre ni de placepos (que acredita el banco por el neto).
+      if (tender.payment_method === ProcessPaymentMethod.TRANSFER && changeBig.gt(0)) {
+        return this.fail(
+          'El pago por transferencia no admite vuelto',
+          ERR.INVALID_CHANGE_AMOUNT,
+        );
+      }
+      if (tender.payment_method === ProcessPaymentMethod.TRANSFER && !tender.bank_id) {
+        return this.fail(
+          'El pago por transferencia requiere un banco receptor',
+          ERR.TRANSFER_REQUIRES_BANK,
+        );
+      }
+    }
+
+    // 5. Invariante de cuadre (HOT PATH): el neto de tenders (entregado menos
+    //    vuelto) + el remanente a crédito debe igualar `amount_due` (±0.01).
+    //    Σ(amount_paid − change_amount) + credit_amount ≈ amount_due.
+    const creditAmountBig = dto.is_credit ? toBig(dto.credit_amount) : toBig(0);
+    const tenderNetBig = tenders.reduce(
+      (acc, t) => acc.plus(toBig(t.amount_paid).minus(toBig(t.change_amount ?? 0))),
+      toBig(0),
+    );
+    const breakdownTotal = tenderNetBig.plus(creditAmountBig);
+    if (breakdownTotal.minus(amountDueBig).abs().gt(toBig(0.01))) {
       return this.fail(
-        'No se puede registrar crédito sin un cliente asignado a la factura',
-        ERR.CREDIT_REQUIRES_CUSTOMER,
+        'El desglose de pagos no coincide con el total de la venta',
+        ERR.PAYMENT_BREAKDOWN_MISMATCH,
       );
     }
 
-    // 5. TRANSFER requiere bank_id.
-    if (dto.payment_method === ProcessPaymentMethod.TRANSFER && !dto.bank_id) {
+    // 6. Crédito requiere customer.
+    if (dto.is_credit && creditAmountBig.gt(0) && !sale.customer_id) {
       return this.fail(
-        'El pago por transferencia requiere un banco receptor',
-        ERR.TRANSFER_REQUIRES_BANK,
+        'No se puede registrar crédito sin un cliente asignado a la factura',
+        ERR.CREDIT_REQUIRES_CUSTOMER,
       );
     }
 
@@ -330,25 +407,37 @@ export class ProcessPaymentAction {
       });
     }
 
-    // 9. SalePayment + side effects (solo si amount_paid > 0).
-    let paymentId: number | null = null;
-    const amountPaidBig = toBig(dto.amount_paid);
-    if (amountPaidBig.gt(0)) {
+    // 9. SalePayment + side effects POR CADA tender. El override/margen/stock
+    //    se aplicó UNA sola vez arriba (a nivel venta), no por pago.
+    //
+    //    uuid por pago (idempotencia a nivel operación): el tender 0 usa la
+    //    llave de operación "pura" (`idempotencyKey`) para que
+    //    `tryReplayIdempotent` lo encuentre en un reintento; los siguientes
+    //    derivan `${idempotencyKey}:${i}`. Así el UNIQUE (company_id, uuid)
+    //    deduplica TODO el split: si la operación se reintenta, el primer
+    //    INSERT colisiona y el fast-path devuelve el resultado previo. Sin
+    //    `idempotencyKey` (caller sin llave) cada pago lleva `uuid=null`.
+    const paymentIds: number[] = [];
+    for (let i = 0; i < tenders.length; i += 1) {
+      const tender = tenders[i];
+      const tenderUuid = this.deriveTenderUuid(idempotencyKey, i);
       const inserted = await this.insertPaymentAndApplySideEffects(
         manager,
-        dto,
+        tender,
         sale,
         companyId,
         actor,
         folio.formatted,
-        idempotencyKey,
+        tenderUuid,
       );
-      paymentId = inserted.paymentId;
+      paymentIds.push(inserted.paymentId);
     }
+    const paymentId: number | null = paymentIds.length > 0 ? paymentIds[0] : null;
 
-    // 10. SaleCredit si aplica.
+    // 10. SaleCredit por el remanente (igual que hoy; el monto ya viene
+    //     calculado por el front en `credit_amount`).
     let creditId: number | null = null;
-    if (dto.is_credit && toBig(dto.credit_amount).gt(0)) {
+    if (dto.is_credit && creditAmountBig.gt(0)) {
       creditId = await this.insertCredit(manager, dto, sale, companyId);
     }
 
@@ -357,9 +446,10 @@ export class ProcessPaymentAction {
       companyId,
       saleId: Number(sale.id),
       saleNumber: folio.formatted,
-      paymentMethod: dto.payment_method,
-      amountPaid: preciseNumber(amountPaidBig, 2),
-      paymentId,
+      tenderCount: tenders.length,
+      tenderNet: preciseNumber(tenderNetBig, 2),
+      creditAmount: preciseNumber(creditAmountBig, 2),
+      paymentIds,
       creditId,
       actorId: actor.id,
     });
@@ -368,9 +458,59 @@ export class ProcessPaymentAction {
       success: true,
       message: 'Pago procesado exitosamente',
       payment_id: paymentId,
+      payment_ids: paymentIds,
       credit_id: creditId,
       sale_number: folio.formatted,
     };
+  }
+
+  /**
+   * Normaliza el payload a un array de tenders. Si el front nuevo envía
+   * `payments[]` lo usa tal cual. Si no llega (caller legado), reconstruye un
+   * único tender desde los campos planos (`payment_method`/`amount_paid`/...).
+   *
+   * RETROCOMPAT: un caller viejo que mandaba `payment_method=CREDIT` con
+   * `amount_paid=0` (crédito puro) produce un tender con monto 0 que el front
+   * nuevo nunca enviaría; ese tender se descarta aquí porque no aporta dinero
+   * (el crédito ya se maneja con `is_credit`/`credit_amount`). El array
+   * resultante puede quedar vacío en ese caso → crédito puro sin tender.
+   */
+  private normalizeTenders(dto: ProcessPaymentDto): ProcessPaymentTenderDto[] {
+    if (Array.isArray(dto.payments) && dto.payments.length > 0) {
+      return dto.payments;
+    }
+    // Shape plano legado.
+    if (dto.payment_method && toBig(dto.amount_paid ?? 0).gt(0)) {
+      // CREDIT plano con amount_paid>0: paridad con la rama defensiva previa
+      // (se trataba como CASH). Aquí lo normalizamos a CASH explícitamente.
+      const method =
+        dto.payment_method === ProcessPaymentMethod.TRANSFER
+          ? ProcessPaymentMethod.TRANSFER
+          : ProcessPaymentMethod.CASH;
+      return [
+        {
+          payment_method: method,
+          amount_paid: dto.amount_paid ?? 0,
+          change_amount: dto.change_amount ?? 0,
+          bank_id: dto.bank_id ?? null,
+          bank_name: dto.bank_name ?? null,
+        },
+      ];
+    }
+    return [];
+  }
+
+  /**
+   * Deriva el uuid idempotente de un tender. El primer pago (i=0) usa la llave
+   * de operación pura para que el fast-path `tryReplayIdempotent` (que busca
+   * por `uuid = idempotencyKey`) lo encuentre. Los pagos siguientes derivan
+   * `${idempotencyKey}:${i}`. Sin llave de operación, devuelve `null`.
+   */
+  private deriveTenderUuid(idempotencyKey: string | null, index: number): string | null {
+    if (!idempotencyKey) {
+      return null;
+    }
+    return index === 0 ? idempotencyKey : `${idempotencyKey}:${index}`;
   }
 
   // ------------------------------------------------------------------------
@@ -379,50 +519,52 @@ export class ProcessPaymentAction {
 
   private async insertPaymentAndApplySideEffects(
     manager: EntityManager,
-    dto: ProcessPaymentDto,
+    tender: ProcessPaymentTenderDto,
     sale: SaleInvoice,
     companyId: number,
     actor: ProcessPaymentActor,
     saleNumber: string,
-    idempotencyKey: string | null,
+    tenderUuid: string | null,
   ): Promise<{ paymentId: number }> {
-    if (dto.payment_method === ProcessPaymentMethod.CASH) {
-      return this.applyCash(manager, dto, sale, companyId, actor, saleNumber, idempotencyKey);
+    if (tender.payment_method === ProcessPaymentMethod.TRANSFER) {
+      return this.applyTransfer(manager, tender, sale, companyId, actor, saleNumber, tenderUuid);
     }
-    if (dto.payment_method === ProcessPaymentMethod.TRANSFER) {
-      return this.applyTransfer(manager, dto, sale, companyId, actor, saleNumber, idempotencyKey);
-    }
-    // CREDIT puro NO debería entrar aquí (amount_paid > 0 ya filtrado en run()).
-    // Defensa: si el cliente envía CREDIT con amount_paid > 0, lo tratamos como
-    // entrega de efectivo a la caja del actor (paridad PlacePos: el frontend
-    // jamás envía esta combinación; pero documentamos la rama).
-    return this.applyCash(manager, dto, sale, companyId, actor, saleNumber, idempotencyKey);
+    // CASH (y cualquier valor inesperado se trata como efectivo, paridad con la
+    // rama defensiva previa). El CREDIT como tender ya se descartó en
+    // `normalizeTenders` (el crédito vive en `is_credit`/`credit_amount`).
+    return this.applyCash(manager, tender, sale, companyId, actor, saleNumber, tenderUuid);
   }
 
   /**
-   * CASH:
+   * CASH (un tender):
    *   - Insert SalePayment(method=CASH, account_type=cash_register).
-   *   - UPDATE caja.balance += amount_due (lo que la venta gana, NO el
-   *     amount_paid: el change_amount se devuelve al cliente).
+   *   - UPDATE caja.balance += neto del tender (amount_paid − change_amount):
+   *     lo que la caja gana por ESTE tender, NO el total de la venta. En split
+   *     tender cada pago aporta su neto; en pago único total el neto iguala
+   *     `amount_due` (equivalencia con el comportamiento anterior).
    *   - Log CASH_RECEIVED (IN, affects_balance=false): efectivo recibido del
-   *     cliente (informativo, igual amount_paid).
+   *     cliente por este tender (informativo, igual amount_paid).
    *   - Log CASH_PAYMENT  (IN, affects_balance=true) : neto que la caja gana
-   *     por la venta (amount_due).
+   *     por este tender.
    *   - Log CASH_CHANGE   (OUT, affects_balance=false): vuelto al cliente
    *     (sólo si change_amount > 0).
    */
   private async applyCash(
     manager: EntityManager,
-    dto: ProcessPaymentDto,
+    tender: ProcessPaymentTenderDto,
     sale: SaleInvoice,
     companyId: number,
     actor: ProcessPaymentActor,
     saleNumber: string,
-    idempotencyKey: string | null,
+    tenderUuid: string | null,
   ): Promise<{ paymentId: number }> {
-    const amountDueBig = toBig(dto.amount_due);
-    const amountPaid = preciseNumber(toBig(dto.amount_paid), 2);
-    const change = preciseNumber(toBig(dto.change_amount), 2);
+    const amountPaidBig = toBig(tender.amount_paid);
+    const changeBig = toBig(tender.change_amount ?? 0);
+    const amountPaid = preciseNumber(amountPaidBig, 2);
+    const change = preciseNumber(changeBig, 2);
+    // Neto del tender = entregado − vuelto. Es lo que realmente queda en caja.
+    const netBig = amountPaidBig.minus(changeBig);
+    const net = preciseNumber(netBig, 2);
 
     const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
 
@@ -439,14 +581,14 @@ export class ProcessPaymentAction {
       account_id: register.id,
       created_by: actor.fullName,
       created_by_id: String(actor.id),
-      uuid: idempotencyKey,
+      uuid: tenderUuid,
     });
     const savedPayment = await manager.save(SalePayment, payment);
     const paymentId = Number(savedPayment.id);
 
-    // UPDATE caja.balance += amount_due. Mismo cálculo que PlacePos
+    // UPDATE caja.balance += neto del tender. Mismo cálculo que PlacePos
     // (registerCashPayment con affectsBalance=true, dirección IN).
-    const newBalance = preciseNumber(toBig(register.balance).plus(amountDueBig), 2);
+    const newBalance = preciseNumber(toBig(register.balance).plus(netBig), 2);
     await manager.update(
       CashRegister,
       { id: register.id, company_id: String(companyId) },
@@ -470,15 +612,14 @@ export class ProcessPaymentAction {
       });
     }
 
-    //   2. CASH_PAYMENT  — IN, affects_balance=true, amount=amount_due.
-    const amountDue = preciseNumber(amountDueBig, 2);
-    if (amountDue > 0) {
+    //   2. CASH_PAYMENT  — IN, affects_balance=true, amount=neto del tender.
+    if (net > 0) {
       await this.insertCashLog(manager, {
         companyId,
         cashRegisterId: register.id,
         type: CashRegisterLogType.CASH_PAYMENT,
         direction: 'IN',
-        amount: amountDue,
+        amount: net,
         affectsBalance: true,
         description: `Pago de venta - Venta #${saleNumber}`,
         invoiceId: Number(sale.id),
@@ -507,23 +648,25 @@ export class ProcessPaymentAction {
   }
 
   /**
-   * TRANSFER:
+   * TRANSFER (un tender):
    *   - Lookup Bank (lock pessimistic_write, valida ownership multi-tenant).
    *   - Insert SalePayment(method=TRANSFER, account_type=bank).
-   *   - UPDATE bank.balance += amount_due.
-   *   - FinancialMovement(INCOME, SALE, destination=bank).
+   *   - UPDATE bank.balance += amount_paid del tender (en TRANSFER el vuelto
+   *     siempre es 0, así que el monto del tender es su neto).
+   *   - FinancialMovement(INCOME, SALE, destination=bank) por el monto del
+   *     tender.
    */
   private async applyTransfer(
     manager: EntityManager,
-    dto: ProcessPaymentDto,
+    tender: ProcessPaymentTenderDto,
     sale: SaleInvoice,
     companyId: number,
     actor: ProcessPaymentActor,
     saleNumber: string,
-    idempotencyKey: string | null,
+    tenderUuid: string | null,
   ): Promise<{ paymentId: number }> {
     // bank_id ya validado no-null en `run()`.
-    const bankId = dto.bank_id as number;
+    const bankId = tender.bank_id as number;
 
     const bank = await manager.findOne(Bank, {
       where: {
@@ -543,30 +686,36 @@ export class ProcessPaymentAction {
       throw new BusinessRuleError('Cuenta bancaria no encontrada', ERR.BANK_NOT_FOUND);
     }
 
-    const amountDueBig = toBig(dto.amount_due);
-    const amountPaid = preciseNumber(toBig(dto.amount_paid), 2);
-    const change = preciseNumber(toBig(dto.change_amount), 2);
+    const amountPaidBig = toBig(tender.amount_paid);
+    const amountPaid = preciseNumber(amountPaidBig, 2);
+    // En TRANSFER no hay vuelto (ya rechazado en la validación de tenders); lo
+    // persistimos a 0 por contrato. El NETO acreditado = amount_paid − change,
+    // que aquí siempre iguala amount_paid, pero lo calculamos por defensa para
+    // que el banco/FinancialMovement NUNCA divergan del cuadre ni de placepos.
+    const changeBig = toBig(tender.change_amount ?? 0);
+    const netBig = amountPaidBig.minus(changeBig);
+    const net = preciseNumber(netBig, 2);
 
-    // INSERT SalePayment.
+    // INSERT SalePayment. `change_amount` siempre 0 en TRANSFER por contrato.
     const payment = manager.create(SalePayment, {
       company_id: String(companyId),
       sale_invoice_id: sale.id,
       payment_method: SalePaymentMethod.TRANSFER,
       amount: amountPaid,
-      change_amount: change,
+      change_amount: 0,
       bank_id: bank.id,
       bank_name: bank.name,
       account_type: 'bank' satisfies SalePaymentAccountType,
       account_id: bank.id,
       created_by: actor.fullName,
       created_by_id: String(actor.id),
-      uuid: idempotencyKey,
+      uuid: tenderUuid,
     });
     const savedPayment = await manager.save(SalePayment, payment);
     const paymentId = Number(savedPayment.id);
 
-    // UPDATE bank.balance += amount_due.
-    const newBalance = preciseNumber(toBig(bank.balance).plus(amountDueBig), 2);
+    // UPDATE bank.balance += neto del tender.
+    const newBalance = preciseNumber(toBig(bank.balance).plus(netBig), 2);
     await manager.update(
       Bank,
       { id: bank.id, company_id: String(companyId) },
@@ -582,7 +731,7 @@ export class ProcessPaymentAction {
         : { source_type: null, source_id: null };
     await this.financialMovementsService.record(manager, {
       companyId,
-      amount: preciseNumber(amountDueBig, 2),
+      amount: net,
       movement_type: MovementType.INCOME,
       // Paridad PlacePos: `paymentOperations.ts` emite `SALE_PAYMENT`. El enum
       // tiene SALE_PAYMENT activo desde la migración 1747010460000.
@@ -677,12 +826,26 @@ export class ProcessPaymentAction {
     companyId: number,
     idempotencyKey: string,
   ): Promise<ProcessPaymentResult | null> {
+    // El tender 0 del split usa la llave de operación pura → ese row ancla el
+    // replay. Si existe, la operación completa ya se procesó (toda en una TX).
     const payment = await this.dataSource.getRepository(SalePayment).findOne({
       where: { company_id: String(companyId), uuid: idempotencyKey },
     });
     if (!payment) {
       return null;
     }
+    // Recuperar TODOS los pagos del sale_invoice — en split tender hay varios.
+    // Orden por id ASC para devolver `payment_ids` en el mismo orden de
+    // inserción (tender 0 primero), consistente con el primer procesamiento.
+    const payments = await this.dataSource.getRepository(SalePayment).find({
+      where: {
+        company_id: String(companyId),
+        sale_invoice_id: payment.sale_invoice_id,
+      },
+      order: { id: 'ASC' },
+      select: { id: true },
+    });
+    const paymentIds = payments.map((p) => Number(p.id));
     // Recuperar credit asociado al sale_invoice (puede no existir).
     const credit = await this.dataSource.getRepository(SaleCredit).findOne({
       where: {
@@ -704,12 +867,13 @@ export class ProcessPaymentAction {
       event: 'payment.idempotent_replay',
       companyId,
       idempotencyKey,
-      paymentId: Number(payment.id),
+      paymentIds,
     });
     return {
       success: true,
       message: 'Pago procesado exitosamente (reintento idempotente)',
-      payment_id: Number(payment.id),
+      payment_id: paymentIds.length > 0 ? paymentIds[0] : Number(payment.id),
+      payment_ids: paymentIds,
       credit_id: credit ? Number(credit.id) : null,
       sale_number: sale?.sale_number ?? null,
       replay: true,
