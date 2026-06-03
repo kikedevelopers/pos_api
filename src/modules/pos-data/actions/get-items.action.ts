@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import type { Repository } from 'typeorm';
-
-import { Product } from '@/modules/products/entities/product.entity';
+import { DataSource } from 'typeorm';
 
 /**
  * Item normalizado expuesto al frontend POS. Réplica del shape PlacePos
@@ -40,20 +37,75 @@ export interface PosItem {
  * Multi-tenancy: `repo.find({ where: { company_id, ... } })` filtra por el
  * tenant del JWT.
  */
+/**
+ * Fila cruda del SQL de items POS. `bigint`/`numeric` llegan como `string`
+ * desde el driver `pg`; `created_at` como `Date`; `prices` como array JSON ya
+ * parseado (jsonb). El LATERAL agrega los precios en 1 fila por producto.
+ */
+interface RawPosItemRow {
+  id: string;
+  name: string;
+  cost: string | number;
+  bar_code: string | null;
+  sku_code: string | null;
+  parent_id: string | null;
+  packaging_id: string | null;
+  packaging__id: string | null;
+  packaging__name: string | null;
+  packaging__value: string | number | null;
+  show_in_pos: boolean;
+  created_at: Date | string;
+  /** stock real del producto (placeholder; el post-proceso usa 0). */
+  stock: string | number;
+  prices: { id: number | string; sale_price: number | string; profit: number | string; margin: number | string }[] | null;
+}
+
 @Injectable()
 export class GetItemsAction {
-  constructor(
-    @InjectRepository(Product)
-    private readonly productRepo: Repository<Product>,
-  ) {}
+  constructor(private readonly dataSource: DataSource) {}
 
   async execute(companyId: number): Promise<PosItem[]> {
-    const products = await this.productRepo.find({
-      where: { company_id: String(companyId), is_archived: false },
-      relations: { prices: true, packaging: true },
-    });
+    // SQL crudo: 1 FILA POR PRODUCTO. `prices` agregado vía LEFT JOIN LATERAL
+    // correlacionado (usa `idx_product_prices_product_id`), packaging como
+    // LEFT JOIN escalar. NO se hidratan entidades TypeORM. El post-proceso JS
+    // posterior es IDÉNTICO al anterior (filtro show_in_pos, parentMap,
+    // childrenByParent, orden por created_at, stock:0 placeholder).
+    const sql = `
+      SELECT
+        p.id            AS id,
+        p.name          AS name,
+        p.cost          AS cost,
+        p.bar_code      AS bar_code,
+        p.sku_code      AS sku_code,
+        p.parent_id     AS parent_id,
+        p.packaging_id  AS packaging_id,
+        p.show_in_pos   AS show_in_pos,
+        p.created_at    AS created_at,
+        p.stock         AS stock,
+        pk.id           AS packaging__id,
+        pk.name         AS packaging__name,
+        pk.value        AS packaging__value,
+        COALESCE(pr.prices, '[]'::jsonb) AS prices
+      FROM products p
+      LEFT JOIN packagings pk ON pk.id = p.packaging_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'id',         pp.id,
+            'sale_price', pp.sale_price,
+            'profit',     pp.profit,
+            'margin',     pp.margin
+          ) ORDER BY pp.id
+        ) AS prices
+        FROM product_prices pp
+        WHERE pp.product_id = p.id
+      ) pr ON TRUE
+      WHERE p.company_id = $1 AND p.is_archived = false
+    `;
 
-    const normalized = products.map((p) => ({
+    const rows = await this.dataSource.query<RawPosItemRow[]>(sql, [String(companyId)]);
+
+    const normalized = rows.map((p) => ({
       id: Number(p.id),
       name: p.name,
       cost: Number(p.cost),
@@ -61,15 +113,16 @@ export class GetItemsAction {
       sku_code: p.sku_code ?? '',
       parent_id: p.parent_id ? Number(p.parent_id) : null,
       packaging_id: p.packaging_id ? Number(p.packaging_id) : null,
-      packaging: p.packaging
-        ? {
-            id: Number(p.packaging.id),
-            name: p.packaging.name,
-            value: Number(p.packaging.value),
-          }
-        : null,
+      packaging:
+        p.packaging__id !== null
+          ? {
+              id: Number(p.packaging__id),
+              name: p.packaging__name as string,
+              value: Number(p.packaging__value),
+            }
+          : null,
       show_in_pos: p.show_in_pos,
-      created_at: p.created_at,
+      created_at: p.created_at instanceof Date ? p.created_at : new Date(p.created_at),
       prices: (p.prices ?? []).map((pr) => ({
         id: Number(pr.id),
         sale_price: Number(pr.sale_price),
