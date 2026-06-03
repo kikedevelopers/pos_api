@@ -113,6 +113,26 @@ export class RealtimeGateway implements OnGatewayConnection {
       .emit(TICKET_CHANGED_EVENT, body);
   }
 
+  /**
+   * Emite `dashboard:changed` SOLO a la sala agregada `company:<id>:all`
+   * (owner/manager). Los informes del dashboard no los ven los employees, así
+   * que no se emite a rooms de usuario.
+   *
+   * Señal de invalidación pura: el cliente la usa para invalidar/refrescar los
+   * informes del dashboard si está montado (con debounce). No transporta datos
+   * del informe.
+   *
+   * Best-effort: el llamador debe envolver en try/catch para que un fallo de
+   * socket NUNCA rompa la operación de negocio.
+   *
+   * @param companyId company del JWT del actor (nunca del cliente).
+   * @param payload   metadatos opcionales; siempre se incluye `companyId`.
+   */
+  emitDashboardChanged(companyId: number, payload: DashboardChangedPayload = {}): void {
+    const body: DashboardChangedPayload = { companyId, ...payload };
+    this.server.to(this.allRoom(companyId)).emit(DASHBOARD_CHANGED_EVENT, body);
+  }
+
   private extractToken(client: Socket): string | null {
     // `handshake.auth` es `{ [key: string]: any }` en los typings de socket.io;
     // tipamos el acceso para evitar propagar `any` (no-unsafe-assignment).
@@ -150,4 +170,15 @@ export interface TicketChangedPayload {
   sellerId?: number;
   invoiceId?: number;
   ticketNumber?: string | number;
+}
+
+/** Evento único de invalidación de los informes del dashboard. */
+export const DASHBOARD_CHANGED_EVENT = 'dashboard:changed';
+
+/**
+ * Señal mínima de invalidación del dashboard. El cliente solo la usa para
+ * invalidar/refrescar sus informes; no transporta el contenido del informe.
+ */
+export interface DashboardChangedPayload {
+  companyId?: number;
 }
