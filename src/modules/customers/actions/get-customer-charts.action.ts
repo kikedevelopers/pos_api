@@ -39,14 +39,12 @@ export interface CustomerSalesChartResponse {
 export interface CustomerProductHistoryResponse {
   customer_id: number;
   lines: Array<{
-    invoice_id: number;
-    sale_number: string | null;
-    ticket_number: string;
-    created_at: string;
-    product_name: string;
+    productName: string;
     quantity: number;
     price: number;
-    total: number;
+    profit: number;
+    margin: number;
+    ticketNumber: string;
   }>;
 }
 
@@ -221,14 +219,12 @@ export class GetCustomerChartsAction {
     await findCustomerInCompany(this.repo.manager, id, companyId);
 
     const rows: Array<{
-      invoice_id: string;
-      sale_number: string | null;
       ticket_number: string;
-      created_at: Date;
       product_name: string;
       quantity: string;
       unit_price: string;
-      total: string;
+      profit: string;
+      margin: string;
     }> = await this.repo.query(
       `
       WITH last_invoices AS (
@@ -240,14 +236,12 @@ export class GetCustomerChartsAction {
          ORDER BY created_at DESC
          LIMIT 20
       )
-      SELECT li.id                AS invoice_id,
-             li.sale_number       AS sale_number,
-             li.ticket_number     AS ticket_number,
-             li.created_at        AS created_at,
+      SELECT COALESCE(li.sale_number, li.ticket_number) AS ticket_number,
              l.description        AS product_name,
              l.quantity           AS quantity,
              l.unit_price         AS unit_price,
-             l.total              AS total
+             l.profit             AS profit,
+             l.margin             AS margin
         FROM last_invoices li
         JOIN sale_invoice_lines l
           ON l.sale_invoice_id = li.id
@@ -257,17 +251,18 @@ export class GetCustomerChartsAction {
       [String(companyId), String(id)],
     );
 
+    // Shape camelCase espejo de PlacePos (`customers.routes.ts`): el frontend del
+    // POS espera productName/profit/margin/ticketNumber. Antes se devolvía
+    // snake_case sin profit/margin, por eso esas columnas salían vacías.
     return {
       customer_id: id,
       lines: rows.map((r) => ({
-        invoice_id: Number(r.invoice_id),
-        sale_number: r.sale_number,
-        ticket_number: r.ticket_number,
-        created_at: new Date(r.created_at).toISOString(),
-        product_name: r.product_name,
+        productName: r.product_name,
         quantity: Number(r.quantity),
         price: Number(r.unit_price),
-        total: Number(r.total),
+        profit: Number(r.profit),
+        margin: Number(r.margin),
+        ticketNumber: r.ticket_number,
       })),
     };
   }
