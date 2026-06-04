@@ -63,7 +63,8 @@ import { CustomersService } from './customers.service';
 @Controller('customers')
 // HIGH-1 auditoría: declaramos los roles permitidos a nivel de clase para
 // que el `RolesGuard` rechace cualquier rol futuro no esperado por defecto.
-// Las mutaciones overriden con `@Roles('owner', 'manager')` a nivel de método.
+// La creación (`POST`) permite además `employee` (alta rápida desde el POS);
+// la edición (`PUT`) overridea con `@Roles('owner', 'manager')`.
 @Roles('owner', 'manager', 'employee')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}
@@ -167,7 +168,10 @@ export class CustomersController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles('owner', 'manager')
+  // El alta de clientes la permite también el `employee`: el POS tiene un botón
+  // de creación rápida de cliente durante la venta y la caja la opera el
+  // empleado. Paridad con PlacePos, donde `POST /customers` no exige rol.
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({ summary: 'Crear customer' })
   @ApiBody({ type: CreateCustomerDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: CustomerResponseDto })
