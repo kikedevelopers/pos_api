@@ -2,7 +2,9 @@ import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
 import { DashboardSalesQueryDto, SalesReportQueryDto } from './dto/sales-report-query.dto';
@@ -17,7 +19,12 @@ import type {
  * Endpoints `/pos-reports` — Fase 11.3. Espejo PlacePos byte-por-byte
  * (`/pos-reports/sales`, `/pos-reports/dashboard-sales`).
  *
- * Roles: `owner` y `manager` — analítica avanzada de ventas/anulaciones.
+ * Roles:
+ *   - `/pos-reports/sales`: `owner`, `manager`, `employee` — el listado de
+ *     tickets que el POS muestra a cualquier rol; el empleado solo ve sus
+ *     propias ventas (filtro por created_by_id, paridad PlacePos).
+ *   - `/pos-reports/dashboard-sales` y `/pos-reports/comparative`: `owner` y
+ *     `manager` — analítica avanzada de ventas/anulaciones.
  */
 @ApiTags('pos-reports')
 @ApiBearerAuth('bearer')
@@ -26,7 +33,7 @@ export class PosReportsController {
   constructor(private readonly posReportsService: PosReportsService) {}
 
   @Get('sales')
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
       'Listado de tickets (INVOICE + NOTE) con filtros avanzados (rango, search, ticketTypes, noteFilter, showDeleted) + summary.',
@@ -35,8 +42,12 @@ export class PosReportsController {
   salesReport(
     @Query() query: SalesReportQueryDto,
     @CurrentCompany() companyId: number,
+    @CurrentUser() actor: AuthUser,
   ): Promise<SalesReportResult> {
-    return this.posReportsService.getSalesReport(companyId, query);
+    // Paridad PlacePos (`POSReportController.salesReport`): el empleado SÍ ve el
+    // reporte de ventas, pero solo sus propios tickets (filtro por
+    // created_by_id en el action). owner/manager ven todo.
+    return this.posReportsService.getSalesReport(companyId, query, actor);
   }
 
   @Get('dashboard-sales')

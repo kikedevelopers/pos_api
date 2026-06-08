@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -39,10 +40,13 @@ import { ExpensesService, type ExpensePaymentMethodsResponse } from './expenses.
  * adaptado a multi-tenant.
  *
  * Roles:
- *   - GETs: `owner`, `manager`, `employee`. Los empleados ven los gastos
- *     pero no los crean ni editan (paridad PlacePos donde el panel admin
- *     es exclusivo de owner/manager).
- *   - `POST`, `PUT`: `owner`, `manager` (gestión administrativa).
+ *   - GETs: `owner`, `manager`, `employee`.
+ *   - `POST`: `owner`, `manager` (gestión administrativa, cualquier fuente) +
+ *     `employee` RESTRINGIDO a `source_type='cash_register'`. Paridad PlacePos:
+ *     el empleado registra el "gasto desde caja" del POS (form fijo a caja),
+ *     pero los gastos de banco/billetera siguen siendo exclusivos del panel
+ *     admin (owner/manager).
+ *   - `PUT`: `owner`, `manager` (gestión administrativa).
  *   - `POST /:id/void` (anulación con reverso de balance): `owner` solamente —
  *     revertir un gasto toca balances financieros y exige la firma del dueño.
  *     Paridad PlacePos: NO se usa el verbo DELETE.
@@ -127,7 +131,7 @@ export class ExpensesController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
       'Registrar un gasto. Debita la cuenta origen, inserta Expense, FinancialMovement (bank/wallet) o CashRegisterLog (caja).',
@@ -135,6 +139,7 @@ export class ExpensesController {
   @ApiBody({ type: CreateExpenseDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: ExpenseResponseDto })
   @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Empleado con fuente distinta de caja' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Cuenta origen no encontrada' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -145,6 +150,14 @@ export class ExpensesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<ExpenseResponseDto> {
+    // El empleado solo puede registrar el "gasto desde caja" del POS (fuente
+    // caja). Gestionar gastos de banco/billetera sigue siendo del panel admin
+    // (owner/manager). El @Roles permite al empleado llegar aquí; este guard
+    // acota la fuente. Paridad PlacePos: el form del POS está fijo a caja.
+    if (currentUser.type === 'employee' && dto.source_type !== 'cash_register') {
+      throw new ForbiddenException('Un empleado solo puede registrar gastos desde la caja.');
+    }
+
     const expense = await this.expensesService.create(dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),

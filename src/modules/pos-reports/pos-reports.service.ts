@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
+import type { AuthUser } from '@/common/types/jwt-payload.type';
+
 import {
   GetComparativeReportAction,
   type ComparativeReportResult,
@@ -25,8 +27,12 @@ export class PosReportsService {
     private readonly comparativeReport: GetComparativeReportAction,
   ) {}
 
-  getSalesReport(companyId: number, filters: SalesReportQueryDto): Promise<SalesReportResult> {
-    return this.salesReport.execute(companyId, filters);
+  getSalesReport(
+    companyId: number,
+    filters: SalesReportQueryDto,
+    actor: AuthUser,
+  ): Promise<SalesReportResult> {
+    return this.salesReport.execute(companyId, filters, actor);
   }
 
   getDashboardSales(

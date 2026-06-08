@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { toBig } from '@/common/utils/precision';
 import { parseUtcRange } from '@/modules/reports/internal/range';
 
@@ -71,7 +72,11 @@ export interface SalesReportResult {
 export class GetSalesReportAction {
   constructor(private readonly dataSource: DataSource) {}
 
-  async execute(companyId: number, filters: SalesReportQueryDto): Promise<SalesReportResult> {
+  async execute(
+    companyId: number,
+    filters: SalesReportQueryDto,
+    actor: AuthUser,
+  ): Promise<SalesReportResult> {
     if (!filters.dateFrom || !filters.dateTo) {
       throw new BadRequestException('dateFrom y dateTo son requeridos');
     }
@@ -84,11 +89,11 @@ export class GetSalesReportAction {
     const dateTo = range.dateEnd;
     const cid = String(companyId);
 
-    const { sql, params } = this.buildInvoiceQuery(cid, filters, dateFrom, dateTo);
+    const { sql, params } = this.buildInvoiceQuery(cid, filters, dateFrom, dateTo, actor);
     const invoiceRows = await this.dataSource.query<InvoiceRow[]>(sql, params);
 
     const invoiceIds = new Set<number>(invoiceRows.map((r) => Number(r.id)));
-    const noteRows = await this.fetchNoteRows(cid, dateFrom, dateTo);
+    const noteRows = await this.fetchNoteRows(cid, dateFrom, dateTo, actor);
     const { byInvoice: notesByInvoice, orphans: orphanNotes } = groupNotes(noteRows, invoiceIds);
 
     const tickets: unknown[] = [];
@@ -197,6 +202,7 @@ export class GetSalesReportAction {
     filters: SalesReportQueryDto,
     dateFrom: Date,
     dateTo: Date,
+    actor: AuthUser,
   ): { sql: string; params: unknown[] } {
     const params: unknown[] = [cid];
     const placeholder = (value: unknown): string => {
@@ -229,6 +235,12 @@ export class GetSalesReportAction {
     if (filters.ticketTypes && filters.ticketTypes.length > 0) {
       const phs = filters.ticketTypes.map((t) => placeholder(t));
       conditions.push(`si.ticket_type::text IN (${phs.join(',')})`);
+    }
+
+    // Paridad PlacePos (`POSReportController.buildInvoiceQuery`): el empleado
+    // solo ve sus propias ventas. owner/manager/superadmin ven todas.
+    if (actor.type === 'employee') {
+      conditions.push(`si.created_by_id = ${placeholder(String(actor.user_id))}`);
     }
 
     this.applyNoteFilter(conditions, params, filters, dateFrom, dateTo);
@@ -364,7 +376,21 @@ export class GetSalesReportAction {
     }
   }
 
-  private async fetchNoteRows(cid: string, dateFrom: Date, dateTo: Date): Promise<NoteRow[]> {
+  private async fetchNoteRows(
+    cid: string,
+    dateFrom: Date,
+    dateTo: Date,
+    actor: AuthUser,
+  ): Promise<NoteRow[]> {
+    const params: unknown[] = [cid, dateFrom, dateTo];
+    // Paridad PlacePos (`POSReportController.fetchNoteRows`): el empleado solo
+    // ve las notas que él mismo creó.
+    let employeeClause = '';
+    if (actor.type === 'employee') {
+      params.push(String(actor.user_id));
+      employeeClause = `AND cn.created_by_id = $${params.length}`;
+    }
+
     return this.dataSource.query<NoteRow[]>(
       `
       SELECT
@@ -392,9 +418,10 @@ export class GetSalesReportAction {
       WHERE cn.company_id = $1
         AND cn.is_deleted = false
         AND cn.created_at BETWEEN $2 AND $3
+        ${employeeClause}
       ORDER BY cn.created_at ASC
       `,
-      [cid, dateFrom, dateTo],
+      params,
     );
   }
 }
