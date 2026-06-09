@@ -10,12 +10,19 @@ interface PendingStatsRow {
 }
 
 /**
- * Calcula `(count, total)` de cortes con status='PENDING' agrupados por
- * `fixed_expense_id`, restringido al tenant.
+ * Calcula `(count, total)` del SALDO de cortes no pagados (balance > 0)
+ * agrupados por `fixed_expense_id`, restringido al tenant.
+ *
+ * §2 del contrato `CONTRACT_fixed_expense_periods_pay.md`: el badge muestra el
+ * saldo restante, no el amount de los PENDING.
+ *   - `pending_count` = nº de cortes con `balance > 0` (PENDING o PARTIALLY_PAID).
+ *   - `pending_total` = `SUM(balance)` de esos cortes.
  *
  * Una sola query con `GROUP BY` para evitar N+1 — el listado de
  * `fixed_expenses` enriquece cada fila con sus stats sin disparar una query
- * por gasto.
+ * por gasto. El filtro `balance > 0` está cubierto por el índice parcial
+ * `idx_fixed_expense_periods_outstanding (company_id, fixed_expense_id) WHERE
+ * balance > 0`.
  *
  * Paridad PlacePos `fixed-expenses.routes.ts::fetchPendingStats`, extendida
  * con filtro multi-tenant.
@@ -28,9 +35,9 @@ export async function fetchPendingStatsByCompany(
     .createQueryBuilder('p')
     .select('p.fixed_expense_id', 'fixed_expense_id')
     .addSelect('COUNT(p.id)', 'pending_count')
-    .addSelect('COALESCE(SUM(p.amount), 0)', 'pending_total')
+    .addSelect('COALESCE(SUM(p.balance), 0)', 'pending_total')
     .where('p.company_id = :companyId', { companyId: String(companyId) })
-    .andWhere('p.status = :status', { status: 'PENDING' })
+    .andWhere('p.balance > 0')
     .groupBy('p.fixed_expense_id')
     .getRawMany<PendingStatsRow>();
 

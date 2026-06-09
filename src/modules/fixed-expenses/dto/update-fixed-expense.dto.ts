@@ -47,7 +47,12 @@ export class UpdateFixedExpenseDto {
   @Min(0, { message: 'El monto debe ser un número mayor o igual a 0.' })
   amount?: number;
 
-  @ApiPropertyOptional({ enum: FIXED_EXPENSE_PERIOD_UNITS, example: 'month' })
+  @ApiPropertyOptional({
+    enum: FIXED_EXPENSE_PERIOD_UNITS,
+    example: 'month',
+    description:
+      'Legacy: hour/day/week/month. Calendario: semimonthly / end_of_month.',
+  })
   @IsOptional()
   @IsString()
   @IsIn([...FIXED_EXPENSE_PERIOD_UNITS], {
@@ -55,7 +60,11 @@ export class UpdateFixedExpenseDto {
   })
   period_unit?: FixedExpensePeriodUnit;
 
-  @ApiPropertyOptional({ example: 1 })
+  @ApiPropertyOptional({
+    example: 1,
+    description:
+      'Para convenciones de calendario se ignora (se normaliza a 1).',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: 'La cantidad de periodicidad debe ser un entero positivo.' })

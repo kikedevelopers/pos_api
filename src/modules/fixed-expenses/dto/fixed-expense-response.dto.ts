@@ -30,7 +30,10 @@ export class FixedExpenseResponseDto {
   @ApiProperty({ example: 500 })
   amount!: number;
 
-  @ApiProperty({ example: 'month', enum: ['hour', 'day', 'week', 'month'] })
+  @ApiProperty({
+    example: 'month',
+    enum: ['hour', 'day', 'week', 'month', 'semimonthly', 'end_of_month'],
+  })
   period_unit!: FixedExpensePeriodUnit;
 
   @ApiProperty({ example: 1 })

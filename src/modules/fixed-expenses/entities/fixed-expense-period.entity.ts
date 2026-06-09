@@ -18,11 +18,16 @@ import { FixedExpense } from './fixed-expense.entity';
 
 /**
  * Estado de un corte de gasto fijo. Paridad PlacePos.
+ *
+ * - `PENDING`        — sin pagos (paid_amount = 0).
+ * - `PARTIALLY_PAID` — pago parcial (paid_amount > 0 AND balance > 0).
+ * - `PAID`           — saldado (balance = 0).
  */
-export type FixedExpensePeriodStatus = 'PENDING' | 'PAID';
+export type FixedExpensePeriodStatus = 'PENDING' | 'PARTIALLY_PAID' | 'PAID';
 
 export const FIXED_EXPENSE_PERIOD_STATUSES: readonly FixedExpensePeriodStatus[] = [
   'PENDING',
+  'PARTIALLY_PAID',
   'PAID',
 ] as const;
 
@@ -62,9 +67,18 @@ export const FIXED_EXPENSE_PERIOD_STATUSES: readonly FixedExpensePeriodStatus[] 
  */
 @Entity('fixed_expense_periods')
 @Unique('UQ_fixed_expense_periods_expense_number', ['fixed_expense_id', 'period_number'])
-@Check('chk_fixed_expense_periods_status', `status IN ('PENDING','PAID')`)
+@Check('chk_fixed_expense_periods_status', `status IN ('PENDING','PARTIALLY_PAID','PAID')`)
 @Check('chk_fixed_expense_periods_period_number_positive', 'period_number > 0')
 @Check('chk_fixed_expense_periods_amount_nonneg', 'amount >= 0')
+@Check('chk_fixed_expense_periods_paid_amount_nonneg', 'paid_amount >= 0')
+@Check('chk_fixed_expense_periods_balance_nonneg', 'balance >= 0')
+@Check('chk_fixed_expense_periods_paid_plus_balance', 'paid_amount + balance = amount')
+@Check(
+  'chk_fixed_expense_periods_status_consistency',
+  `(status = 'PENDING' AND paid_amount = 0)
+   OR (status = 'PARTIALLY_PAID' AND paid_amount > 0 AND balance > 0)
+   OR (status = 'PAID' AND balance = 0)`,
+)
 export class FixedExpensePeriod {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -111,6 +125,26 @@ export class FixedExpensePeriod {
     transformer: NumericTransformer,
   })
   amount!: number;
+
+  /** Monto acumulado pagado del corte (Big.js en la lógica de pago). */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  paid_amount!: number;
+
+  /** Saldo restante del corte. En el sync se setea = amount al crear el corte. */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  balance!: number;
 
   @Column({ type: 'text', nullable: false, default: 'PENDING' })
   status!: FixedExpensePeriodStatus;

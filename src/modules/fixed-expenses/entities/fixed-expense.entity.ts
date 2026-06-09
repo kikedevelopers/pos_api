@@ -16,14 +16,29 @@ import { Company } from '@/modules/companies/entities/company.entity';
 /**
  * Unidad de periodicidad para el corte (paridad PlacePos
  * `FixedExpensePeriodUnit`).
+ *
+ * Dos familias (ver `internal/period-schedule.ts` y §1 del contrato):
+ *   - Legacy (intervalo de horas fijo): `'hour' | 'day' | 'week' | 'month'`
+ *     (`month` = 30 días). `period_quantity` aplica.
+ *   - Calendario (anclajes dayjs tz Bogotá): `'semimonthly'` (Quincenal: día
+ *     15 y último) y `'end_of_month'` (Mensual: último día). `period_quantity`
+ *     se ignora (se persiste 1).
  */
-export type FixedExpensePeriodUnit = 'hour' | 'day' | 'week' | 'month';
+export type FixedExpensePeriodUnit =
+  | 'hour'
+  | 'day'
+  | 'week'
+  | 'month'
+  | 'semimonthly'
+  | 'end_of_month';
 
 export const FIXED_EXPENSE_PERIOD_UNITS: readonly FixedExpensePeriodUnit[] = [
   'hour',
   'day',
   'week',
   'month',
+  'semimonthly',
+  'end_of_month',
 ] as const;
 
 /**
@@ -50,7 +65,10 @@ export const FIXED_EXPENSE_PERIOD_UNITS: readonly FixedExpensePeriodUnit[] = [
  * exista. Por ahora, los periodos se crean manualmente desde otra action.
  */
 @Entity('fixed_expenses')
-@Check('chk_fixed_expenses_period_unit', `period_unit IN ('hour','day','week','month')`)
+@Check(
+  'chk_fixed_expenses_period_unit',
+  `period_unit IN ('hour','day','week','month','semimonthly','end_of_month')`,
+)
 @Check('chk_fixed_expenses_period_quantity_positive', 'period_quantity > 0')
 @Check('chk_fixed_expenses_amount_nonneg', 'amount >= 0')
 export class FixedExpense {

@@ -12,9 +12,14 @@ import {
 import { FindFixedExpenseAction } from './actions/find-fixed-expense.action';
 import { ListFixedExpensePeriodsAction } from './actions/list-fixed-expense-periods.action';
 import { MarkFixedExpensePeriodPaidAction } from './actions/mark-fixed-expense-period-paid.action';
+import {
+  PayFixedExpensePeriodsAction,
+  type PayFixedExpensePeriodsResult,
+} from './actions/pay-fixed-expense-periods.action';
 import { UpdateFixedExpenseAction } from './actions/update-fixed-expense.action';
 import type { CreateFixedExpenseDto } from './dto/create-fixed-expense.dto';
 import type { PayFixedExpensePeriodDto } from './dto/pay-fixed-expense-period.dto';
+import type { PayFixedExpensePeriodsDto } from './dto/pay-fixed-expense-periods.dto';
 import type { UpdateFixedExpenseDto } from './dto/update-fixed-expense.dto';
 import type { FixedExpensePeriod } from './entities/fixed-expense-period.entity';
 import type { FixedExpense } from './entities/fixed-expense.entity';
@@ -35,6 +40,7 @@ export class FixedExpensesService {
     private readonly archiveAction: ArchiveFixedExpenseAction,
     private readonly listPeriodsAction: ListFixedExpensePeriodsAction,
     private readonly markPeriodPaidAction: MarkFixedExpensePeriodPaidAction,
+    private readonly payPeriodsAction: PayFixedExpensePeriodsAction,
   ) {}
 
   findAll(companyId: number): Promise<FindAllFixedExpensesResult> {
@@ -73,5 +79,14 @@ export class FixedExpensesService {
     actor: FixedExpenseActor,
   ): Promise<FixedExpensePeriod> {
     return this.markPeriodPaidAction.execute(fixedExpenseId, periodId, dto, companyId, actor);
+  }
+
+  payPeriods(
+    fixedExpenseId: number,
+    dto: PayFixedExpensePeriodsDto,
+    companyId: number,
+    actor: FixedExpenseActor,
+  ): Promise<PayFixedExpensePeriodsResult> {
+    return this.payPeriodsAction.execute(fixedExpenseId, dto, companyId, actor);
   }
 }

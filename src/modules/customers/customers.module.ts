@@ -1,15 +1,22 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
+import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+
+import { ArchiveCustomerAction } from './actions/archive-customer.action';
+import { CreateCustomerAdvanceAction } from './actions/create-customer-advance.action';
 import { CreateCustomerAction } from './actions/create-customer.action';
 import { FindAllCustomersAction } from './actions/find-all-customers.action';
 import { FindCustomerAction } from './actions/find-customer.action';
 import { GetCustomerChartsAction } from './actions/get-customer-charts.action';
 import { GetCustomerSalesHistoryAction } from './actions/get-customer-sales-history.action';
 import { GetCustomersAnalyticsAction } from './actions/get-customers-analytics.action';
+import { ListCustomerAdvancesAction } from './actions/list-customer-advances.action';
 import { UpdateCustomerAction } from './actions/update-customer.action';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
+import { CustomerAdvance } from './entities/customer-advance.entity';
 import { Customer } from './entities/customer.entity';
 
 /**
@@ -24,7 +31,13 @@ import { Customer } from './entities/customer.entity';
  * arquitectónica.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Customer])],
+  imports: [
+    TypeOrmModule.forFeature([Customer, CustomerAdvance]),
+    // Para registrar el ingreso de dinero del anticipo dentro de la
+    // transacción de `CreateCustomerAdvanceAction`.
+    CashRegisterModule,
+    FinancialMovementsModule,
+  ],
   controllers: [CustomersController],
   providers: [
     CustomersService,
@@ -35,6 +48,9 @@ import { Customer } from './entities/customer.entity';
     GetCustomerSalesHistoryAction,
     GetCustomerChartsAction,
     GetCustomersAnalyticsAction,
+    ArchiveCustomerAction,
+    CreateCustomerAdvanceAction,
+    ListCustomerAdvancesAction,
   ],
   exports: [CustomersService, TypeOrmModule],
 })

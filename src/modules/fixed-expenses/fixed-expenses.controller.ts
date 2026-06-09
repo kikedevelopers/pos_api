@@ -29,6 +29,8 @@ import {
   toFixedExpensePeriodResponseDto,
 } from './dto/fixed-expense-period-response.dto';
 import { PayFixedExpensePeriodDto } from './dto/pay-fixed-expense-period.dto';
+import { PayFixedExpensePeriodsDto } from './dto/pay-fixed-expense-periods.dto';
+import { PayFixedExpensePeriodsResponseDto } from './dto/pay-fixed-expense-periods-response.dto';
 import {
   FixedExpenseResponseDto,
   toFixedExpenseResponseDto,
@@ -177,6 +179,54 @@ export class FixedExpensesController {
   ): Promise<FixedExpensePeriodResponseDto[]> {
     const periods = await this.service.listPeriods(id, companyId);
     return periods.map(toFixedExpensePeriodResponseDto);
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /fixed-expenses/:id/periods/pay  (canónico — multi-corte, parcial)
+  // --------------------------------------------------------------------------
+
+  @Post(':id/periods/pay')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Pagar cortes (parcial/total, multi-corte, asignación del más antiguo al más nuevo).',
+    description:
+      'En UNA transacción reparte `amount` sobre los `period_ids` seleccionados ordenados por ' +
+      'period_number ASC (paga completos los viejos y parcial el último que alcance). Por cada ' +
+      'porción debita la fuente (bank/wallet/cash_register), crea un `Expense` y emite ' +
+      '`FinancialMovement(EXPENSE_PAYMENT)` (o `CashRegisterLog(EXPENSE)` para caja), y actualiza ' +
+      'el corte (paid_amount/balance/status). Para `cash_register` se ignora `source_id` y se ' +
+      'resuelve la caja del actor. Devuelve TODOS los cortes del gasto ya actualizados + paid_total.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: PayFixedExpensePeriodsDto })
+  @ApiResponse({ status: HttpStatus.OK, type: PayFixedExpensePeriodsResponseDto })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Payload inválido o el monto excede el saldo de los cortes seleccionados',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Gasto fijo o algún corte seleccionado no encontrado',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Saldo insuficiente en la fuente',
+  })
+  async payPeriods(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PayFixedExpensePeriodsDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<PayFixedExpensePeriodsResponseDto> {
+    const { periods, paid_total } = await this.service.payPeriods(id, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
+    return {
+      periods: periods.map(toFixedExpensePeriodResponseDto),
+      paid_total,
+    };
   }
 
   // --------------------------------------------------------------------------

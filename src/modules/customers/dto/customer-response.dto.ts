@@ -52,6 +52,13 @@ export class CustomerResponseDto {
   })
   is_archived!: boolean;
 
+  @ApiProperty({
+    example: 0,
+    description:
+      'Saldo de anticipos del cliente (>= 0). Solo se incrementa al registrar un anticipo. Campo dedicado, distinto de balance.',
+  })
+  advance_balance!: number;
+
   @ApiPropertyOptional({ example: 'Kike Pacheco', nullable: true })
   created_by!: string | null;
 
@@ -79,6 +86,7 @@ export function toCustomerResponseDto(customer: Customer): CustomerResponseDto {
     address: customer.address,
     balance: customer.balance,
     is_archived: customer.is_archived,
+    advance_balance: customer.advance_balance,
     created_by: customer.created_by,
     created_at: customer.created_at.toISOString(),
   };

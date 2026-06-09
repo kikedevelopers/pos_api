@@ -25,10 +25,19 @@ export class FixedExpensePeriodResponseDto {
   @ApiProperty({ example: '2026-02-01T00:00:00.000Z' })
   due_at!: string;
 
-  @ApiProperty({ example: 500 })
+  @ApiProperty({ example: 500, description: 'Monto total del corte.' })
   amount!: number;
 
-  @ApiProperty({ example: 'PENDING', enum: ['PENDING', 'PAID'] })
+  @ApiProperty({ example: 0, description: 'Monto acumulado pagado del corte.' })
+  paid_amount!: number;
+
+  @ApiProperty({ example: 500, description: 'Saldo restante del corte.' })
+  balance!: number;
+
+  @ApiProperty({
+    example: 'PENDING',
+    enum: ['PENDING', 'PARTIALLY_PAID', 'PAID'],
+  })
   status!: FixedExpensePeriodStatus;
 
   @ApiPropertyOptional({ example: 7, nullable: true })
@@ -63,6 +72,8 @@ export function toFixedExpensePeriodResponseDto(
     period_number: period.period_number,
     due_at: period.due_at.toISOString(),
     amount: Number(period.amount),
+    paid_amount: Number(period.paid_amount),
+    balance: Number(period.balance),
     status: period.status,
     alert_id: period.alert_id !== null ? Number(period.alert_id) : null,
     paid_at: period.paid_at ? period.paid_at.toISOString() : null,

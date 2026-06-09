@@ -127,6 +127,25 @@ export class Customer {
   is_archived!: boolean;
 
   /**
+   * Saldo de anticipos del cliente (dinero recibido por adelantado, NO ligado
+   * todavía a una venta). Campo DEDICADO — distinto de `balance` por decisión
+   * del contrato `CONTRACT_customer_advance_archive.md`.
+   *
+   * Invariante: `>= 0`. Solo se MUTA (suma) dentro de la creación de un
+   * anticipo (`POST /customers/:id/advances`), con Big.js, dentro de la
+   * transacción atómica que también registra el ingreso de dinero. Nunca
+   * negativo. No se acepta desde ningún DTO público.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  advance_balance!: number;
+
+  /**
    * Snapshot del `full_name` del actor (User u Employee) que creó al cliente.
    * Texto congelado al momento de creación.
    */

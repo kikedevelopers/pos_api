@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -31,7 +32,14 @@ import type {
 } from './actions/get-customer-charts.action';
 import type { CustomerSalesHistoryResponse } from './actions/get-customer-sales-history.action';
 import type { CustomersAnalyticsResponse } from './actions/get-customers-analytics.action';
+import { ArchiveCustomerDto } from './dto/archive-customer.dto';
+import { CreateCustomerAdvanceDto } from './dto/create-customer-advance.dto';
+import { CreateCustomerAdvanceResponseDto } from './dto/create-customer-advance-response.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import {
+  CustomerAdvanceResponseDto,
+  toCustomerAdvanceResponseDto,
+} from './dto/customer-advance-response.dto';
 import { CustomerResponseDto, toCustomerResponseDto } from './dto/customer-response.dto';
 import { ListCustomersQueryDto } from './dto/list-customers-query.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -153,6 +161,22 @@ export class CustomersController {
     return this.customersService.getProductHistory(id, companyId);
   }
 
+  @Get(':id/advances')
+  @ApiOperation({
+    summary: 'Listar anticipos del cliente',
+    description: 'Anticipos del cliente ordenados por created_at DESC. Solo lectura.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.OK, type: [CustomerAdvanceResponseDto] })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Cliente no encontrado' })
+  async listAdvances(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+  ): Promise<CustomerAdvanceResponseDto[]> {
+    const advances = await this.customersService.listAdvances(id, companyId);
+    return advances.map(toCustomerAdvanceResponseDto);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Obtener customer por id' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
@@ -210,5 +234,63 @@ export class CustomersController {
   ): Promise<CustomerResponseDto> {
     const customer = await this.customersService.update(id, dto, companyId);
     return toCustomerResponseDto(customer);
+  }
+
+  @Patch(':id/archive')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Archivar / desarchivar customer',
+    description:
+      'Setea is_archived. Idempotente: aplicar el mismo valor no falla. Solo owner/manager.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: ArchiveCustomerDto })
+  @ApiResponse({ status: HttpStatus.OK, type: CustomerResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Cliente no encontrado' })
+  async archive(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ArchiveCustomerDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<CustomerResponseDto> {
+    const customer = await this.customersService.archive(id, dto.is_archived, companyId);
+    return toCustomerResponseDto(customer);
+  }
+
+  @Post(':id/advances')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary: 'Registrar anticipo de cliente',
+    description:
+      'Registra un ingreso de dinero como anticipo: acredita la cuenta destino (caja del cajero, banco o billetera), inserta el anticipo e incrementa advance_balance del cliente. Transacción atómica. Solo owner/manager.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: CreateCustomerAdvanceDto })
+  @ApiResponse({ status: HttpStatus.CREATED, type: CreateCustomerAdvanceResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Cliente / cuenta destino no encontrado',
+  })
+  async createAdvance(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateCustomerAdvanceDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<CreateCustomerAdvanceResponseDto> {
+    const result = await this.customersService.createAdvance(id, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
+    return {
+      advance: toCustomerAdvanceResponseDto(result.advance),
+      customer: toCustomerResponseDto(result.customer),
+    };
   }
 }

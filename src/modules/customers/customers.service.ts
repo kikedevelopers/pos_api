@@ -1,8 +1,15 @@
 import { Injectable } from '@nestjs/common';
 
+import { ArchiveCustomerAction } from './actions/archive-customer.action';
+import {
+  CreateCustomerAdvanceAction,
+  type CreateCustomerAdvanceResult,
+  type CustomerAdvanceActor,
+} from './actions/create-customer-advance.action';
 import { CreateCustomerAction, type CustomerCreator } from './actions/create-customer.action';
 import { FindAllCustomersAction } from './actions/find-all-customers.action';
 import { FindCustomerAction } from './actions/find-customer.action';
+import { ListCustomerAdvancesAction } from './actions/list-customer-advances.action';
 import {
   GetCustomerChartsAction,
   type CustomerProductHistoryResponse,
@@ -17,12 +24,18 @@ import {
   type CustomersAnalyticsResponse,
 } from './actions/get-customers-analytics.action';
 import { UpdateCustomerAction } from './actions/update-customer.action';
+import type { CreateCustomerAdvanceDto } from './dto/create-customer-advance.dto';
 import type { CreateCustomerDto } from './dto/create-customer.dto';
 import type { ListCustomersQueryDto } from './dto/list-customers-query.dto';
 import type { UpdateCustomerDto } from './dto/update-customer.dto';
+import type { CustomerAdvance } from './entities/customer-advance.entity';
 import type { Customer } from './entities/customer.entity';
 
 export type { CustomerCreator } from './actions/create-customer.action';
+export type {
+  CreateCustomerAdvanceResult,
+  CustomerAdvanceActor,
+} from './actions/create-customer-advance.action';
 export type { CustomersAnalyticsResponse } from './actions/get-customers-analytics.action';
 
 /**
@@ -42,6 +55,9 @@ export class CustomersService {
     private readonly getCustomerSalesHistoryAction: GetCustomerSalesHistoryAction,
     private readonly getCustomerChartsAction: GetCustomerChartsAction,
     private readonly getCustomersAnalyticsAction: GetCustomersAnalyticsAction,
+    private readonly archiveCustomerAction: ArchiveCustomerAction,
+    private readonly createCustomerAdvanceAction: CreateCustomerAdvanceAction,
+    private readonly listCustomerAdvancesAction: ListCustomerAdvancesAction,
   ) {}
 
   getAnalytics(companyId: number): Promise<CustomersAnalyticsResponse> {
@@ -62,6 +78,23 @@ export class CustomersService {
 
   update(id: number, dto: UpdateCustomerDto, companyId: number): Promise<Customer> {
     return this.updateCustomerAction.execute(id, dto, companyId);
+  }
+
+  archive(id: number, isArchived: boolean, companyId: number): Promise<Customer> {
+    return this.archiveCustomerAction.execute(id, isArchived, companyId);
+  }
+
+  createAdvance(
+    id: number,
+    dto: CreateCustomerAdvanceDto,
+    companyId: number,
+    actor: CustomerAdvanceActor,
+  ): Promise<CreateCustomerAdvanceResult> {
+    return this.createCustomerAdvanceAction.execute(id, dto, companyId, actor);
+  }
+
+  listAdvances(id: number, companyId: number): Promise<CustomerAdvance[]> {
+    return this.listCustomerAdvancesAction.execute(id, companyId);
   }
 
   getSalesHistory(id: number, companyId: number): Promise<CustomerSalesHistoryResponse> {

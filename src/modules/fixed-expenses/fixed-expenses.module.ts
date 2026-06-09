@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { BanksModule } from '@/modules/banks/banks.module';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
@@ -16,6 +17,8 @@ import { FindAllFixedExpensesAction } from './actions/find-all-fixed-expenses.ac
 import { FindFixedExpenseAction } from './actions/find-fixed-expense.action';
 import { ListFixedExpensePeriodsAction } from './actions/list-fixed-expense-periods.action';
 import { MarkFixedExpensePeriodPaidAction } from './actions/mark-fixed-expense-period-paid.action';
+import { PayFixedExpensePeriodsAction } from './actions/pay-fixed-expense-periods.action';
+import { SyncDuePeriodsAction } from './actions/sync-due-periods.action';
 import { UpdateFixedExpenseAction } from './actions/update-fixed-expense.action';
 import { FixedExpensePeriod } from './entities/fixed-expense-period.entity';
 import { FixedExpense } from './entities/fixed-expense.entity';
@@ -38,6 +41,7 @@ import { FixedExpensesService } from './fixed-expenses.service';
     TypeOrmModule.forFeature([
       FixedExpense,
       FixedExpensePeriod,
+      AppAlert,
       Expense,
       Bank,
       Wallet,
@@ -58,6 +62,8 @@ import { FixedExpensesService } from './fixed-expenses.service';
     ArchiveFixedExpenseAction,
     ListFixedExpensePeriodsAction,
     MarkFixedExpensePeriodPaidAction,
+    PayFixedExpensePeriodsAction,
+    SyncDuePeriodsAction,
   ],
   exports: [FixedExpensesService, TypeOrmModule],
 })

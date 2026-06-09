@@ -3,6 +3,8 @@ import { DataSource } from 'typeorm';
 
 import type { UpdateFixedExpenseDto } from '../dto/update-fixed-expense.dto';
 import { FixedExpense } from '../entities/fixed-expense.entity';
+import { isCalendarPeriodUnit } from '../internal/period-schedule';
+import { SyncDuePeriodsAction } from './sync-due-periods.action';
 
 /**
  * Actualiza metadata/parámetros de un FixedExpense activo.
@@ -11,18 +13,24 @@ import { FixedExpense } from '../entities/fixed-expense.entity';
  *   - Solo gastos NO archivados se pueden editar (paridad PlacePos: filtro
  *     `is_archived: false` en el lookup).
  *   - Update parcial — solo se aplica lo presente en el DTO.
+ *   - Normalización: si el `period_unit` resultante es de calendario,
+ *     `period_quantity` se fuerza a `1` (§1/§2 del contrato).
  *   - Cambiar `period_unit`, `period_quantity` o `start_date` puede destapar
- *     nuevos cortes vencidos: el sync forzado de PlacePos queda como TODO en
- *     el cloud hasta que el scheduler esté disponible.
+ *     nuevos cortes vencidos → se dispara `SyncDuePeriodsAction` con
+ *     `force: true` DESPUÉS del commit (paridad PlacePos). Cambios solo de
+ *     metadata (name/description/amount) NO disparan sync.
  *
- * §8.8: toda mutación en transacción.
+ * §8.8: toda mutación en transacción; el sync corre fuera (sus propias tx).
  */
 @Injectable()
 export class UpdateFixedExpenseAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly syncDuePeriodsAction: SyncDuePeriodsAction,
+  ) {}
 
   async execute(id: number, companyId: number, dto: UpdateFixedExpenseDto): Promise<FixedExpense> {
-    return this.dataSource.transaction<FixedExpense>(async (manager) => {
+    const { updated, scheduleChanged } = await this.dataSource.transaction(async (manager) => {
       const existing = await manager.findOne(FixedExpense, {
         where: { id: String(id), company_id: String(companyId), is_archived: false },
       });
@@ -31,6 +39,8 @@ export class UpdateFixedExpenseAction {
       }
 
       const updatePayload: Partial<FixedExpense> = {};
+      // Cambios que afectan el calendario de cortes → requieren re-sync forzado.
+      let changedSchedule = false;
 
       if (dto.name !== undefined) {
         updatePayload.name = dto.name.trim();
@@ -43,12 +53,21 @@ export class UpdateFixedExpenseAction {
       }
       if (dto.period_unit !== undefined) {
         updatePayload.period_unit = dto.period_unit;
+        changedSchedule = true;
       }
       if (dto.period_quantity !== undefined) {
         updatePayload.period_quantity = dto.period_quantity;
+        changedSchedule = true;
       }
       if (dto.start_date !== undefined) {
         updatePayload.start_date = new Date(dto.start_date);
+        changedSchedule = true;
+      }
+
+      // Normaliza period_quantity a 1 cuando el unit final es de calendario.
+      const finalUnit = updatePayload.period_unit ?? existing.period_unit;
+      if (isCalendarPeriodUnit(finalUnit)) {
+        updatePayload.period_quantity = 1;
       }
 
       if (Object.keys(updatePayload).length > 0) {
@@ -59,10 +78,17 @@ export class UpdateFixedExpenseAction {
         );
       }
 
-      const updated = await manager.findOneOrFail(FixedExpense, {
+      const fresh = await manager.findOneOrFail(FixedExpense, {
         where: { id: String(id), company_id: String(companyId) },
       });
-      return updated;
+      return { updated: fresh, scheduleChanged: changedSchedule };
     });
+
+    // Force sync solo si cambió el calendario (start_date/period_*).
+    if (scheduleChanged) {
+      await this.syncDuePeriodsAction.execute(companyId, new Date(), { force: true });
+    }
+
+    return updated;
   }
 }
