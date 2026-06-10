@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
@@ -8,6 +9,16 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+
+/**
+ * Normaliza campos opcionales: una cadena vacía o solo-espacios se trata como
+ * AUSENTE (`undefined`). Sin esto, `@IsOptional()` no salta la validación para
+ * `''` (no es null/undefined) y `@IsEmail()` rechazaría un correo vacío —
+ * cuando el correo NO es obligatorio. Paridad con PlacePos, que hace
+ * `email?.trim() || null` sin validar formato.
+ */
+const emptyToUndefined = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 import { PersonType } from '@/modules/customers/entities/customer.entity';
 
@@ -46,6 +57,7 @@ export class CreateCustomerDto {
 
   @ApiPropertyOptional({ example: 'juan@ejemplo.com', maxLength: 255, nullable: true })
   @IsOptional()
+  @Transform(emptyToUndefined)
   @IsEmail({}, { message: 'email debe ser una dirección de correo válida' })
   @MaxLength(255)
   email?: string;
