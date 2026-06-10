@@ -28,10 +28,12 @@ import { User } from '../entities/user.entity';
 export class UpdateMeAction {
   constructor(private readonly dataSource: DataSource) {}
 
-  async execute(userId: number, companyId: number, dto: UpdateMeDto): Promise<User> {
+  async execute(userId: number, dto: UpdateMeDto): Promise<User> {
     return this.dataSource.transaction<User>(async (manager) => {
+      // Solo por id: cuenta única del owner; el company_id del JWT puede ser
+      // una sucursal no-primaria. Acceso restringido por @Roles('owner').
       const user = await manager.findOne(User, {
-        where: { id: String(userId), company_id: String(companyId) },
+        where: { id: String(userId) },
       });
 
       if (!user) {
@@ -53,11 +55,7 @@ export class UpdateMeAction {
 
       if (Object.keys(updatePayload).length > 0) {
         try {
-          await manager.update(
-            User,
-            { id: String(userId), company_id: String(companyId) },
-            updatePayload,
-          );
+          await manager.update(User, { id: String(userId) }, updatePayload);
         } catch (error) {
           if (error instanceof QueryFailedError) {
             const code = (error as QueryFailedError & { code?: string }).code;
@@ -73,7 +71,7 @@ export class UpdateMeAction {
       }
 
       const updated = await manager.findOne(User, {
-        where: { id: String(userId), company_id: String(companyId) },
+        where: { id: String(userId) },
       });
 
       if (!updated) {

@@ -3,23 +3,21 @@ import * as argon2 from 'argon2';
 import { DataSource, QueryFailedError } from 'typeorm';
 
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
-import { CreateDefaultAlertConfigsAction } from '@/modules/alert-configs/actions/create-default-alert-configs.action';
-import { CreateDefaultAppSettingsAction } from '@/modules/app-settings/actions/create-default-app-settings.action';
+import { CompanyMember } from '@/modules/companies/entities/company-member.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { CreateSubscriptionAction } from '@/modules/subscriptions/actions/create-subscription.action';
 import {
   SUBSCRIPTION_MIGRATION_DAYS,
   SUBSCRIPTION_TRIAL_DAYS,
 } from '@/modules/subscriptions/subscriptions.constants';
-import { CreateDefaultTicketSettingsAction } from '@/modules/ticket-settings/actions/create-default-ticket-settings.action';
 import { User, UserType } from '@/modules/users/entities/user.entity';
-import { CreateDefaultWalletAction } from '@/modules/wallets/actions/create-default-wallet.action';
 
 import type { AuthResponseDto } from '../dto/auth-response.dto';
 import type { RegisterDto } from '../dto/register.dto';
 import { userToAuthUserDto } from '../internal/auth-mappers';
 import { JwtIssuerService } from '../internal/jwt-issuer.service';
 import { PG_UNIQUE_VIOLATION } from '../internal/pg-errors';
+import { SeedCompanyAction } from './seed-company.action';
 
 /**
  * Registra un nuevo `owner` + `company` atómicamente. Devuelve el JWT y el
@@ -43,10 +41,7 @@ export class RegisterAction {
   constructor(
     private readonly dataSource: DataSource,
     private readonly jwtIssuer: JwtIssuerService,
-    private readonly createDefaultWalletAction: CreateDefaultWalletAction,
-    private readonly createDefaultTicketSettingsAction: CreateDefaultTicketSettingsAction,
-    private readonly createDefaultAppSettingsAction: CreateDefaultAppSettingsAction,
-    private readonly createDefaultAlertConfigsAction: CreateDefaultAlertConfigsAction,
+    private readonly seedCompanyAction: SeedCompanyAction,
     private readonly createSubscriptionAction: CreateSubscriptionAction,
   ) {}
 
@@ -125,40 +120,31 @@ export class RegisterAction {
         throw error;
       }
 
-      // 4. Seeds esenciales — todos comparten el `manager` con la transacción
-      //    del registro, así que si falla cualquier paso posterior se hace
-      //    rollback de Company + User + todos los seeds juntos.
+      const companyId = Number(savedCompany.id);
       const createdBy = {
         id: Number(saved.id),
         fullName: `${saved.name} ${saved.lastname}`.trim(),
       };
-      const companyId = Number(savedCompany.id);
 
-      // 4.1. Wallet "Efectivo" balance 0 (Fase 5).
-      await this.createDefaultWalletAction.execute(manager, { companyId, createdBy });
+      // 4. Membresía del owner con su negocio principal. Fuente de verdad para
+      //    resolver la suscripción aplicable (sucursales la comparten) y
+      //    autorizar el switch de sucursal.
+      await manager.save(
+        CompanyMember,
+        manager.create(CompanyMember, {
+          user_id: String(saved.id),
+          company_id: savedCompany.id,
+          role: 'owner',
+        }),
+      );
 
-      // 4.2. TicketSettings (Fase 10): 5 rows (ORDER/SALE/CREDIT_NOTE/
-      //      DEBIT_NOTE/PURCHASE) con current_number=0. Pre-requisito para
-      //      que cualquier endpoint que genere folios (ventas, compras,
-      //      notas) pueda incrementar atómicamente sin race condition.
-      await this.createDefaultTicketSettingsAction.execute(manager, { companyId, createdBy });
+      // 5. Seeds esenciales (wallet, ticket_settings, app_settings,
+      //    alert_configs). Comparten el `manager`: rollback total si algo falla.
+      await this.seedCompanyAction.execute(manager, { companyId, createdBy });
 
-      // 4.3. AppSettings defaults (Fase 10): app_color_mode='white',
-      //      pos_margins_enabled='false'. El cliente lee estos valores en
-      //      el primer login y aplica la UI correspondiente.
-      await this.createDefaultAppSettingsAction.execute(manager, { companyId, createdBy });
-
-      // 4.4. AlertConfigs defaults: INACTIVE_CUSTOMER deshabilitado por
-      //      defecto. Paridad placepos (`seeds/alertConfigs.ts`). El dueño
-      //      lo activa cuando quiera recibir el resumen diario.
-      await this.createDefaultAlertConfigsAction.execute(manager, { companyId, createdBy });
-
-      // 4.5. Suscripción (cloud-only): trial de gracia desde ahora. Registro
-      //      normal = 10 días (`SUBSCRIPTION_TRIAL_DAYS`); migración desde POS
-      //      offline = 1 día (`SUBSCRIPTION_MIGRATION_DAYS`). Va dentro de la
-      //      MISMA transacción — si falla cualquier paso, la suscripción se
-      //      revierte junto con Company + User + seeds. Cuando
-      //      `expires_at < now()` la company queda bloqueada (guard + login).
+      // 6. Suscripción ÚNICA del owner — vive en el negocio principal y cubre
+      //    también sus futuras sucursales. Registro normal = 10 días; migración
+      //    desde POS offline = 1 día. Cuando vence se bloquea TODA la cuenta.
       await this.createSubscriptionAction.execute(manager, {
         companyId,
         ownerUserId: Number(saved.id),

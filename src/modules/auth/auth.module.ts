@@ -13,12 +13,18 @@ import { UsersModule } from '@/modules/users/users.module';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
 import { CheckEmailAction } from './actions/check-email.action';
+import { CreateBranchAction } from './actions/create-branch.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
+import { ListBranchesAction } from './actions/list-branches.action';
 import { LoginAction } from './actions/login.action';
 import { RegisterAction } from './actions/register.action';
+import { SeedCompanyAction } from './actions/seed-company.action';
+import { SetActiveBranchesAction } from './actions/set-active-branches.action';
+import { SwitchBranchAction } from './actions/switch-branch.action';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { BranchesController } from './branches.controller';
 import { DummyHashService } from './internal/dummy-hash.service';
 import { JwtIssuerService } from './internal/jwt-issuer.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -61,7 +67,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     // AuthModule, así que no hay ciclo.
     SubscriptionsModule,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, BranchesController],
   providers: [
     // Internals.
     DummyHashService,
@@ -72,6 +78,12 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     GetMeAction,
     GetProfileAction,
     CheckEmailAction,
+    // Multi-sucursal: seed compartido + endpoints de branches.
+    SeedCompanyAction,
+    CreateBranchAction,
+    ListBranchesAction,
+    SwitchBranchAction,
+    SetActiveBranchesAction,
     // Facade.
     AuthService,
     // Passport.

@@ -92,7 +92,7 @@ export class LoginAction {
     if (companyId === null) {
       return;
     }
-    const subscription = await this.subscriptionsService.findByCompany(companyId);
+    const subscription = await this.subscriptionsService.findApplicable(companyId);
     if (!subscription) {
       throw new SubscriptionExpiredException(null);
     }

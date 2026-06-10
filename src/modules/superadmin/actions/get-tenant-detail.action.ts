@@ -54,6 +54,29 @@ export class GetTenantDetailAction {
 
     const now = Date.now();
 
+    // Gating de sucursales del owner + conteos (creadas / activas) vía
+    // company_members ⋈ companies (is_branch). Solo si hay owner.
+    let branches: SuperadminTenantDetailDto['branches'] = null;
+    if (owner) {
+      const rows = await this.companyRepo.manager.query<
+        Array<{ count: string; active_count: string }>
+      >(
+        `SELECT
+           COUNT(*)::text AS count,
+           COUNT(*) FILTER (WHERE cm.is_active)::text AS active_count
+         FROM company_members cm
+         JOIN companies c ON c.id = cm.company_id
+         WHERE cm.user_id = $1 AND c.is_branch = true`,
+        [owner.id],
+      );
+      branches = {
+        enabled: owner.branches_enabled,
+        allowed: owner.branches_allowed,
+        count: Number(rows[0]?.count ?? 0),
+        activeCount: Number(rows[0]?.active_count ?? 0),
+      };
+    }
+
     return {
       company: {
         id: Number(company.id),
@@ -80,6 +103,7 @@ export class GetTenantDetailAction {
           }
         : null,
       counts: { ventas, compras, clientes, productos, proveedores, gastos },
+      branches,
     };
   }
 

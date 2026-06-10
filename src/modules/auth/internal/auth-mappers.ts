@@ -68,6 +68,8 @@ export function userToUserProfileDto(user: User, logger: Logger): UserProfileDto
     email: user.email ?? '',
     type: user.type,
     created_at: user.created_at.toISOString(),
+    branches_enabled: user.branches_enabled ?? false,
+    branches_allowed: user.branches_allowed ?? 0,
   };
 }
 
@@ -84,6 +86,9 @@ export function employeeToUserProfileDto(employee: Employee, logger: Logger): Us
     email: employee.email ?? employee.username ?? '',
     type: 'employee',
     created_at: employee.created_at.toISOString(),
+    // Los empleados no gestionan sucursales.
+    branches_enabled: false,
+    branches_allowed: 0,
   };
 }
 
@@ -91,7 +96,8 @@ export function employeeToUserProfileDto(employee: Employee, logger: Logger): Us
  * Proyecta una `Company` al `CompanyProfileItemDto` de `GET /auth/profile`.
  *
  * Reglas:
- *   - `is_branch`: SIEMPRE `false` en CLOUD (sin sucursales en esta fase).
+ *   - `is_branch`: refleja el flag real de la company (false = negocio
+ *     principal del owner; true = sucursal creada vía `POST /branches`).
  *   - `balance`: la entidad ya tiene `NumericTransformer` aplicado, pero
  *     forzamos `Number()` por seguridad si llegara a venir como string en
  *     algún path raw query.
@@ -100,11 +106,12 @@ export function employeeToUserProfileDto(employee: Employee, logger: Logger): Us
 export function companyToCompanyProfileItemDto(
   company: Company,
   logger: Logger,
+  isActive = true,
 ): CompanyProfileItemDto {
   return {
     id: bigintToNumber(company.id, logger, 'Company'),
     name: company.name,
-    is_branch: false,
+    is_branch: company.is_branch ?? false,
     balance: Number(company.balance),
     document_number: company.document_number ?? null,
     address: company.address ?? null,
@@ -112,5 +119,7 @@ export function companyToCompanyProfileItemDto(
     phone_number: company.phone_number ?? null,
     created_at: company.created_at.toISOString(),
     updated_at: company.updated_at.toISOString(),
+    // Estado de la membresía del owner para esta company (multi-sucursal).
+    is_active: isActive,
   };
 }

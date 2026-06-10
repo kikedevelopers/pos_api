@@ -22,7 +22,9 @@ import { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
+import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
+import { UpdateBranchesDto } from './dto/update-branches.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
 import {
   SuperadminSubscriptionResponseDto,
@@ -57,6 +59,7 @@ export class SuperadminController {
     private readonly listTenantsAction: ListTenantsAction,
     private readonly getTenantDetailAction: GetTenantDetailAction,
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
+    private readonly updateBranchesAction: UpdateBranchesAction,
     private readonly deleteTenantAction: DeleteTenantAction,
   ) {}
 
@@ -119,6 +122,28 @@ export class SuperadminController {
   ): Promise<SuperadminSubscriptionResponseDto> {
     const saved = await this.updateSubscriptionAction.execute(companyId, dto);
     return toSuperadminSubscriptionResponseDto(saved);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/branches
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/branches')
+  @ApiOperation({
+    summary: 'Habilitar/inhabilitar sucursales del tenant y fijar la cantidad permitida.',
+    description:
+      'Body: { enabled, allowed }. Se aplica sobre el negocio PRINCIPAL del tenant (400 si es ' +
+      'una sucursal). enabled ⇒ allowed >= 1. No suspende sucursales: la reconciliación la hace ' +
+      'el owner desde su POS.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido o no es principal' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
+  updateBranches(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateBranchesDto,
+  ): Promise<UpdateBranchesResult> {
+    return this.updateBranchesAction.execute(companyId, dto);
   }
 
   // --------------------------------------------------------------------------

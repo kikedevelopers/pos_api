@@ -9,6 +9,7 @@ import { UsersModule } from '@/modules/users/users.module';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
+import { UpdateBranchesAction } from './actions/update-branches.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
 import { SuperadminController } from './superadmin.controller';
@@ -31,6 +32,7 @@ import { SuperadminController } from './superadmin.controller';
     ListTenantsAction,
     GetTenantDetailAction,
     UpdateSubscriptionAction,
+    UpdateBranchesAction,
     DeleteTenantAction,
   ],
 })

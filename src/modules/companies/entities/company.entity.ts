@@ -91,6 +91,17 @@ export class Company {
   @Column({ type: 'varchar', length: 32, default: 'web' })
   origin!: CompanyOrigin;
 
+  /**
+   * Multi-sucursal: `false` para el primer negocio del owner (registro normal),
+   * `true` para cada sucursal creada después vía `POST /branches`. Solo
+   * informativo/UI y base para el cobro futuro por sucursal — el aislamiento de
+   * datos lo sigue garantizando `company_id`, no este flag. Default `false` en
+   * DB para que las companies existentes queden como negocio principal sin
+   * backfill.
+   */
+  @Column({ type: 'boolean', default: false })
+  is_branch!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 

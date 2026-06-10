@@ -35,7 +35,7 @@ import { User } from '../entities/user.entity';
 export class ChangePasswordAction {
   constructor(private readonly dataSource: DataSource) {}
 
-  async execute(userId: number, companyId: number, dto: ChangePasswordDto): Promise<void> {
+  async execute(userId: number, dto: ChangePasswordDto): Promise<void> {
     if (dto.new_password !== dto.confirm_password) {
       throw new BadRequestException('La nueva contraseña y su confirmación no coinciden');
     }
@@ -47,7 +47,7 @@ export class ChangePasswordAction {
     // Verificación previa fuera de la transacción: si current_password
     // no coincide, no abrimos tx. Argon2.verify es CPU-bound (~50ms).
     const currentUser = await this.dataSource.getRepository(User).findOne({
-      where: { id: String(userId), company_id: String(companyId) },
+      where: { id: String(userId) },
     });
 
     if (!currentUser) {
@@ -62,11 +62,7 @@ export class ChangePasswordAction {
     const newHash = await argon2.hash(dto.new_password, ARGON2_OPTIONS);
 
     await this.dataSource.transaction(async (manager) => {
-      const result = await manager.update(
-        User,
-        { id: String(userId), company_id: String(companyId) },
-        { password: newHash },
-      );
+      const result = await manager.update(User, { id: String(userId) }, { password: newHash });
 
       if (result.affected !== 1) {
         // Carrera improbable: el row desapareció entre la verificación y el

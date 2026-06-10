@@ -34,7 +34,9 @@ export class GetMeAction {
       };
     }
 
-    const user = await this.usersService.findByIdInCompany(authUser.user_id, authUser.company_id);
+    // Por user_id (no por company del JWT): la cuenta del owner es única y
+    // válida en cualquiera de sus sucursales (multi-sucursal).
+    const user = await this.usersService.findById(authUser.user_id);
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }

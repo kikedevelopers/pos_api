@@ -16,8 +16,8 @@ import { UsersService } from './users.service';
  * Módulo `users`.
  *
  * Expone:
- *   - `UsersService` con lookups (`findByEmail`, `findByIdInCompany`) usados
- *     por `AuthService` durante login/me.
+ *   - `UsersService` con lookups (`findByEmail`, `findById`) usados por
+ *     `AuthService` durante login/me y por el switch de sucursal.
  *   - `UsersController` con endpoints `/users/me` (GET/PUT/PUT password) para
  *     que el owner gestione su propia cuenta.
  *

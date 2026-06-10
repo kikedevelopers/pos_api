@@ -81,6 +81,14 @@ export class CompanyProfileItemDto {
 
   @ApiProperty({ example: '2025-01-01T00:00:00.000Z' })
   updated_at!: string;
+
+  /**
+   * Multi-sucursal: estado de la membresía del owner para esta company.
+   * El principal siempre `true`; una sucursal suspendida llega `false` y el
+   * cliente no la lista ni permite seleccionarla.
+   */
+  @ApiProperty({ example: true })
+  is_active!: boolean;
 }
 
 /**
@@ -104,6 +112,16 @@ export class UserProfileDto {
 
   @ApiProperty({ example: '2025-01-01T00:00:00.000Z' })
   created_at!: string;
+
+  /**
+   * Multi-sucursal — gating (lo controla el admin): si la cuenta puede usar
+   * sucursales y cuántas puede crear. El cliente gatea el selector con esto.
+   */
+  @ApiProperty({ example: true })
+  branches_enabled!: boolean;
+
+  @ApiProperty({ example: 2 })
+  branches_allowed!: number;
 }
 
 /**

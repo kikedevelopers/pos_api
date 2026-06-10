@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
-import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
@@ -62,10 +61,7 @@ export class UsersController {
   })
   @ApiResponse({ status: HttpStatus.OK, type: UserResponseDto })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Usuario no encontrado' })
-  async getMe(
-    @CurrentUser() authUser: AuthUser,
-    @CurrentCompany() companyId: number,
-  ): Promise<UserResponseDto> {
+  async getMe(@CurrentUser() authUser: AuthUser): Promise<UserResponseDto> {
     // Defensa explícita: el JWT podría provenir de un Employee con
     // `account='employee'`. Aunque `@Roles('owner')` ya lo rechaza, marcamos
     // el invariante para que cualquier cambio futuro en RolesGuard no
@@ -73,7 +69,9 @@ export class UsersController {
     if (authUser.account !== 'user') {
       throw new ForbiddenException('Solo el owner puede consultar /users/me');
     }
-    const user = await this.usersService.findMe(authUser.user_id, companyId);
+    // Por user_id (no por company del JWT): cuenta única del owner, válida en
+    // cualquiera de sus sucursales.
+    const user = await this.usersService.findMe(authUser.user_id);
     return toUserResponseDto(user);
   }
 
@@ -102,12 +100,11 @@ export class UsersController {
   async updateMe(
     @Body() dto: UpdateMeDto,
     @CurrentUser() authUser: AuthUser,
-    @CurrentCompany() companyId: number,
   ): Promise<UserResponseDto> {
     if (authUser.account !== 'user') {
       throw new ForbiddenException('Solo el owner puede actualizar /users/me');
     }
-    const user = await this.usersService.updateMe(authUser.user_id, companyId, dto);
+    const user = await this.usersService.updateMe(authUser.user_id, dto);
     return toUserResponseDto(user);
   }
 
@@ -139,14 +136,13 @@ export class UsersController {
   async changePassword(
     @Body() dto: ChangePasswordDto,
     @CurrentUser() authUser: AuthUser,
-    @CurrentCompany() companyId: number,
   ): Promise<{ updated: true }> {
     if (authUser.account !== 'user') {
       throw new ForbiddenException(
         'Solo el owner puede cambiar la contraseña vía /users/me/password',
       );
     }
-    await this.usersService.changePassword(authUser.user_id, companyId, dto);
+    await this.usersService.changePassword(authUser.user_id, dto);
     return { updated: true };
   }
 }

@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Public } from '@/common/decorators/public.decorator';
+import { SkipActiveCompanyCheck } from '@/common/decorators/skip-active-company-check.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { AuthService } from './auth.service';
@@ -25,6 +26,9 @@ import { RegisterDto } from './dto/register.dto';
  */
 @ApiTags('auth')
 @Controller('auth')
+// /auth/* (perfil, me, logout) debe leerse aunque el JWT apunte a una sucursal
+// suspendida — el cliente necesita el perfil para detectarlo y recuperarse.
+@SkipActiveCompanyCheck()
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 

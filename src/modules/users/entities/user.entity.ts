@@ -111,6 +111,19 @@ export class User {
   @JoinColumn({ name: 'company_id' })
   company!: Company | null;
 
+  /**
+   * Multi-sucursal — gating administrativo (lo controla el admin desde
+   * kdevs-admin, no el propio owner):
+   *   - `branches_enabled`: si la cuenta puede usar sucursales.
+   *   - `branches_allowed`: cuántas sucursales puede crear (>= 0). La regla
+   *     `enabled ⇒ allowed >= 1` se valida en el action, no en DB.
+   */
+  @Column({ type: 'boolean', default: false })
+  branches_enabled!: boolean;
+
+  @Column({ type: 'integer', default: 0 })
+  branches_allowed!: number;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 

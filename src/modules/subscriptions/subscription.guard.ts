@@ -65,7 +65,8 @@ export class SubscriptionGuard implements CanActivate {
       return true;
     }
 
-    const subscription = await this.subscriptionsService.findByCompany(user.company_id);
+    // Sub aplicable: la del owner (principal o sucursal comparten la misma).
+    const subscription = await this.subscriptionsService.findApplicable(user.company_id);
 
     if (!subscription) {
       throw new SubscriptionExpiredException(null);

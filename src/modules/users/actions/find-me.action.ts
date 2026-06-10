@@ -21,9 +21,11 @@ export class FindMeAction {
     private readonly usersRepo: Repository<User>,
   ) {}
 
-  async execute(userId: number, companyId: number): Promise<User> {
+  async execute(userId: number): Promise<User> {
+    // Solo por id: la cuenta del owner es única y el company_id del JWT puede
+    // ser una sucursal no-primaria (multi-sucursal). Restringido por @Roles.
     const user = await this.usersRepo.findOne({
-      where: { id: String(userId), company_id: String(companyId) },
+      where: { id: String(userId) },
     });
 
     if (!user) {

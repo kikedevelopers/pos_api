@@ -7,6 +7,7 @@ import { UpdateCompanyAction } from './actions/update-company.action';
 import { AdminCompaniesController } from './admin-companies.controller';
 import { CompaniesController } from './companies.controller';
 import { CompaniesService } from './companies.service';
+import { CompanyMember } from './entities/company-member.entity';
 import { Company } from './entities/company.entity';
 
 /**
@@ -21,7 +22,7 @@ import { Company } from './entities/company.entity';
  * repo de `Company` durante `POST /auth/register`.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Company])],
+  imports: [TypeOrmModule.forFeature([Company, CompanyMember])],
   controllers: [CompaniesController, AdminCompaniesController],
   providers: [
     CompaniesService,

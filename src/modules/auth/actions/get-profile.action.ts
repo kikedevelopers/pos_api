@@ -13,6 +13,7 @@ import {
   employeeToUserProfileDto,
   userToUserProfileDto,
 } from '../internal/auth-mappers';
+import { ListBranchesAction } from './list-branches.action';
 
 /**
  * `GET /auth/profile`. Devuelve `{ company_profile, user_profile }` con el
@@ -39,6 +40,7 @@ export class GetProfileAction {
     private readonly companiesRepo: Repository<Company>,
     @InjectRepository(Employee)
     private readonly employeesRepo: Repository<Employee>,
+    private readonly listBranchesAction: ListBranchesAction,
   ) {}
 
   async execute(authUser: AuthUser): Promise<ProfileResponseDto> {
@@ -57,6 +59,8 @@ export class GetProfileAction {
           email: '',
           type: authUser.type,
           created_at: new Date(0).toISOString(),
+          branches_enabled: false,
+          branches_allowed: 0,
         },
       };
     }
@@ -71,13 +75,26 @@ export class GetProfileAction {
       throw new NotFoundException('Empresa no encontrada');
     }
 
-    const companyItem = companyToCompanyProfileItemDto(company, this.logger);
+    // Empleados: sin membresías ni selector — una sola company (la del JWT).
+    if (authUser.account === 'employee') {
+      const companyItem = companyToCompanyProfileItemDto(company, this.logger);
+      return {
+        company_profile: { primary: companyItem, companies: [companyItem] },
+        user_profile: userProfile,
+      };
+    }
+
+    // Owner: `companies` lista TODAS sus companies (principal + sucursales) con
+    // su `is_active`. `primary` = la company activa del JWT (su `is_active`
+    // sale de la lista; si el JWT apunta a una sucursal suspendida llega
+    // `false` y el cliente fuerza el switch al principal).
+    const companies = await this.listBranchesAction.execute(authUser.user_id);
+    const primary =
+      companies.find((c) => c.id === Number(authUser.company_id)) ??
+      companyToCompanyProfileItemDto(company, this.logger);
 
     return {
-      company_profile: {
-        primary: companyItem,
-        companies: [companyItem],
-      },
+      company_profile: { primary, companies },
       user_profile: userProfile,
     };
   }
@@ -106,7 +123,9 @@ export class GetProfileAction {
       return employeeToUserProfileDto(employee, this.logger);
     }
 
-    const user = await this.usersService.findByIdInCompany(authUser.user_id, companyId);
+    // El owner (account 'user'): por user_id, no por company del JWT — su
+    // cuenta es única y el JWT puede apuntar a una sucursal no-primaria.
+    const user = await this.usersService.findById(authUser.user_id);
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }

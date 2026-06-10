@@ -9,6 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { ActiveCompanyGuard } from './common/guards/active-company.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { ResponseWrapperInterceptor } from './common/interceptors/response-wrapper.interceptor';
@@ -269,6 +270,13 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     {
       provide: APP_GUARD,
       useClass: SubscriptionGuard,
+    },
+    // Multi-sucursal: bloquea peticiones de negocio cuyo company_id (JWT) sea
+    // una sucursal suspendida o sin permiso. Tras SubscriptionGuard, antes de
+    // Roles. Exime /auth/* y /branches/* (@SkipActiveCompanyCheck).
+    {
+      provide: APP_GUARD,
+      useClass: ActiveCompanyGuard,
     },
     {
       provide: APP_GUARD,

@@ -83,6 +83,24 @@ export class SuperadminTenantCountsDto {
 }
 
 /**
+ * Gating de sucursales del owner del tenant. `null` si la company no tiene
+ * owner (caso atípico).
+ */
+export class SuperadminTenantBranchesDto {
+  @ApiProperty({ example: true, description: 'Sucursales habilitadas para la cuenta.' })
+  enabled!: boolean;
+
+  @ApiProperty({ example: 2, description: 'Cantidad de sucursales permitidas (>= 0).' })
+  allowed!: number;
+
+  @ApiProperty({ example: 3, description: 'Sucursales creadas (is_branch=true).' })
+  count!: number;
+
+  @ApiProperty({ example: 2, description: 'Sucursales activas (no suspendidas).' })
+  activeCount!: number;
+}
+
+/**
  * Respuesta de `GET /superadmin/tenants/:companyId`.
  */
 export class SuperadminTenantDetailDto {
@@ -97,4 +115,7 @@ export class SuperadminTenantDetailDto {
 
   @ApiProperty({ type: SuperadminTenantCountsDto })
   counts!: SuperadminTenantCountsDto;
+
+  @ApiPropertyOptional({ type: SuperadminTenantBranchesDto, nullable: true })
+  branches!: SuperadminTenantBranchesDto | null;
 }

@@ -39,7 +39,8 @@ export class SubscriptionsController {
   @ApiResponse({ status: HttpStatus.OK, type: SubscriptionResponseDto })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Suscripción no encontrada' })
   async getCurrent(@CurrentCompany() companyId: number): Promise<SubscriptionResponseDto> {
-    const subscription = await this.subscriptionsService.findByCompany(companyId);
+    // Sucursales comparten la suscripción del negocio principal del owner.
+    const subscription = await this.subscriptionsService.findApplicable(companyId);
     if (!subscription) {
       throw new NotFoundException('Suscripción no encontrada');
     }

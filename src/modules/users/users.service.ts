@@ -39,38 +39,34 @@ export class UsersService {
   }
 
   /**
-   * Lookup por id dentro de una company. Si el id existe pero pertenece a
-   * otra company (cross-tenant), retorna `null` — el caller debe traducirlo
-   * a `NotFoundException` para no filtrar la existencia del recurso.
-   *
-   * Nota: la columna `company_id` se mapea como `string` (bigint en pg). El
-   * `companyId` recibido como `number` se compara como string para no
-   * depender de coerciones implícitas de TypeORM.
+   * Lookup por id del usuario, SIN filtrar por company. La cuenta del owner es
+   * única (un solo `User` por owner), y con multi-sucursal el `company_id` del
+   * JWT puede ser cualquiera de sus sucursales — no la primaria. Filtrar por
+   * company aquí rompería `/users/me` y `/auth/me|profile` al operar una
+   * sucursal no-primaria. El acceso queda restringido por `@Roles('owner')`.
    */
-  async findByIdInCompany(id: number, companyId: number): Promise<User | null> {
-    return this.usersRepo.findOne({
-      where: { id: String(id), company_id: String(companyId) },
-    });
+  async findById(id: number): Promise<User | null> {
+    return this.usersRepo.findOne({ where: { id: String(id) } });
   }
 
   /**
    * Resuelve el perfil propio del owner (`GET /users/me`).
    */
-  findMe(userId: number, companyId: number): Promise<User> {
-    return this.findMeAction.execute(userId, companyId);
+  findMe(userId: number): Promise<User> {
+    return this.findMeAction.execute(userId);
   }
 
   /**
    * Actualiza el perfil del usuario autenticado (`PUT /users/me`).
    */
-  updateMe(userId: number, companyId: number, dto: UpdateMeDto): Promise<User> {
-    return this.updateMeAction.execute(userId, companyId, dto);
+  updateMe(userId: number, dto: UpdateMeDto): Promise<User> {
+    return this.updateMeAction.execute(userId, dto);
   }
 
   /**
    * Cambia la contraseña del usuario autenticado (`PUT /users/me/password`).
    */
-  changePassword(userId: number, companyId: number, dto: ChangePasswordDto): Promise<void> {
-    return this.changePasswordAction.execute(userId, companyId, dto);
+  changePassword(userId: number, dto: ChangePasswordDto): Promise<void> {
+    return this.changePasswordAction.execute(userId, dto);
   }
 }
