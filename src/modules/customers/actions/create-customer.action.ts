@@ -54,6 +54,11 @@ export class CreateCustomerAction {
         // balance NO viene del DTO. Se fija a 0 en el create. Mutación en
         // fases 6/8/9.
         balance: 0,
+        // advance_balance es NOT NULL en la BD. Hay que fijarlo explícito: la
+        // columna tiene NumericTransformer, así que TypeORM la incluye en el
+        // INSERT con `null` (undefined→null) en vez de usar el DEFAULT 0, lo
+        // que viola la restricción NOT NULL. Mismo motivo que `balance`.
+        advance_balance: 0,
         is_archived: false,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
