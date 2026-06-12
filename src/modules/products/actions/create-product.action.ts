@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 
 import type { CreateProductDto } from '../dto/create-product.dto';
 import type { ProductPriceInputDto } from '../dto/product-price.dto';
@@ -55,6 +56,17 @@ export class CreateProductAction {
       await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
 
+      // Presentaciones de peso/monto variable: si llega `packaging_value` sin
+      // `packaging_id`, find-or-create de un empaque auto con ese valor (en la
+      // misma company y transacción). Espejo PlacePos.
+      let packagingId = dto.packaging_id ? String(dto.packaging_id) : null;
+      if (!packagingId && dto.packaging_value && dto.packaging_value > 0) {
+        packagingId = await resolveAutoPackagingId(manager, dto.packaging_value, companyId, {
+          id: createdBy.id,
+          fullName: createdBy.fullName,
+        });
+      }
+
       const trimmedName = dto.name.trim();
       const trimmedSku = (dto.sku_code ?? '').trim() || null;
       const trimmedBarcode = (dto.bar_code ?? '').trim() || null;
@@ -68,7 +80,7 @@ export class CreateProductAction {
         parent_id: dto.parent_id ? String(dto.parent_id) : null,
         sku_code: trimmedSku,
         bar_code: trimmedBarcode,
-        packaging_id: dto.packaging_id ? String(dto.packaging_id) : null,
+        packaging_id: packagingId,
         category_id: dto.category_id ? String(dto.category_id) : null,
         cost: dto.cost,
         stock: dto.stock,

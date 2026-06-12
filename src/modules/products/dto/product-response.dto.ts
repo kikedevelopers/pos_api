@@ -10,7 +10,7 @@ import {
 /**
  * Shape de respuesta de packaging anidado dentro de Product. Espejo PlacePos:
  *
- *   { id, name, value }
+ *   { id, name, value, is_auto }
  */
 export class ProductPackagingNestedDto {
   @ApiProperty({ example: 1 })
@@ -21,6 +21,13 @@ export class ProductPackagingNestedDto {
 
   @ApiProperty({ example: 12 })
   value!: number;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Empaque auto del sistema (presentación de peso/monto variable). El cliente lo usa para abrir el formulario en el modo correcto al editar.',
+  })
+  is_auto!: boolean;
 }
 
 /**
@@ -201,6 +208,7 @@ export function toProductResponseDto(
           id: Number(p.packaging.id),
           name: p.packaging.name,
           value: Number(p.packaging.value),
+          is_auto: p.packaging.is_auto === true,
         }
       : null,
     category: p.category

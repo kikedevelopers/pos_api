@@ -121,6 +121,23 @@ export class CreateProductDto {
   packaging_id?: number | null;
 
   @ApiPropertyOptional({
+    example: 22.16,
+    nullable: true,
+    description:
+      'Presentaciones de peso/monto variable: cantidad en unidad base por unidad. ' +
+      'Si llega sin `packaging_id`, el service resuelve (find-or-create) un empaque ' +
+      'auto con este `value`. Espejo PlacePos.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
+    { message: 'packaging_value debe ser número con hasta 4 decimales' },
+  )
+  @Min(0, { message: 'packaging_value debe ser >= 0' })
+  packaging_value?: number;
+
+  @ApiPropertyOptional({
     example: 'https://cdn.example.com/product.jpg',
     nullable: true,
     maxLength: 500,

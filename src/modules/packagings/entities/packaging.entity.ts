@@ -92,6 +92,15 @@ export class Packaging {
   @Column({ type: 'boolean', default: false })
   is_archived!: boolean;
 
+  /**
+   * Empaque "auto" creado por el sistema para presentaciones de peso/monto
+   * variable (espejo PlacePos). Funciona igual que cualquier empaque vía su
+   * `value` para POS/inventario/compras; la bandera SOLO lo excluye del
+   * SELECTOR de empaques (`GET /packagings`). El usuario no los gestiona.
+   */
+  @Column({ type: 'boolean', default: false })
+  is_auto!: boolean;
+
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;
 

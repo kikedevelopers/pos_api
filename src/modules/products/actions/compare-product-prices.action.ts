@@ -110,6 +110,7 @@ export class CompareProductPricesAction {
               id: Number(target.packaging.id),
               name: target.packaging.name,
               value: Number(target.packaging.value),
+              is_auto: target.packaging.is_auto === true,
             }
           : null,
       },

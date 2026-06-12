@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 
 import type { UpdateProductDto } from '../dto/update-product.dto';
 import { Product } from '../entities/product.entity';
@@ -87,6 +88,21 @@ export class UpdateProductAction {
       }
       if (dto.packaging_id !== undefined) {
         patch.packaging_id = dto.packaging_id ? String(dto.packaging_id) : null;
+      }
+      // Presentaciones de peso/monto variable: si llega `packaging_value` sin
+      // `packaging_id`, find-or-create de un empaque auto y se asigna como
+      // packaging del producto (re-resuelve al cambiar el peso). Espejo PlacePos.
+      if (
+        (dto.packaging_id === undefined || !dto.packaging_id) &&
+        dto.packaging_value &&
+        dto.packaging_value > 0
+      ) {
+        patch.packaging_id = await resolveAutoPackagingId(
+          manager,
+          dto.packaging_value,
+          companyId,
+          { id: actor.id, fullName: actor.fullName },
+        );
       }
       if (dto.category_id !== undefined) {
         patch.category_id = dto.category_id ? String(dto.category_id) : null;

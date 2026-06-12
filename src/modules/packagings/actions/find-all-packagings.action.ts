@@ -23,7 +23,9 @@ export class FindAllPackagingsAction {
 
   async execute(companyId: number): Promise<Packaging[]> {
     return this.repo.find({
-      where: { company_id: String(companyId), is_archived: false },
+      // is_auto = false → los empaques auto (presentaciones de peso/monto
+      // variable) NO se listan en el selector; son gestionados por el sistema.
+      where: { company_id: String(companyId), is_archived: false, is_auto: false },
       order: { name: 'ASC' },
     });
   }
