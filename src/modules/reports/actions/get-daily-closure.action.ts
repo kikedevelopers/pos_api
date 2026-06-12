@@ -10,6 +10,7 @@ import {
   computeNetCashSales,
   fetchCashNotes,
   fetchCashSales,
+  fetchExpensesDetail,
   fetchExpensesTotal,
   fetchNewCredits,
   fetchTotalPendingCredits,
@@ -58,6 +59,7 @@ export interface DailyClosureResult {
     pendingBalance: number;
   };
   expensesTotal: number;
+  expensesDetail: { concept: string; source: string | null; amount: number }[];
   finalTotal: number;
   profit: number;
   margin: number;
@@ -119,14 +121,21 @@ export class GetDailyClosureAction {
     const { dateStart, dateEnd } = range;
     const cid = String(companyId);
 
-    const [salesData, creditNotesData, debitNotesData, consigData, expensesTotal] =
+    const [salesData, creditNotesData, debitNotesData, consigData, expensesTotal, expensesDetailRows] =
       await Promise.all([
         fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
         fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
         fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
         fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
         fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
+        fetchExpensesDetail(this.dataSource, cid, dateStart, dateEnd),
       ]);
+
+    const expensesDetail = expensesDetailRows.map((r) => ({
+      concept: r.concept,
+      source: r.source,
+      amount: round2(r.amount),
+    }));
 
     const grossSales = salesData.gross_sales;
     const creditNotes = creditNotesData.notes_total;
@@ -240,6 +249,7 @@ export class GetDailyClosureAction {
         pendingBalance: round2(newCreditsData.pending_balance),
       },
       expensesTotal: round2(expensesTotal),
+      expensesDetail,
       finalTotal,
       profit: totalProfit,
       margin: totalMargin,

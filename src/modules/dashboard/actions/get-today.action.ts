@@ -13,6 +13,7 @@ import {
   fetchSalesCount,
   fetchSalesNotesAdjustment,
   fetchSupplierDebt,
+  fetchTodayCreditsBalance,
   round2,
 } from '../internal/aggregations';
 import { fetchCashAccounts, type CashAccountsResult } from '../internal/cash-accounts';
@@ -55,6 +56,7 @@ export interface TodayResult {
     paymentsTransfer: number;
     paymentsTotal: number;
     supplierDebt: number;
+    todayCreditsBalance: number;
   };
   cashAccounts: CashAccountsResult;
 }
@@ -91,6 +93,7 @@ export class GetTodayAction {
       purchasePaymentsCashAmt,
       purchasePaymentsTransferAmt,
       supplierDebt,
+      todayCreditsBalance,
       cashAccounts,
     ] = await Promise.all([
       fetchPaymentsTotal(this.dataSource, companyId, 'CASH', false, range.dateStart, range.dateEnd),
@@ -163,6 +166,7 @@ export class GetTodayAction {
         range.dateEnd,
       ),
       fetchSupplierDebt(this.dataSource, companyId),
+      fetchTodayCreditsBalance(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchCashAccounts(this.dataSource, companyId),
     ]);
 
@@ -219,6 +223,7 @@ export class GetTodayAction {
         paymentsTransfer: purchasePaymentsTransfer,
         paymentsTotal: purchasePaymentsTotal,
         supplierDebt: round2(supplierDebt),
+        todayCreditsBalance: round2(todayCreditsBalance),
       },
       cashAccounts,
     };

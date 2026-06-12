@@ -267,6 +267,41 @@ export async function fetchExpensesTotal(
   return Number(rows[0]?.expenses_total ?? 0);
 }
 
+/** Fila cruda del detalle discriminado de gastos del día. */
+export interface ExpenseDetailRow {
+  concept: string;
+  source: string | null;
+  amount: number;
+}
+
+/**
+ * Detalle discriminado de los gastos del día: concepto (`description`), fuente
+ * (`source_name`) y monto, SOLO `expenses` no archivados. Misma exclusión de
+ * archivados que `fetchExpensesTotal`. Espejo PlacePos `buildDailyClosureResult`
+ * (`ReportController.ts`). Multi-tenant: `expenses.company_id = $1`.
+ */
+export async function fetchExpensesDetail(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<ExpenseDetailRow[]> {
+  return dataSource.query<ExpenseDetailRow[]>(
+    `
+      SELECT
+        e.description AS concept,
+        e.source_name AS source,
+        e.amount::float AS amount
+      FROM expenses e
+      WHERE e.company_id = $1
+        AND e.created_at BETWEEN $2 AND $3
+        AND e.is_archived = false
+      ORDER BY e.created_at ASC
+      `,
+    [cid, dateStart, dateEnd],
+  );
+}
+
 /**
  * Saldo total pendiente (POINT-IN-TIME) de los créditos que REALMENTE se deben:
  * `SUM(balance)` de `sale_credits` con saldo > 0 cuya factura sea una VENTA NO

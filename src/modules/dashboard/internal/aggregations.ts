@@ -588,6 +588,32 @@ export async function fetchSupplierDebt(
 }
 
 /**
+ * Saldo VIVO de las compras a crédito GENERADAS HOY (en el rango): `SUM(balance)`
+ * de los `purchase_credits` no pagados creados dentro del día. Permite derivar
+ * la deuda anterior: `deudaAnterior = supplierDebt - todayCreditsBalance`.
+ * Espejo PlacePos `buildTodaySummary` (`dashboard.routes.ts`). Multi-tenant:
+ * `purchase_credits.company_id = $1`.
+ */
+export async function fetchTodayCreditsBalance(
+  dataSource: DataSource,
+  companyId: number,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<number> {
+  const rows = await dataSource.query<AmountRow[]>(
+    `
+    SELECT COALESCE(SUM(balance), 0)::float AS amount
+    FROM purchase_credits
+    WHERE company_id = $1
+      AND status <> 'PAID'
+      AND created_at BETWEEN $2 AND $3
+    `,
+    [String(companyId), dateStart, dateEnd],
+  );
+  return Number(rows[0]?.amount ?? 0);
+}
+
+/**
  * Redondea a 2 decimales monetarios. Atajo sobre `preciseNumber`.
  */
 export function round2(value: unknown): number {

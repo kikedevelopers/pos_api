@@ -80,6 +80,9 @@ export class TicketPaymentResponseDto {
   @ApiProperty({ example: 0 })
   changeAmount!: number;
 
+  @ApiProperty({ example: 'Bancolombia', nullable: true })
+  bankName!: string | null;
+
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   createdAt!: string;
 }
@@ -308,6 +311,7 @@ function toTicketPayment(p: SalePayment): TicketPaymentResponseDto {
     amountDue: amount,
     amountPaid: amount + change,
     changeAmount: change,
+    bankName: p.bank_name ?? null,
     createdAt: p.created_at.toISOString(),
   };
 }
