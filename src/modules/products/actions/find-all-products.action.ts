@@ -82,6 +82,7 @@ export class FindAllProductsAction {
         pk.id             AS packaging__id,
         pk.name           AS packaging__name,
         pk.value          AS packaging__value,
+        pk.is_auto        AS packaging__is_auto,
         cat.id            AS category__id,
         cat.name          AS category__name,
         COALESCE(pr.prices, '[]'::jsonb) AS prices
@@ -140,6 +141,7 @@ interface RawProductRow {
   packaging__id: string | null;
   packaging__name: string | null;
   packaging__value: string | number | null;
+  packaging__is_auto: boolean | null;
   category__id: string | null;
   category__name: string | null;
   prices: RawPriceJson[] | null;
@@ -196,6 +198,7 @@ function mapRawToProduct(r: RawProductRow): Product {
             id: r.packaging__id,
             name: r.packaging__name,
             value: r.packaging__value,
+            is_auto: r.packaging__is_auto === true,
           }
         : null,
     category:
