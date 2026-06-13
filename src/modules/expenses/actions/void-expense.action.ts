@@ -2,6 +2,7 @@ import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common
 import { DataSource } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
+import { AlertSeverity, AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
 import {
   MovementConcept,
   MovementType,
@@ -97,6 +98,34 @@ export class VoidExpenseAction {
           created_by_id: actor.id,
         });
       }
+
+      // 4. Notificar al admin: queda registrado en el centro de notificaciones
+      //    quién anuló, por qué concepto y por qué monto.
+      const formattedAmount = new Intl.NumberFormat('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+        maximumFractionDigits: 0,
+      }).format(Number(expense.amount));
+
+      await manager.getRepository(AppAlert).save(
+        manager.create(AppAlert, {
+          company_id: String(companyId),
+          type: 'EXPENSE_VOIDED',
+          severity: AlertSeverity.WARNING,
+          title: 'Anulación de gasto',
+          message: `El usuario ${actor.fullName} realizó una anulación de gasto por concepto de "${expense.description}" y monto de ${formattedAmount}.`,
+          is_read: false,
+          metadata: {
+            expense_id: Number(expense.id),
+            description: expense.description,
+            amount: Number(expense.amount),
+            source_type: expense.source_type,
+            source_id: Number(expense.source_id),
+            voided_by: actor.fullName,
+            voided_by_id: actor.id,
+          },
+        }),
+      );
 
       this.logger.log({
         event: 'expense.voided',
