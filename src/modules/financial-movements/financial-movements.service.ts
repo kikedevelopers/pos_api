@@ -27,8 +27,10 @@ export class FinancialMovementsService {
     companyId: number,
     accountType: AccountReference,
     accountId: number,
+    from?: string,
+    to?: string,
   ): Promise<FinancialMovement[]> {
-    return this.listFinancialMovementsAction.execute(companyId, accountType, accountId);
+    return this.listFinancialMovementsAction.execute(companyId, accountType, accountId, from, to);
   }
 
   record(manager: EntityManager, input: RecordFinancialMovementInput): Promise<FinancialMovement> {

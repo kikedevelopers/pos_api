@@ -34,6 +34,8 @@ export class FinancialMovementsController {
   @ApiOperation({ summary: 'Listar movimientos de una cuenta' })
   @ApiQuery({ name: 'account_type', enum: ['bank', 'wallet', 'cash_register', 'external'] })
   @ApiQuery({ name: 'account_id', type: 'integer' })
+  @ApiQuery({ name: 'from', required: false, type: 'string', description: 'Instante ISO inicial' })
+  @ApiQuery({ name: 'to', required: false, type: 'string', description: 'Instante ISO final' })
   @ApiResponse({ status: HttpStatus.OK, type: [FinancialMovementResponseDto] })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -60,6 +62,8 @@ export class FinancialMovementsController {
       companyId,
       query.account_type,
       query.account_id,
+      query.from,
+      query.to,
     );
     return movements.map(toFinancialMovementResponseDto);
   }
