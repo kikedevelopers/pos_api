@@ -1,18 +1,21 @@
 # =============================================================================
 # Nginx EDGE compartido (misma VM): enruta por dominio.
-#   - ${DOMAIN}      → reverse proxy al API (api:${API_PORT}).
-#   - ${PWA_DOMAIN}  → reverse proxy a la PWA estática (pwa:80, SPA).
+#   - ${DOMAIN}          → reverse proxy al API (api:${API_PORT}).
+#   - ${PWA_DOMAIN}      → reverse proxy a la PWA estática (pwa:80, SPA).
+#   - ${RELEASES_DOMAIN} → sirve los instalables de PlacePos (.exe/.dmg) y el
+#                          latest.yml de auto-update desde /var/www/releases
+#                          (volumen montado; lo llena el action de placepos por SCP).
 #
 # La imagen oficial de nginx hace envsubst sobre /etc/nginx/templates/*.template
 # antes de arrancar. Solo se sustituyen las vars de NGINX_ENVSUBST_TEMPLATE_VARS
-# (DOMAIN, API_PORT, PWA_DOMAIN).
+# (DOMAIN, API_PORT, PWA_DOMAIN, RELEASES_DOMAIN).
 # =============================================================================
 
-# ---------- HTTP 80 (ambos dominios): ACME + redirect a HTTPS ----------
+# ---------- HTTP 80 (todos los dominios): ACME + redirect a HTTPS ----------
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN} ${PWA_DOMAIN};
+    server_name ${DOMAIN} ${PWA_DOMAIN} ${RELEASES_DOMAIN};
 
     # ACME challenge — certbot escribe aquí los tokens via webroot (compartido).
     location /.well-known/acme-challenge/ {
@@ -153,5 +156,61 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Connection        "";
         proxy_buffering on;
+    }
+}
+
+# ---------- HTTPS 443 — Releases (${RELEASES_DOMAIN}) → estáticos /var/www/releases ----------
+# Sirve los instalables que sube el action de placepos por SCP (.exe/.dmg/.blockmap)
+# y el latest.yml / latest-mac.yml que lee electron-updater. NO es un proxy: es
+# `root` estático sobre el volumen montado (./releases → /var/www/releases).
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${RELEASES_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${RELEASES_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${RELEASES_DOMAIN}/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/${RELEASES_DOMAIN}/chain.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    resolver_timeout 5s;
+
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Los instalables pueden ser grandes; sin límite de subida del lado servidor
+    # (la subida real es por SCP, no por HTTP), pero permitimos descargas amplias.
+    client_max_body_size 1m;
+
+    root /var/www/releases;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Metadatos de auto-update: SIEMPRE frescos (electron-updater los relee).
+    location ~* \.ya?ml$ {
+        add_header Cache-Control "no-cache, must-revalidate" always;
+        try_files $uri =404;
+    }
+
+    # Instalables y blockmaps: cacheables (son inmutables por versión).
+    location ~* \.(exe|dmg|zip|blockmap|AppImage|deb|snap)$ {
+        add_header Cache-Control "public, max-age=86400" always;
+        try_files $uri =404;
+    }
+
+    location / {
+        autoindex off;
+        try_files $uri =404;
     }
 }

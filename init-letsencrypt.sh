@@ -3,8 +3,9 @@
 # Bootstrap inicial de certificados Let's Encrypt — EDGE compartido.
 #
 # Emite un certificado por cada dominio que sirve el edge nginx:
-#   - $DOMAIN      (API)
-#   - $PWA_DOMAIN  (PWA)  [opcional: si está vacío, solo se emite el del API]
+#   - $DOMAIN           (API)
+#   - $PWA_DOMAIN       (PWA)       [opcional: si está vacío, no se emite]
+#   - $RELEASES_DOMAIN  (Releases)  [opcional: si está vacío, no se emite]
 #
 # Resuelve el chicken-and-egg (nginx necesita certs para arrancar, certbot
 # necesita nginx en :80 para validar):
@@ -31,10 +32,13 @@ DOMAIN=${DOMAIN:?Falta DOMAIN en .env (ej: foxpos.kikedevs.com)}
 LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:?Falta LETSENCRYPT_EMAIL en .env}
 STAGING=${LETSENCRYPT_STAGING:-0}
 
-# Lista de dominios a certificar: API + PWA (si está definido).
+# Lista de dominios a certificar: API + PWA + Releases (los definidos).
 DOMAINS="$DOMAIN"
 if [ -n "${PWA_DOMAIN:-}" ]; then
   DOMAINS="$DOMAINS $PWA_DOMAIN"
+fi
+if [ -n "${RELEASES_DOMAIN:-}" ]; then
+  DOMAINS="$DOMAINS $RELEASES_DOMAIN"
 fi
 
 COMPOSE="docker compose -f docker-compose.prod.yml"

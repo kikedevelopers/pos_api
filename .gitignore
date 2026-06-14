@@ -7,6 +7,10 @@ dist/
 build/
 *.tsbuildinfo
 
+# Instalables de PlacePos servidos por el edge (los sube el action de placepos
+# por SCP en la VM; runtime, nunca se versionan).
+releases/
+
 # Logs
 logs/
 *.log

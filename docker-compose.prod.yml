@@ -103,14 +103,18 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       PWA_DOMAIN: ${PWA_DOMAIN}
+      RELEASES_DOMAIN: ${RELEASES_DOMAIN}
       API_PORT: ${PORT:-3010}
       # Limita envsubst a estas variables — el resto de `$var` en el config
       # nginx (ej: $host, $request_uri) NO se intentan sustituir.
-      NGINX_ENVSUBST_TEMPLATE_VARS: 'DOMAIN,API_PORT,PWA_DOMAIN'
+      NGINX_ENVSUBST_TEMPLATE_VARS: 'DOMAIN,API_PORT,PWA_DOMAIN,RELEASES_DOMAIN'
     volumes:
       - ./nginx/conf.d:/etc/nginx/templates:ro
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
+      # Instalables servidos en ${RELEASES_DOMAIN}. Los sube el action de
+      # placepos por SCP a ./releases (host); nginx los sirve como estáticos.
+      - ./releases:/var/www/releases:ro
     # Recarga nginx cada 6h para tomar el cert recién renovado por certbot.
     # `daemon off` mantiene el contenedor vivo en foreground.
     #
