@@ -268,9 +268,15 @@ export class ProcessPaymentAction {
     //      `normalizeTenders` unifica ambos a un array de tenders.
     const tenders = this.normalizeTenders(dto);
 
+    // Remanente a crédito (0 si la venta no es a crédito). Se calcula aquí
+    // porque también decide si se permiten 0 tenders (venta 100% a crédito).
+    const creditAmountBig = dto.is_credit ? toBig(dto.credit_amount) : toBig(0);
+
     // 4. Validaciones de tenders:
-    //    a) array no vacío.
-    if (tenders.length === 0) {
+    //    a) debe haber al menos un tender, SALVO venta 100% a crédito: 0 tenders
+    //       es legítimo (el remanente lo cubre el SaleCredit). El invariante de
+    //       cuadre (paso 5) verifica que credit_amount = amount_due en ese caso.
+    if (tenders.length === 0 && !creditAmountBig.gt(0)) {
       return this.fail('Debe enviar al menos un método de pago', ERR.INVALID_PAYMENT_ITEM);
     }
     //    b) cada tender con amount_paid > 0, vuelto coherente y TRANSFER con
@@ -315,7 +321,6 @@ export class ProcessPaymentAction {
     // 5. Invariante de cuadre (HOT PATH): el neto de tenders (entregado menos
     //    vuelto) + el remanente a crédito debe igualar `amount_due` (±0.01).
     //    Σ(amount_paid − change_amount) + credit_amount ≈ amount_due.
-    const creditAmountBig = dto.is_credit ? toBig(dto.credit_amount) : toBig(0);
     const tenderNetBig = tenders.reduce(
       (acc, t) => acc.plus(toBig(t.amount_paid).minus(toBig(t.change_amount ?? 0))),
       toBig(0),

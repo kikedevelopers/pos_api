@@ -222,6 +222,27 @@ describe('ProcessPaymentAction (split tender)', () => {
     expect(result.credit_id).not.toBeNull();
   });
 
+  it('crédito puro: payments vacío + crédito 150 = 150 → 0 SalePayment + SaleCredit', async () => {
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [],
+      is_credit: true,
+      credit_amount: 150,
+    };
+
+    const result = await action.execute(dto, 42, actor, null);
+
+    expect(result.success).toBe(true);
+    expect(saves.filter((s) => s.entity === 'SalePayment')).toHaveLength(0);
+    const creditSave = saves.find((s) => s.entity === 'SaleCredit');
+    expect(creditSave).toBeDefined();
+    expect(creditSave?.payload.balance).toBe(150);
+    expect(creditSave?.payload.total_amount).toBe(150);
+    expect(result.payment_id).toBeNull();
+    expect(result.credit_id).not.toBeNull();
+  });
+
   it('cuadre inválido: CASH 100 + crédito 30 ≠ 150 → PAYMENT_BREAKDOWN_MISMATCH', async () => {
     const dto: ProcessPaymentDto = {
       invoice_id: 142,

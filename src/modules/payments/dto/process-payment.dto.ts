@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -145,7 +144,9 @@ export class ProcessPaymentDto {
   })
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
+  // NO exigimos un mínimo de elementos: una venta 100% a crédito viaja con
+  // `payments: []` (el remanente va en `is_credit`/`credit_amount`, que NO es un
+  // tender). La regla "al menos un tender O crédito" la valida la action.
   @ValidateNested({ each: true })
   @Type(() => ProcessPaymentTenderDto)
   payments?: ProcessPaymentTenderDto[];
