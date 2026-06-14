@@ -16,17 +16,19 @@ export class ListAlertsQueryDto {
     description: 'Si true, solo devuelve alertas no leídas.',
   })
   @IsOptional()
-  // `@Transform` precede al `@IsBoolean` porque los query params llegan como
-  // strings. Acepta 'true', '1', true como verdaderos; cualquier otro string
-  // se evalúa como false (espejo PlacePos `parseUnreadOnly`).
-  @Transform(({ value }) => {
-    if (typeof value === 'boolean') {
-      return value;
+  // CRÍTICO: leemos el valor CRUDO desde `obj` (el objeto plano original), NO
+  // desde `value`. Con `enableImplicitConversion: true` (main.ts) class-transformer
+  // convierte el string 'false' del query param al booleano `true`
+  // (`Boolean('false') === true`) ANTES de llegar aquí, por lo que `value` ya
+  // viene corrupto. `obj.unread_only` conserva el string original 'true'/'false'.
+  // Solo 'true'/'1' (o el booleano true) cuentan como verdadero; cualquier otro
+  // valor → false (espejo PlacePos `parseUnreadOnly`).
+  @Transform(({ obj }) => {
+    const raw = (obj as { unread_only?: unknown })?.unread_only;
+    if (typeof raw === 'boolean') {
+      return raw;
     }
-    if (typeof value === 'string') {
-      return value === 'true' || value === '1';
-    }
-    return false;
+    return raw === 'true' || raw === '1';
   })
   @IsBoolean()
   unread_only?: boolean = false;

@@ -133,6 +133,26 @@ export class RealtimeGateway implements OnGatewayConnection {
     this.server.to(this.allRoom(companyId)).emit(DASHBOARD_CHANGED_EVENT, body);
   }
 
+  /**
+   * Emite `alert:created` a la sala agregada `company:<id>:all` (owner/manager):
+   * las notificaciones del centro de alertas son de nivel negocio, igual que el
+   * dashboard, así que NO se emiten a rooms de employee.
+   *
+   * Señal mínima de invalidación: el cliente solo la usa para invalidar/refetchear
+   * la campana (lista + badge de no leídas). No transporta el detalle de la alerta
+   * (eso lo trae `GET /app-alerts`).
+   *
+   * Best-effort: el llamador debe envolver en try/catch para que un fallo de
+   * socket NUNCA rompa la operación de negocio (anular gasto, sync de cortes...).
+   *
+   * @param companyId company del JWT del actor (nunca del cliente).
+   * @param payload   metadatos opcionales; siempre se incluye `companyId`.
+   */
+  emitAlertCreated(companyId: number, payload: AlertCreatedPayload): void {
+    const body: AlertCreatedPayload = { ...payload, companyId };
+    this.server.to(this.allRoom(companyId)).emit(ALERT_CREATED_EVENT, body);
+  }
+
   private extractToken(client: Socket): string | null {
     // `handshake.auth` es `{ [key: string]: any }` en los typings de socket.io;
     // tipamos el acceso para evitar propagar `any` (no-unsafe-assignment).
@@ -181,4 +201,17 @@ export const DASHBOARD_CHANGED_EVENT = 'dashboard:changed';
  */
 export interface DashboardChangedPayload {
   companyId?: number;
+}
+
+/** Evento único de invalidación del centro de notificaciones (la campana). */
+export const ALERT_CREATED_EVENT = 'alert:created';
+
+/**
+ * Señal mínima de creación de alerta. El cliente solo la usa para invalidar la
+ * campana (lista + unread-count); no transporta el detalle de la alerta.
+ */
+export interface AlertCreatedPayload {
+  companyId: number;
+  alertType: string;
+  severity?: string;
 }

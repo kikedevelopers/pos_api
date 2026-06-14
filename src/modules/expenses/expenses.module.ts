@@ -6,6 +6,7 @@ import { BanksModule } from '@/modules/banks/banks.module';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+import { RealtimeModule } from '@/modules/realtime/realtime.module';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
@@ -40,6 +41,7 @@ import { ExpensesService } from './expenses.service';
     WalletsModule,
     CashRegisterModule,
     FinancialMovementsModule,
+    RealtimeModule,
   ],
   controllers: [ExpensesController],
   providers: [

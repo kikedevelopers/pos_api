@@ -3,6 +3,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber } from '@/common/utils/precision';
 import { AppAlert, AlertSeverity } from '@/modules/app-alerts/entities/app-alert.entity';
+import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import { FixedExpensePeriod } from '../entities/fixed-expense-period.entity';
 import { FixedExpense } from '../entities/fixed-expense.entity';
@@ -79,7 +80,10 @@ export class SyncDuePeriodsAction {
   /** Última corrida lazy por company (epoch ms). Clave = companyId. */
   private readonly lastSyncByCompany = new Map<number, number>();
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async execute(
     companyId: number,
@@ -104,6 +108,25 @@ export class SyncDuePeriodsAction {
         this.logger.error(
           `Fallo sincronizando cortes del gasto ${expense.id} (${expense.name}) ` +
             `de la company ${companyId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Si se materializó al menos un corte, cada uno generó su alerta
+    // FIXED_EXPENSE_DUE. Empuja una sola señal a la campana del admin (el cliente
+    // refetchea la lista completa). Best-effort: un fallo de socket no afecta el
+    // resultado del sync.
+    if (createdPeriods > 0) {
+      try {
+        this.realtime.emitAlertCreated(companyId, {
+          companyId,
+          alertType: FIXED_EXPENSE_DUE_ALERT_TYPE,
+          severity: AlertSeverity.WARNING,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `No se pudo emitir alert:created (FIXED_EXPENSE_DUE) para company ${companyId}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

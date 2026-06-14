@@ -8,6 +8,7 @@ import {
   MovementType,
 } from '@/modules/financial-movements/entities/financial-movement.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
+import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import { Expense } from '../entities/expense.entity';
 import { creditExpenseSource, type ExpenseActor } from '../internal/debit-expense-source';
@@ -47,6 +48,7 @@ export class VoidExpenseAction {
   constructor(
     private readonly dataSource: DataSource,
     private readonly financialMovementsService: FinancialMovementsService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   async execute(id: number, companyId: number, actor: ExpenseActor): Promise<void> {
@@ -137,5 +139,20 @@ export class VoidExpenseAction {
         actorId: actor.id,
       });
     });
+
+    // Empuja la nueva alerta a la campana del admin en tiempo real (solo tras
+    // commit). Best-effort: un fallo de socket jamás debe romper la anulación.
+    try {
+      this.realtime.emitAlertCreated(companyId, {
+        companyId,
+        alertType: 'EXPENSE_VOIDED',
+        severity: 'WARNING',
+      });
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo emitir alert:created (EXPENSE_VOIDED) para company ${companyId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
