@@ -122,6 +122,16 @@ export class Expense {
   @Column({ type: 'boolean', nullable: false, default: false })
   is_archived!: boolean;
 
+  /**
+   * `true` cuando el gasto fue materializado por el pago de un gasto FIJO
+   * (`PayFixedExpensePeriodsAction`). Estos NO restan de la ganancia del día
+   * (el débito a la fuente ya bajó el saldo; contarlo además lo doble-contaría)
+   * ni aparecen en el listado de gastos variables. Solo viven en el módulo de
+   * Gastos Fijos. Los gastos variables (creados por el usuario) son `false`.
+   */
+  @Column({ type: 'boolean', nullable: false, default: false })
+  is_fixed!: boolean;
+
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;
 

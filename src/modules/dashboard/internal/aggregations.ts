@@ -154,7 +154,12 @@ export async function fetchNotesByDay(
 }
 
 /**
- * Gastos por día: SOLO `expenses` no archivados. Filtro multi-tenant.
+ * Gastos por día: SOLO `expenses` VARIABLES no archivados (`is_fixed = false`).
+ * Filtro multi-tenant.
+ *
+ * Los gastos FIJOS (`is_fixed = true`, materializados al pagar un corte) NO se
+ * cuentan: el débito a la fuente ya bajó el saldo; restarlos de la ganancia los
+ * doble-contaría. Solo restan los gastos variables.
  *
  * Los abonos a transportistas (`carrier_payments`) NO se cuentan como gasto:
  * el flete ya está capitalizado en el costo del producto (impacta P&L vía COGS
@@ -175,6 +180,7 @@ export async function fetchExpensesByDay(
     FROM expenses e
     WHERE e.company_id = $1
       AND e.is_archived = false
+      AND e.is_fixed = false
       AND e.created_at BETWEEN $2 AND $3
     GROUP BY 1
     `,
@@ -436,7 +442,11 @@ export async function fetchProfitTotal(
 }
 
 /**
- * Total de gastos del rango: SOLO `expenses` no archivados. Filtro multi-tenant.
+ * Total de gastos del rango: SOLO `expenses` VARIABLES no archivados
+ * (`is_fixed = false`). Filtro multi-tenant.
+ *
+ * Los gastos FIJOS (`is_fixed = true`) NO se cuentan: su débito a la fuente ya
+ * bajó el saldo, así que restarlos de la ganancia los doble-contaría.
  *
  * Los abonos a transportistas (`carrier_payments`) NO son gasto del día: el
  * costo del transporte ya se capitaliza en el COSTO del producto (prorrata de
@@ -456,6 +466,7 @@ export async function fetchExpensesTotal(
     FROM expenses e
     WHERE e.company_id = $1
       AND e.is_archived = false
+      AND e.is_fixed = false
       AND e.created_at BETWEEN $2 AND $3
     `,
     [String(companyId), dateStart, dateEnd],

@@ -57,7 +57,13 @@ export class FindAllExpensesAction {
     const offset = query.offset ?? 0;
     const includeArchived = query.includeArchived === 'true';
 
-    const where: FindOptionsWhere<Expense> = { company_id: String(companyId) };
+    const where: FindOptionsWhere<Expense> = {
+      company_id: String(companyId),
+      // El listado de gastos es SOLO de gastos variables. Los pagos de gastos
+      // fijos (`is_fixed = true`) materializan filas en `expenses` pero se
+      // gestionan/visualizan exclusivamente en el módulo de Gastos Fijos.
+      is_fixed: false,
+    };
 
     // Filtro de archivo. Cuando includeArchived=true devolvemos todo (paridad
     // PlacePos que también incluye y diferencia con activeCount).

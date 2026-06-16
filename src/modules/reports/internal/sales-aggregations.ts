@@ -241,7 +241,12 @@ export async function fetchNewCredits(
 }
 
 /**
- * Total de "Gastos" del periodo: SOLO `expenses` no archivados.
+ * Total de "Gastos" del periodo: SOLO `expenses` VARIABLES no archivados
+ * (`is_fixed = false`).
+ *
+ * Los gastos FIJOS (`is_fixed = true`) NO se cuentan: su débito a la fuente ya
+ * bajó el saldo; restarlos de la ganancia los doble-contaría. Solo restan los
+ * gastos variables.
  *
  * Los abonos a transportistas (`carrier_payments`) NO son gasto: el flete ya
  * está capitalizado en el COSTO del producto (prorrata) e impacta P&L vía COGS
@@ -261,6 +266,7 @@ export async function fetchExpensesTotal(
       WHERE e.company_id = $1
         AND e.created_at BETWEEN $2 AND $3
         AND e.is_archived = false
+        AND e.is_fixed = false
       `,
     [cid, dateStart, dateEnd],
   );
@@ -276,9 +282,11 @@ export interface ExpenseDetailRow {
 
 /**
  * Detalle discriminado de los gastos del día: concepto (`description`), fuente
- * (`source_name`) y monto, SOLO `expenses` no archivados. Misma exclusión de
- * archivados que `fetchExpensesTotal`. Espejo PlacePos `buildDailyClosureResult`
- * (`ReportController.ts`). Multi-tenant: `expenses.company_id = $1`.
+ * (`source_name`) y monto, SOLO `expenses` VARIABLES no archivados. Misma
+ * exclusión de archivados y de fijos (`is_fixed = false`) que
+ * `fetchExpensesTotal`, para que el detalle cuadre con el total. Espejo PlacePos
+ * `buildDailyClosureResult` (`ReportController.ts`). Multi-tenant:
+ * `expenses.company_id = $1`.
  */
 export async function fetchExpensesDetail(
   dataSource: DataSource,
@@ -296,6 +304,7 @@ export async function fetchExpensesDetail(
       WHERE e.company_id = $1
         AND e.created_at BETWEEN $2 AND $3
         AND e.is_archived = false
+        AND e.is_fixed = false
       ORDER BY e.created_at ASC
       `,
     [cid, dateStart, dateEnd],

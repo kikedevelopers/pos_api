@@ -2301,6 +2301,12 @@ export class ImportZipAction {
           expense_date: row.expense_date != null ? asDate(row.expense_date) : created_at,
           notes: asNullableString(row.notes),
           is_archived: asBoolean(row.is_archived),
+          // Preserva el origen FIJO. Fallback robusto por descripción para dumps
+          // previos a la columna `is_fixed`: los pagos de gastos fijos usan el
+          // prefijo determinista "Gasto fijo:".
+          is_fixed:
+            asBoolean(row.is_fixed) ||
+            /^Gasto fijo:/.test(asString(row.description).trim()),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,

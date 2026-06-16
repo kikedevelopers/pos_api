@@ -180,6 +180,10 @@ export class PayFixedExpensePeriodsAction {
           expense_date: now,
           notes: `Pago de gasto fijo (corte ${period.period_number}).`,
           is_archived: false,
+          // Marca de origen FIJO: excluye esta fila de los "gastos del día" que
+          // restan de la ganancia (el débito a la fuente ya bajó el saldo) y del
+          // listado de gastos variables. Solo visible en el módulo de Gastos Fijos.
+          is_fixed: true,
           created_by: actor.fullName,
           created_by_id: String(actor.id),
         });
