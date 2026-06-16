@@ -132,6 +132,15 @@ export class Expense {
   @Column({ type: 'boolean', nullable: false, default: false })
   is_fixed!: boolean;
 
+  /**
+   * Corte (`fixed_expense_periods`) al que pertenece este abono cuando
+   * `is_fixed = true`. Permite reconstruir en el cierre diario el monto total
+   * del corte, su saldo y su vencimiento (el enlace inverso `period.expense_id`
+   * solo apunta al último abono). NULL en gastos variables.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  fixed_expense_period_id!: string | null;
+
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;
 

@@ -12,6 +12,7 @@ import {
   fetchCashSales,
   fetchExpensesDetail,
   fetchExpensesTotal,
+  fetchFixedExpensePaymentsDetail,
   fetchNewCredits,
   fetchTotalPendingCredits,
   fetchTransferSales,
@@ -60,6 +61,16 @@ export interface DailyClosureResult {
   };
   expensesTotal: number;
   expensesDetail: { concept: string; source: string | null; amount: number }[];
+  fixedExpensePaymentsTotal: number;
+  fixedExpensePayments: {
+    concept: string;
+    source: string | null;
+    totalAmount: number;
+    paidAmount: number;
+    balance: number;
+    dueDate: string | null;
+    paidAt: string;
+  }[];
   finalTotal: number;
   profit: number;
   margin: number;
@@ -121,21 +132,48 @@ export class GetDailyClosureAction {
     const { dateStart, dateEnd } = range;
     const cid = String(companyId);
 
-    const [salesData, creditNotesData, debitNotesData, consigData, expensesTotal, expensesDetailRows] =
-      await Promise.all([
-        fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
-        fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
-        fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
-        fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
-        fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
-        fetchExpensesDetail(this.dataSource, cid, dateStart, dateEnd),
-      ]);
+    const [
+      salesData,
+      creditNotesData,
+      debitNotesData,
+      consigData,
+      expensesTotal,
+      expensesDetailRows,
+      fixedExpensePaymentRows,
+    ] = await Promise.all([
+      fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
+      fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
+      fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
+      fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
+      fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
+      fetchExpensesDetail(this.dataSource, cid, dateStart, dateEnd),
+      fetchFixedExpensePaymentsDetail(this.dataSource, cid, dateStart, dateEnd),
+    ]);
 
     const expensesDetail = expensesDetailRows.map((r) => ({
       concept: r.concept,
       source: r.source,
       amount: round2(r.amount),
     }));
+
+    const toIso = (value: Date | string | null): string | null => {
+      if (value == null) return null;
+      return value instanceof Date ? value.toISOString() : String(value);
+    };
+
+    const fixedExpensePayments = fixedExpensePaymentRows.map((r) => ({
+      concept: r.concept,
+      source: r.source,
+      totalAmount: round2(r.total_amount),
+      paidAmount: round2(r.paid_amount),
+      balance: round2(r.balance),
+      dueDate: toIso(r.due_date),
+      paidAt: toIso(r.paid_at) ?? '',
+    }));
+
+    const fixedExpensePaymentsTotal = round2(
+      fixedExpensePaymentRows.reduce((acc, r) => acc.plus(toBig(r.paid_amount)), new Big(0)).toNumber(),
+    );
 
     const grossSales = salesData.gross_sales;
     const creditNotes = creditNotesData.notes_total;
@@ -250,6 +288,8 @@ export class GetDailyClosureAction {
       },
       expensesTotal: round2(expensesTotal),
       expensesDetail,
+      fixedExpensePaymentsTotal,
+      fixedExpensePayments,
       finalTotal,
       profit: totalProfit,
       margin: totalMargin,

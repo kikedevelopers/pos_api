@@ -184,6 +184,8 @@ export class PayFixedExpensePeriodsAction {
           // restan de la ganancia (el débito a la fuente ya bajó el saldo) y del
           // listado de gastos variables. Solo visible en el módulo de Gastos Fijos.
           is_fixed: true,
+          // Enlace al corte para reconstruir total/saldo/vencimiento en el cierre.
+          fixed_expense_period_id: period.id,
           created_by: actor.fullName,
           created_by_id: String(actor.id),
         });

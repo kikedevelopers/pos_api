@@ -311,6 +311,56 @@ export async function fetchExpensesDetail(
   );
 }
 
+/** Fila cruda de un abono/pago a un gasto FIJO del día (enlazado a su corte). */
+export interface FixedExpensePaymentRow {
+  concept: string;
+  source: string | null;
+  paid_amount: number;
+  total_amount: number;
+  balance: number;
+  due_date: Date | string | null;
+  paid_at: Date | string;
+}
+
+/**
+ * Abonos/pagos a gastos FIJOS del rango: cada `Expense` con `is_fixed = true`
+ * enlazado a su corte (`fixed_expense_periods` vía `fixed_expense_period_id`)
+ * para exponer el monto total del corte, su saldo actual y su vencimiento, más
+ * la fuente, lo abonado y cuándo se pagó. Alimenta el bloque "ABONOS A GASTOS
+ * FIJOS" del cierre. INNER JOIN: excluye abonos sin enlace (gastos variables o
+ * abonos previos a la columna); de aquí en adelante todos quedan enlazados.
+ * Multi-tenant: `e.company_id = $1` (y el corte pertenece a la misma company).
+ */
+export async function fetchFixedExpensePaymentsDetail(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<FixedExpensePaymentRow[]> {
+  return dataSource.query<FixedExpensePaymentRow[]>(
+    `
+      SELECT
+        e.description AS concept,
+        e.source_name AS source,
+        e.amount::float AS paid_amount,
+        p.amount::float AS total_amount,
+        p.balance::float AS balance,
+        p.due_at AS due_date,
+        e.created_at AS paid_at
+      FROM expenses e
+      INNER JOIN fixed_expense_periods p
+        ON p.id = e.fixed_expense_period_id
+       AND p.company_id = $1
+      WHERE e.company_id = $1
+        AND e.created_at BETWEEN $2 AND $3
+        AND e.is_archived = false
+        AND e.is_fixed = true
+      ORDER BY e.created_at ASC
+      `,
+    [cid, dateStart, dateEnd],
+  );
+}
+
 /**
  * Saldo total pendiente (POINT-IN-TIME) de los créditos que REALMENTE se deben:
  * `SUM(balance)` de `sale_credits` con saldo > 0 cuya factura sea una VENTA NO
