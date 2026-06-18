@@ -8,7 +8,7 @@ import { ProductPrice } from '@/modules/products/entities/product-price.entity';
 import {
   ProductCostHistory,
   ProductCostHistoryDerivedFrom,
-  type ProductCostHistoryEvent,
+  ProductCostHistoryEvent,
 } from '@/modules/product-history/entities/product-cost-history.entity';
 import { ProductPriceHistory } from '@/modules/product-history/entities/product-price-history.entity';
 
@@ -420,6 +420,49 @@ async function propagateToChildren(args: PropagateChildrenArgs): Promise<void> {
       actor,
     });
   }
+}
+
+/**
+ * Propaga el cost de un producto PADRE a sus presentaciones cuando el costo se
+ * edita FUERA de una compra (formulario de producto o importación masiva). Reusa
+ * la maquinaria de las compras: por cada hijo recalcula su cost
+ * (= parentCostMin × child.pkg.value) y refresca profit/margin de TODOS sus
+ * precios, dejando historial (event EDIT, derived_from PARENT, sin purchase_id).
+ * No-op si el producto no tiene hijos o si el cost derivado de un hijo no cambia.
+ * `parentCost` es el costo FINAL del padre (en su unidad de empaque);
+ * parentCostMin = parentCost / parent.pkg.value. Multi-tenant.
+ */
+export async function propagateParentCostToChildren(args: {
+  manager: EntityManager;
+  companyId: number;
+  parentId: number;
+  parentCost: number;
+  actor: RecalcActor;
+}): Promise<RecalcResult> {
+  const { manager, companyId, parentId, parentCost, actor } = args;
+  const parent = await manager.findOne(Product, {
+    where: { id: String(parentId), company_id: String(companyId) },
+    select: { id: true, packaging_id: true },
+  });
+  if (!parent) {
+    return { skipped: [] };
+  }
+
+  const parentPkgValue = await loadPackagingValue(manager, companyId, parent.packaging_id);
+  const parentCostMin = toBig(parentCost).div(parentPkgValue);
+
+  const skipped: SkippedChild[] = [];
+  await propagateToChildren({
+    manager,
+    companyId,
+    parentId,
+    parentCostMin,
+    eventType: ProductCostHistoryEvent.EDIT,
+    purchaseId: null,
+    actor,
+    skipped,
+  });
+  return { skipped };
 }
 
 /**

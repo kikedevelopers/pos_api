@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -24,8 +25,15 @@ import { ProductType } from '@/modules/products/entities/product.entity';
 export const BULK_MAX_PER_REQUEST = 1000;
 
 /**
- * Input simplificado de un precio dentro de bulk. PlacePos sólo lee
- * `sale_price` aquí.
+ * Tope de niveles de precio por item. PlacePos soporta hasta 4 niveles
+ * (Detal / Mayor / etc.). El server recalcula profit/margin con Big.js, así
+ * que `profit`/`margin` que vengan en el request se IGNORAN.
+ */
+export const BULK_MAX_PRICES_PER_ITEM = 4;
+
+/**
+ * Input simplificado de un precio dentro de bulk. `profit`/`margin` son
+ * opcionales y se IGNORAN — el server los recalcula desde `sale_price - cost`.
  */
 export class BulkPriceDto {
   @ApiProperty({ example: 10.5 })
@@ -36,11 +44,37 @@ export class BulkPriceDto {
   )
   @Min(0, { message: 'sale_price debe ser >= 0' })
   sale_price!: number;
+
+  @ApiPropertyOptional({
+    example: 8,
+    description: 'IGNORADO en el server. Recalculado desde sale_price - cost con Big.js.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { message: 'profit debe ser número' })
+  profit?: number;
+
+  @ApiPropertyOptional({
+    example: 80,
+    description: 'IGNORADO en el server. Recalculado con Big.js.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { message: 'margin debe ser número' })
+  margin?: number;
 }
 
 /**
- * Un item dentro de `POST /inventory/bulk`. Espejo de `BulkItem` en
+ * Un item dentro de `POST /inventory/bulk`. Espejo de `BulkImportItem` en
  * `placepos/src/main/server/routes/inventory.routes.ts`.
+ *
+ * Semántica de campos opcionales (paridad PlacePos):
+ *   - `category`: NOMBRE de categoría; find-or-create scoped company.
+ *     `undefined`/`''` → en CREATE: sin categoría; en UPDATE: PRESERVAR.
+ *   - `show_in_pos`: `undefined` → CREATE: `true`; UPDATE: PRESERVAR.
+ *   - `is_purchasable`: `undefined` → CREATE: `false`; UPDATE: PRESERVAR.
+ *   - `stock`: `undefined` → CREATE: `0`; UPDATE: PRESERVAR.
+ *   - `cost`: `undefined` → `0`.
  */
 export class BulkItemDto {
   @ApiProperty({ example: 'Coca-Cola 2L', maxLength: 150 })
@@ -48,29 +82,6 @@ export class BulkItemDto {
   @IsNotEmpty()
   @MaxLength(150)
   name!: string;
-
-  @ApiPropertyOptional({ example: 2.5 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber(
-    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 },
-    { message: 'cost debe ser número con hasta 2 decimales' },
-  )
-  @Min(0, { message: 'cost debe ser >= 0' })
-  cost?: number;
-
-  @ApiPropertyOptional({
-    example: 10,
-    description: 'Stock unitario. numeric(15,4). Opcional en bulk.',
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber(
-    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
-    { message: 'stock debe ser número con hasta 4 decimales' },
-  )
-  @Min(0, { message: 'stock debe ser >= 0' })
-  stock?: number;
 
   @ApiPropertyOptional({ example: 'SKU-12345', maxLength: 50, nullable: true })
   @IsOptional()
@@ -84,20 +95,85 @@ export class BulkItemDto {
   @MaxLength(50)
   bar_code?: string;
 
-  @ApiPropertyOptional({ example: 'Descripción', maxLength: 500, nullable: true })
+  @ApiPropertyOptional({
+    example: 'Bebidas',
+    maxLength: 150,
+    description:
+      'NOMBRE de categoría (no id). find-or-create scoped company. ' +
+      'undefined/"" → CREATE: sin categoría; UPDATE: preservar la actual.',
+  })
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(150)
+  category?: string;
+
+  @ApiPropertyOptional({
+    example: 'Botella retornable de 2 litros',
+    description:
+      'Descripción libre del producto (columna text). ' +
+      'undefined/"" → CREATE: sin descripción; UPDATE: preservar la actual.',
+  })
+  @IsOptional()
+  @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ example: ProductType.SIMPLE, enum: ProductType })
+  @ApiPropertyOptional({
+    example: 10,
+    description: 'Stock unitario. numeric(15,4). undefined → CREATE: 0; UPDATE: preservar.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
+    { message: 'stock debe ser número con hasta 4 decimales' },
+  )
+  @Min(0, { message: 'stock debe ser >= 0' })
+  stock?: number;
+
+  @ApiPropertyOptional({ example: 2.5, description: 'Costo unitario. undefined → 0.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 },
+    { message: 'cost debe ser número con hasta 2 decimales' },
+  )
+  @Min(0, { message: 'cost debe ser >= 0' })
+  cost?: number;
+
+  @ApiPropertyOptional({
+    example: ProductType.SIMPLE,
+    enum: ProductType,
+    default: ProductType.SIMPLE,
+  })
   @IsOptional()
   @IsEnum(ProductType, { message: 'product_type debe ser SIMPLE o COMBO' })
   product_type?: ProductType;
 
-  @ApiPropertyOptional({ type: [BulkPriceDto] })
+  @ApiPropertyOptional({
+    example: true,
+    description: 'undefined → CREATE: true; UPDATE: preservar.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  show_in_pos?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'undefined → CREATE: false; UPDATE: preservar.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_purchasable?: boolean;
+
+  @ApiPropertyOptional({
+    type: [BulkPriceDto],
+    description: `Hasta ${BULK_MAX_PRICES_PER_ITEM} niveles.`,
+  })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(BULK_MAX_PRICES_PER_ITEM, {
+    message: `prices no puede exceder ${BULK_MAX_PRICES_PER_ITEM} niveles`,
+  })
   @ValidateNested({ each: true })
   @Type(() => BulkPriceDto)
   prices?: BulkPriceDto[];
@@ -106,13 +182,12 @@ export class BulkItemDto {
 /**
  * Payload de `POST /inventory/bulk`. Espejo PlacePos (`inventory.routes.ts`).
  *
- * Comportamiento del endpoint:
- *   - Por cada item, intenta hacer match por `name` dentro de la company.
- *   - Si existe y se envió `sku_code` o `bar_code` → UPDATE (replaza prices).
- *   - Si existe sin SKU/barcode → conflicto reportado (no podemos
- *     actualizar "ciegamente").
- *   - Si no existe y trae al menos un precio válido → CREATE.
- *   - Si no existe y no trae precios válidos → conflicto reportado.
+ * Comportamiento del endpoint (por item, scoped company_id del tenant):
+ *   - `tieneCodigo = !!(sku_code?.trim() || bar_code?.trim())`.
+ *   - Si `tieneCodigo` → busca existing por `(sku_code = sku) OR
+ *     (bar_code = bc)` dentro de la company. Existe → UPDATE; no → CREATE.
+ *   - Si NO `tieneCodigo` → CREATE.
+ *   - CREATE sin precios válidos → conflict 'No tiene precios válidos.'.
  *   - Response: `{ created, updated, skipped, conflicts[] }`.
  */
 export class BulkProductsDto {
@@ -137,7 +212,7 @@ export class BulkConflictReportDto {
   @ApiProperty({ example: 'Coca-Cola 2L' })
   name!: string;
 
-  @ApiProperty({ example: 'Ya existe. Sin SKU/barcode no se puede actualizar.' })
+  @ApiProperty({ example: 'No tiene precios válidos.' })
   reason!: string;
 }
 

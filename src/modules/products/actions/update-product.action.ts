@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 
-import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+import { calculateMargin, calculateProfit, toBig } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
+import { propagateParentCostToChildren } from '@/modules/purchases/internal/recalculate-product-costs.helper';
 
 import type { UpdateProductDto } from '../dto/update-product.dto';
 import { Product } from '../entities/product.entity';
@@ -191,6 +192,23 @@ export class UpdateProductAction {
             });
           }
         }
+      }
+
+      // Si cambia el costo de un producto BASE, propagar a sus presentaciones
+      // (cost + profit/margin de sus precios). No-op si no tiene hijos. Solo
+      // aplica a base (parent_id null): una presentación no tiene presentaciones.
+      if (
+        dto.cost !== undefined &&
+        existing.parent_id === null &&
+        !toBig(existing.cost).round(2).eq(toBig(dto.cost).round(2))
+      ) {
+        await propagateParentCostToChildren({
+          manager,
+          companyId,
+          parentId: id,
+          parentCost: dto.cost,
+          actor: { id: actor.id, fullName: actor.fullName },
+        });
       }
 
       return manager.findOneOrFail(Product, {

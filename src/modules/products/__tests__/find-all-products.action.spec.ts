@@ -41,6 +41,7 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     packaging__id: '5',
     packaging__name: 'Caja x 12',
     packaging__value: '12.0000',
+    packaging__is_auto: false,
     category__id: '3',
     category__name: 'Bebidas',
     prices: [
@@ -87,7 +88,7 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       updated_by: null,
       created_at: '2026-05-12T14:30:00.000Z',
       updated_at: '2026-05-12T15:30:00.000Z',
-      packaging: { id: 5, name: 'Caja x 12', value: 12 },
+      packaging: { id: 5, name: 'Caja x 12', value: 12, is_auto: false },
       category: { id: 3, name: 'Bebidas' },
       prices: [
         { id: 100, name: 'Detal', sale_price: 10.5, profit: 8, margin: 76.1905, iva_percentage: 0 },

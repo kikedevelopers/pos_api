@@ -108,7 +108,9 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Procesar batch de productos (importación)',
     description:
-      'Por cada item, decide CREATE o UPDATE según match por nombre y presencia de SKU/barcode.',
+      'Por cada item: si trae SKU o código de barras, busca un producto activo de la company ' +
+      'por (sku_code OR bar_code) → UPDATE; si no existe o no trae código → CREATE. ' +
+      'category es el NOMBRE (find-or-create scoped company). Aislado por company_id.',
   })
   @ApiBody({ type: BulkProductsDto })
   @ApiResponse({ status: HttpStatus.OK, type: BulkProductsResponseDto })

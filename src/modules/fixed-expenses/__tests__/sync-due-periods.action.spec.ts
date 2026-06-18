@@ -2,6 +2,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
 import { dayjs, APP_TIMEZONE } from '@/common/utils/dayjs';
+import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import { SyncDuePeriodsAction } from '../actions/sync-due-periods.action';
 import {
@@ -234,6 +235,7 @@ describe('SyncDuePeriodsAction', () => {
       providers: [
         SyncDuePeriodsAction,
         { provide: DataSource, useValue: dataSourceMock },
+        { provide: RealtimeGateway, useValue: { emitAlertCreated: jest.fn() } },
       ],
     }).compile();
     const action = module.get(SyncDuePeriodsAction);
@@ -278,7 +280,11 @@ describe('SyncDuePeriodsAction', () => {
     });
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SyncDuePeriodsAction, { provide: DataSource, useValue: dataSourceMock }],
+      providers: [
+        SyncDuePeriodsAction,
+        { provide: DataSource, useValue: dataSourceMock },
+        { provide: RealtimeGateway, useValue: { emitAlertCreated: jest.fn() } },
+      ],
     }).compile();
     const action = module.get(SyncDuePeriodsAction);
 
@@ -311,7 +317,11 @@ describe('SyncDuePeriodsAction', () => {
     });
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SyncDuePeriodsAction, { provide: DataSource, useValue: dataSourceMock }],
+      providers: [
+        SyncDuePeriodsAction,
+        { provide: DataSource, useValue: dataSourceMock },
+        { provide: RealtimeGateway, useValue: { emitAlertCreated: jest.fn() } },
+      ],
     }).compile();
     const action = module.get(SyncDuePeriodsAction);
 
@@ -338,7 +348,11 @@ describe('SyncDuePeriodsAction', () => {
     const { dataSourceMock } = buildAction({ expense, existingPeriodNumbers: new Set() });
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SyncDuePeriodsAction, { provide: DataSource, useValue: dataSourceMock }],
+      providers: [
+        SyncDuePeriodsAction,
+        { provide: DataSource, useValue: dataSourceMock },
+        { provide: RealtimeGateway, useValue: { emitAlertCreated: jest.fn() } },
+      ],
     }).compile();
     const action = module.get(SyncDuePeriodsAction);
 
