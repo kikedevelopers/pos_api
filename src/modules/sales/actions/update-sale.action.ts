@@ -588,6 +588,9 @@ export class UpdateSaleAction {
         description: `NC por edición — ${saved.note_number}`,
         actorName: params.actor.fullName,
         actorUserId: params.actor.id,
+        // La venta editada pudo incluir productos COMPARTIDOS del principal:
+        // la devolución (NC) debe reponer el stock en el dueño REAL.
+        crossCompanyAccess: true,
       },
     );
 
@@ -691,6 +694,9 @@ export class UpdateSaleAction {
         // `override_stock` (autorizado solo a owner/superadmin en el caller)
         // permite que la ND deje el stock negativo — paridad PlacePos editSale.
         overrideStock: params.overrideStock,
+        // La venta editada pudo incluir productos COMPARTIDOS del principal:
+        // la ND (re-descuento) debe pegar en el stock del dueño REAL.
+        crossCompanyAccess: true,
       },
     );
 

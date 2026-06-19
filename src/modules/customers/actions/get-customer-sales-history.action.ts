@@ -71,11 +71,13 @@ export interface CustomerSalesHistoryResponse {
  * Normaliza el `status` del enum de pos_api (`PARTIALLY_PAID`) al contrato
  * offline de PlacePos (`PARTIAL`). El resto de valores coincide.
  */
-function normalizeCreditStatus(
-  status: string | null,
-): CustomerSalesHistoryCreditStatus | null {
-  if (status === null) return null;
-  if (status === 'PARTIALLY_PAID') return 'PARTIAL';
+function normalizeCreditStatus(status: string | null): CustomerSalesHistoryCreditStatus | null {
+  if (status === null) {
+    return null;
+  }
+  if (status === 'PARTIALLY_PAID') {
+    return 'PARTIAL';
+  }
   return status as CustomerSalesHistoryCreditStatus;
 }
 
@@ -150,6 +152,7 @@ export class GetCustomerSalesHistoryAction {
                END AS payment_method
           FROM sale_payments sp
          WHERE sp.company_id = $1
+           AND sp.is_voided = false
          GROUP BY sp.sale_invoice_id
       ),
       credit_agg AS (

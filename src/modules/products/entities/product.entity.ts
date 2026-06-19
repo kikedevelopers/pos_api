@@ -211,6 +211,15 @@ export class Product {
   @Column({ type: 'text', nullable: true })
   image!: string | null;
 
+  /**
+   * Si el producto es una COPIA (clonada a una sucursal), la company de ORIGEN
+   * (el principal). `null` = producto propio. Lo setea `CloneProductsToBranchAction`.
+   * No confundir con compartir: un producto compartido vive en el principal y
+   * su `is_shared` se deriva del catálogo, no de esta columna.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  cloned_from_company_id!: string | null;
+
   @Column({ type: 'boolean', default: true })
   show_in_pos!: boolean;
 

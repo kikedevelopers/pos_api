@@ -93,6 +93,12 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       prices: [
         { id: 100, name: 'Detal', sale_price: 10.5, profit: 8, margin: 76.1905, iva_percentage: 0 },
       ],
+      // FASE 2 (COMPARTIR): el fixture no trae company_id → owner = company activa
+      // (42), producto propio → is_shared false.
+      is_shared: false,
+      owner_company_id: 42,
+      // SUCURSALES (CLONAR): fixture sin cloned_from_company_id → no es copia.
+      is_clone: false,
     });
   });
 

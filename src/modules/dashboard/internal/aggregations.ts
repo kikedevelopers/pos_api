@@ -240,6 +240,7 @@ export async function fetchCreditPaymentsBreakdownByDay(
      AND sc.company_id = $1
     LEFT JOIN note_aggregates na ON na.sale_invoice_id = si.id
     WHERE sp.company_id = $1
+      AND sp.is_voided = false
       AND sp.created_at BETWEEN $2 AND $3
       AND si.is_deleted = false
       AND si.ticket_type = 'SALE'
@@ -340,6 +341,7 @@ export async function fetchPaymentsTotal(
       ON sp.sale_invoice_id = si.id
      AND si.company_id = $1
     WHERE sp.company_id = $1
+      AND sp.is_voided = false
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
       AND sp.payment_method = $2::payment_method
@@ -373,6 +375,7 @@ export async function fetchSalesNotesAdjustment(
     INNER JOIN sale_payments sp
       ON sp.sale_invoice_id = si.id
      AND sp.company_id = $1
+     AND sp.is_voided = false
     WHERE cn.company_id = $1
       AND cn.is_deleted = false
       AND cn.note_type = $2::note_type

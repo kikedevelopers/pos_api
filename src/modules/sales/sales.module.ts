@@ -17,7 +17,9 @@ import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
+import { CollectSaleBalanceAction } from './actions/collect-sale-balance.action';
 import { CreateSaleAction } from './actions/create-sale.action';
+import { DeleteSalePaymentAction } from './actions/delete-sale-payment.action';
 import { FindAllSalesAction } from './actions/find-all-sales.action';
 import { FindSaleAction } from './actions/find-sale.action';
 import { GetConsolidatedInvoiceAction } from './actions/get-consolidated-invoice.action';
@@ -84,6 +86,8 @@ import { SalesService } from './sales.service';
     UpdateSaleAction,
     UpdateSaleNoteAction,
     VoidSaleAction,
+    DeleteSalePaymentAction,
+    CollectSaleBalanceAction,
     GetLastSaleAction,
     GetConsolidatedInvoiceAction,
     GetConsolidatedInvoiceUpToAction,

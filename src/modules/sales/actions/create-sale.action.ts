@@ -12,6 +12,7 @@ import { toBig } from '@/common/utils/precision';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
+import { resolveAccessibleProducts } from '@/modules/products/internal/accessible-products.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
@@ -127,16 +128,20 @@ export class CreateSaleAction {
         }
       }
 
-      // 2. Productos: validar que cada item_id pertenezca a la company y sea
-      // SIMPLE no archivado. Cross-tenant guard crítico — sin esto un usuario
-      // podría facturar productos de otra company.
-      const productIds = Array.from(new Set(dto.items.map((l) => String(l.item_id))));
-      const products = await manager.find(Product, {
-        where: { id: In(productIds), company_id: String(companyId) },
-      });
-      if (products.length !== productIds.length) {
+      // 2. Productos: validar que cada item_id sea ACCESIBLE para la company
+      // activa (propio O compartido por el principal — FASE 2) y sea SIMPLE no
+      // archivado. Cross-tenant guard crítico: un producto NO accesible (de otra
+      // company sin share) NO aparece en el set → se rechaza igual que antes.
+      const productIdNums = Array.from(new Set(dto.items.map((l) => Number(l.item_id))));
+      const accessible = await resolveAccessibleProducts(manager, companyId, productIdNums);
+      if (accessible.size !== productIdNums.length) {
         throw new BadRequestException('Uno o más productos no existen');
       }
+      // Validar product_type/is_archived consultando por id (sin filtro de
+      // company: los ids ya pasaron el gate de accesibilidad).
+      const products = await manager.find(Product, {
+        where: { id: In(productIdNums.map(String)) },
+      });
       const invalidProduct = products.find(
         (p) => p.product_type !== ProductType.SIMPLE || p.is_archived,
       );

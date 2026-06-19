@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
+
 /**
  * Item normalizado expuesto al frontend POS. Réplica del shape PlacePos
  * `normalizeProduct` pero SIN `stock`/`hash`/`is_purchasable` (no existen
@@ -19,6 +21,13 @@ export interface PosItem {
   parent: { id: number; name: string; cost: number } | null;
   /** Placeholder: stock real depende de columna ausente; TODO Fase 11.5. */
   stock: number;
+  /**
+   * FASE 2 (COMPARTIR): `true` si el producto NO es de la company activa sino
+   * compartido por el principal. El front lo muestra como solo-lectura.
+   */
+  is_shared: boolean;
+  /** Company DUEÑA real del producto (el principal si es compartido). */
+  owner_company_id: number;
 }
 
 /**
@@ -57,6 +66,7 @@ interface RawPosItemRow {
   created_at: Date | string;
   /** stock real del producto (placeholder; el post-proceso usa 0). */
   stock: string | number;
+  company_id: string;
   prices: { id: number | string; sale_price: number | string; profit: number | string; margin: number | string }[] | null;
 }
 
@@ -65,6 +75,8 @@ export class GetItemsAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(companyId: number): Promise<PosItem[]> {
+    // FASE 2: WHERE de visibilidad = propios + compartidos (predicado reusable).
+    const accessPred = accessibleProductsPredicate('p', companyId, 1);
     // SQL crudo: 1 FILA POR PRODUCTO. `prices` agregado vía LEFT JOIN LATERAL
     // correlacionado (usa `idx_product_prices_product_id`), packaging como
     // LEFT JOIN escalar. NO se hidratan entidades TypeORM. El post-proceso JS
@@ -82,6 +94,7 @@ export class GetItemsAction {
         p.show_in_pos   AS show_in_pos,
         p.created_at    AS created_at,
         p.stock         AS stock,
+        p.company_id    AS company_id,
         pk.id           AS packaging__id,
         pk.name         AS packaging__name,
         pk.value        AS packaging__value,
@@ -100,10 +113,10 @@ export class GetItemsAction {
         FROM product_prices pp
         WHERE pp.product_id = p.id
       ) pr ON TRUE
-      WHERE p.company_id = $1 AND p.is_archived = false
+      WHERE ${accessPred.sql} AND p.is_archived = false
     `;
 
-    const rows = await this.dataSource.query<RawPosItemRow[]>(sql, [String(companyId)]);
+    const rows = await this.dataSource.query<RawPosItemRow[]>(sql, [...accessPred.params]);
 
     const normalized = rows.map((p) => ({
       id: Number(p.id),
@@ -131,6 +144,8 @@ export class GetItemsAction {
       })),
       // TODO Fase 11.5: stock real cuando Product.stock exista.
       stock: 0,
+      owner_company_id: Number(p.company_id),
+      is_shared: Number(p.company_id) !== companyId,
     }));
 
     const allParents = normalized.filter((p) => p.parent_id === null);
@@ -172,6 +187,8 @@ export class GetItemsAction {
           prices: child.prices,
           stock: Math.floor(parent.stock / packagingValue),
           parent: { id: parent.id, name: parent.name, cost: parent.cost },
+          is_shared: child.is_shared,
+          owner_company_id: child.owner_company_id,
         };
       });
       if (parent.show_in_pos) {
@@ -187,6 +204,8 @@ export class GetItemsAction {
           prices: parent.prices,
           stock: parent.stock,
           parent: null,
+          is_shared: parent.is_shared,
+          owner_company_id: parent.owner_company_id,
         });
       }
       items.push(...children);

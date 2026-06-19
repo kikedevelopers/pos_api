@@ -135,6 +135,36 @@ export class SalePayment {
   @Column({ type: 'text', nullable: true })
   uuid!: string | null;
 
+  /**
+   * Reverso (soft-delete) del pago. Espejo placepos de la feature
+   * "eliminar/reversar un pago de venta". Cuando `is_voided = true` el pago
+   * NO cuenta para el saldo de la venta ni para las agregaciones de reportes;
+   * el dinero ya fue devuelto a la cuenta original (CashRegisterLog OUT o
+   * FinancialMovement EXPENSE concept=PAYMENT_REVERSAL).
+   */
+  @Column({ type: 'boolean', default: false })
+  is_voided!: boolean;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  voided_at!: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  voided_by!: string | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  voided_by_id!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  void_reason!: string | null;
+
+  /**
+   * Idempotency key del reverso. UNIQUE per-company (índice parcial). Un
+   * reintento con el mismo `void_uuid` devuelve el reverso previo en vez de
+   * descontar la cuenta dos veces.
+   */
+  @Column({ type: 'text', nullable: true })
+  void_uuid!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 }

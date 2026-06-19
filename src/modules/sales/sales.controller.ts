@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -28,9 +29,13 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
+import type { CollectSaleBalanceResult } from './actions/collect-sale-balance.action';
+import type { DeleteSalePaymentResult } from './actions/delete-sale-payment.action';
 import type { LastSaleResult } from './actions/get-last-sale.action';
+import { CollectSaleBalanceDto } from './dto/collect-sale-balance.dto';
 import { CreateSaleResponseDto, toCreateSaleResponseDto } from './dto/create-sale-response.dto';
 import { CreateSaleDto } from './dto/create-sale.dto';
+import { DeleteSalePaymentDto } from './dto/delete-sale-payment.dto';
 import { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import {
   SaleCreditNoteResponseDto,
@@ -370,5 +375,83 @@ export class SalesController {
       body?.refund_source ?? null,
     );
     return toVoidSaleResponseDto(result);
+  }
+
+  // --------------------------------------------------------------------------
+  // DELETE /sales/:saleId/payments/:paymentId — reverso de un pago
+  // --------------------------------------------------------------------------
+
+  @Delete(':saleId/payments/:paymentId')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Reversa (soft-delete) un pago individual de una venta y devuelve el dinero a la cuenta ' +
+      'ORIGINAL del pago (caja/banco/billetera). Recalcula el saldo de la venta: si queda saldo ' +
+      'pendiente la venta pasa a PENDIENTE/CRÉDITO. Valida fondos antes de descontar. ' +
+      'Idempotente por client_operation_id. Espejo placepos.',
+  })
+  @ApiParam({ name: 'saleId', type: 'integer' })
+  @ApiParam({ name: 'paymentId', type: 'integer' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Pago reversado.' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta o pago no encontrado' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Venta anulada, o la cuenta no tiene saldo suficiente para reversar.',
+  })
+  async deletePayment(
+    @Param('saleId', ParseIntPipe) saleId: number,
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+    @Body() body: DeleteSalePaymentDto | undefined,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<DeleteSalePaymentResult> {
+    return this.salesService.deletePayment(
+      saleId,
+      paymentId,
+      companyId,
+      {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+        type: currentUser.type,
+      },
+      body?.reason ?? null,
+      body?.client_operation_id ?? null,
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /sales/:saleId/collect — re-cobro del saldo pendiente
+  // --------------------------------------------------------------------------
+
+  @Post(':saleId/collect')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Re-cobra el saldo pendiente de una venta SALE con uno o varios tenders (CASH/TRANSFER). ' +
+      'NO regenera folio ni descuenta inventario. Acredita los destinos (efectivo → caja del ' +
+      'usuario; transfer → banco) y recalcula el estado de cobro. Idempotente por ' +
+      'client_operation_id. Espejo placepos.',
+  })
+  @ApiParam({ name: 'saleId', type: 'integer' })
+  @ApiBody({ type: CollectSaleBalanceDto })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Cobro registrado.' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta no encontrada' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Venta anulada/no SALE, sin saldo pendiente, o el monto excede el saldo.',
+  })
+  async collect(
+    @Param('saleId', ParseIntPipe) saleId: number,
+    @Body() dto: CollectSaleBalanceDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<CollectSaleBalanceResult> {
+    return this.salesService.collect(saleId, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      type: currentUser.type,
+    });
   }
 }

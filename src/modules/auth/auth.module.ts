@@ -7,6 +7,7 @@ import { AlertConfigsModule } from '@/modules/alert-configs/alert-configs.module
 import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { EmployeesModule } from '@/modules/employees/employees.module';
+import { ProductsModule } from '@/modules/products/products.module';
 import { SubscriptionsModule } from '@/modules/subscriptions/subscriptions.module';
 import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from '@/modules/users/users.module';
@@ -66,6 +67,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     // y bloqueo de login (SubscriptionsService). SubscriptionsModule NO importa
     // AuthModule, así que no hay ciclo.
     SubscriptionsModule,
+    // FASE 1 (CLONAR): expone CloneProductsToBranchAction para el endpoint
+    // POST /branches/:id/clone-products. ProductsModule no importa AuthModule
+    // (sin ciclo).
+    ProductsModule,
   ],
   controllers: [AuthController, BranchesController],
   providers: [

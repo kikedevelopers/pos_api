@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+import { preciseNumber, toBig } from '@/common/utils/precision';
 import {
   CreditNote,
   NoteType,
@@ -85,6 +86,20 @@ export class TicketPaymentResponseDto {
 
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   createdAt!: string;
+
+  @ApiProperty({
+    example: false,
+    description: 'true si el pago fue reversado (soft-delete). No cuenta para el saldo.',
+  })
+  isVoided!: boolean;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: '2026-05-12T15:00:00.000Z',
+    description: 'Fecha del reverso. null si el pago está vivo.',
+  })
+  voidedAt!: string | null;
 }
 
 export class TicketCreditResponseDto {
@@ -239,6 +254,24 @@ export class SaleResponseDto {
   @ApiProperty({ type: [TicketPaymentResponseDto] })
   payments!: TicketPaymentResponseDto[];
 
+  @ApiProperty({
+    example: 60,
+    description: 'Suma de netos (amount − change) de los pagos VIVOS (no reversados).',
+  })
+  amountPaid!: number;
+
+  @ApiProperty({
+    example: 56,
+    description: 'Saldo derivado = total − amountPaid (clamp 0). Re-cobrable si > 0.',
+  })
+  balanceDue!: number;
+
+  @ApiProperty({
+    example: false,
+    description: 'true si la venta tiene saldo pendiente (balanceDue > 0).',
+  })
+  isPending!: boolean;
+
   @ApiPropertyOptional({ type: TicketCreditResponseDto, nullable: true })
   credit!: TicketCreditResponseDto | null;
 
@@ -313,6 +346,8 @@ function toTicketPayment(p: SalePayment): TicketPaymentResponseDto {
     changeAmount: change,
     bankName: p.bank_name ?? null,
     createdAt: p.created_at.toISOString(),
+    isVoided: p.is_voided === true,
+    voidedAt: p.voided_at ? p.voided_at.toISOString() : null,
   };
 }
 
@@ -403,6 +438,15 @@ export function toSaleResponseDto(
   );
   const lastNote = sortedNotes.length > 0 ? sortedNotes[sortedNotes.length - 1] : null;
 
+  // Saldo derivado: suma de netos (amount − change) de los pagos VIVOS. Un
+  // pago reversado (is_voided) NO cuenta. Big.js para no perder centavos.
+  const paidBig = payments
+    .filter((p) => !p.is_voided)
+    .reduce((acc, p) => acc.plus(toBig(p.amount).minus(toBig(p.change_amount ?? 0))), toBig(0));
+  const totalBig = toBig(sale.total);
+  const amountPaid = preciseNumber(paidBig, 2);
+  const balanceDue = Math.max(0, preciseNumber(totalBig.minus(paidBig), 2));
+
   return {
     id: Number(sale.id),
     ticketType: sale.ticket_type,
@@ -421,6 +465,9 @@ export function toSaleResponseDto(
     updatedAt: sale.updated_at.toISOString(),
     lines: lines.map(toTicketLine),
     payments: payments.map(toTicketPayment),
+    amountPaid,
+    balanceDue,
+    isPending: balanceDue > 0,
     credit: credit ? toTicketCredit(credit) : null,
     voidCreditNote: lastNote ? toVoidCreditNote(lastNote) : null,
     documents: buildInvoiceDocuments(sale, lines, sortedNotes),

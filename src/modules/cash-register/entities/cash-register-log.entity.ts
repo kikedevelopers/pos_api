@@ -38,6 +38,12 @@ export enum CashRegisterLogType {
   CASH_OVERAGE = 'CASH_OVERAGE',
   CASH_SHORTAGE = 'CASH_SHORTAGE',
   CUSTOMER_ADVANCE = 'CUSTOMER_ADVANCE',
+  /**
+   * Reverso de un pago de venta en efectivo (OUT que devuelve el dinero a la
+   * caja original). Paridad placepos. Añadido por la migración
+   * `1747011800000-add-sale-payment-reversal`.
+   */
+  PAYMENT_REVERSAL = 'PAYMENT_REVERSAL',
 }
 
 /**

@@ -157,7 +157,9 @@ export class GetDailyClosureAction {
     }));
 
     const toIso = (value: Date | string | null): string | null => {
-      if (value == null) return null;
+      if (value == null) {
+        return null;
+      }
       return value instanceof Date ? value.toISOString() : String(value);
     };
 
@@ -172,7 +174,9 @@ export class GetDailyClosureAction {
     }));
 
     const fixedExpensePaymentsTotal = round2(
-      fixedExpensePaymentRows.reduce((acc, r) => acc.plus(toBig(r.paid_amount)), new Big(0)).toNumber(),
+      fixedExpensePaymentRows
+        .reduce((acc, r) => acc.plus(toBig(r.paid_amount)), new Big(0))
+        .toNumber(),
     );
 
     const grossSales = salesData.gross_sales;
@@ -321,6 +325,7 @@ export class GetDailyClosureAction {
       SELECT COALESCE(SUM(sp.amount), 0)::float AS abonos_total
       FROM sale_payments sp
       WHERE sp.company_id = $1
+        AND sp.is_voided = false
         AND sp.created_at BETWEEN $2 AND $3
         AND sp.payment_method = $4::payment_method
         AND EXISTS (
@@ -346,6 +351,7 @@ export class GetDailyClosureAction {
         COALESCE(SUM(sp.amount), 0)::float AS amount
       FROM sale_payments sp
       WHERE sp.company_id = $1
+        AND sp.is_voided = false
         AND sp.created_at BETWEEN $2 AND $3
         AND sp.payment_method = 'TRANSFER'
         AND EXISTS (
@@ -367,6 +373,7 @@ export class GetDailyClosureAction {
         SELECT sp.sale_invoice_id AS invoice_id, SUM(sp.amount) AS paid_today
         FROM sale_payments sp
         WHERE sp.company_id = $1
+          AND sp.is_voided = false
           AND sp.created_at BETWEEN $2 AND $3
           AND EXISTS (
             SELECT 1 FROM sale_credits sc
@@ -379,6 +386,7 @@ export class GetDailyClosureAction {
         SELECT sp.sale_invoice_id AS invoice_id, COALESCE(SUM(sp.amount), 0) AS paid_before
         FROM sale_payments sp
         WHERE sp.company_id = $1
+          AND sp.is_voided = false
           AND sp.created_at < $2
           AND EXISTS (
             SELECT 1 FROM sale_credits sc

@@ -181,10 +181,14 @@ export class VoidSaleAction {
     //  - TRANSFER → FinancialMovement(EXPENSE, CREDIT_NOTE_REFUND) desde la
     //            cuenta bank/wallet indicada en `refund_source`.
     // Si hay pagos TRANSFER y no llega `refund_source` → 422.
+    // Excluimos pagos YA reversados (is_voided): su dinero ya fue devuelto a la
+    // cuenta original por `delete-sale-payment.action`, reversarlos otra vez
+    // descuadraría la caja/banco (feature "eliminar/reversar un pago").
     const allPayments = await manager.find(SalePayment, {
       where: {
         sale_invoice_id: sale.id,
         company_id: String(companyId),
+        is_voided: false,
       },
       order: { created_at: 'ASC' },
     });
@@ -264,6 +268,11 @@ export class VoidSaleAction {
         description: `Anulación total de venta — ${savedNote.note_number}`,
         actorName: actor.fullName,
         actorUserId: actor.id,
+        // La venta pudo incluir productos COMPARTIDOS del principal (company_id
+        // distinto de la sucursal): la devolución de stock debe resolver por el
+        // set accesible y reponer en el dueño REAL. Sin esto, anular una venta
+        // con productos compartidos no repone el stock del principal.
+        crossCompanyAccess: true,
       },
     );
 

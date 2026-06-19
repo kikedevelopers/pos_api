@@ -53,6 +53,12 @@ export enum MovementConcept {
   SALE_PAYMENT = 'SALE_PAYMENT',
   CARRIER_PAYMENT = 'CARRIER_PAYMENT',
   CUSTOMER_ADVANCE = 'CUSTOMER_ADVANCE',
+  /**
+   * Reverso de un pago de venta (EXPENSE que devuelve el dinero a la cuenta
+   * bank/wallet original). Paridad placepos. Añadido por la migración
+   * `1747011800000-add-sale-payment-reversal`.
+   */
+  PAYMENT_REVERSAL = 'PAYMENT_REVERSAL',
 }
 
 /**

@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
 
 import type { InventoryQueryDto } from '../dto/inventory-query.dto';
+import { accessibleProductsPredicate } from '../internal/accessible-products.helper';
 
 /**
  * Lista productos de una company. Endpoint `GET /inventory`.
@@ -43,8 +44,12 @@ export class FindAllProductsAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(companyId: number, query: InventoryQueryDto): Promise<Product[]> {
-    const params: unknown[] = [String(companyId)];
-    const where: string[] = ['p.company_id = $1'];
+    // FASE 2 (COMPARTIR): visibilidad = propios + compartidos por el principal.
+    // El predicado consume $1..$5 (la company activa repetida). El filtro de
+    // edición/compra/precio NO usa esto (siguen `company_id = activa`).
+    const accessPred = accessibleProductsPredicate('p', companyId, 1);
+    const params: unknown[] = [...accessPred.params];
+    const where: string[] = [accessPred.sql];
 
     if (query.include_archived !== true) {
       where.push('p.is_archived = false');
@@ -79,6 +84,8 @@ export class FindAllProductsAction {
         p.updated_by      AS updated_by,
         p.created_at      AS created_at,
         p.updated_at      AS updated_at,
+        p.company_id      AS company_id,
+        p.cloned_from_company_id AS cloned_from_company_id,
         pk.id             AS packaging__id,
         pk.name           AS packaging__name,
         pk.value          AS packaging__value,
@@ -109,7 +116,7 @@ export class FindAllProductsAction {
 
     const rows = await this.dataSource.query<RawProductRow[]>(sql, params);
 
-    return sortParentsThenChildren(rows.map(mapRawToProduct));
+    return sortParentsThenChildren(rows.map((r) => mapRawToProduct(r, companyId)));
   }
 }
 
@@ -120,6 +127,8 @@ export class FindAllProductsAction {
  */
 interface RawProductRow {
   id: string;
+  company_id?: string | null;
+  cloned_from_company_id?: string | null;
   name: string;
   description: string | null;
   product_type: ProductType;
@@ -171,9 +180,17 @@ interface RawPriceJson {
  *   - `cost`/`stock`/precios quedan como vienen; el mapper aplica `Number(...)`
  *     igual que el `NumericTransformer` hacía.
  */
-function mapRawToProduct(r: RawProductRow): Product {
+function mapRawToProduct(r: RawProductRow, activeCompanyId: number): Product {
+  const ownerCompanyId = r.company_id !== undefined && r.company_id !== null ? Number(r.company_id) : activeCompanyId;
   const product = {
     id: r.id,
+    company_id: r.company_id,
+    // FASE 2: marca solo-lectura para el front si el producto es de otra company
+    // (compartido por el principal).
+    is_shared: ownerCompanyId !== activeCompanyId,
+    owner_company_id: ownerCompanyId,
+    // COPIA: producto propio de la sucursal pero clonado desde el principal.
+    is_clone: r.cloned_from_company_id !== undefined && r.cloned_from_company_id !== null,
     name: r.name,
     description: r.description,
     product_type: r.product_type,

@@ -92,6 +92,7 @@ export async function fetchSalesByCashier(
      AND si.company_id = $1
     LEFT JOIN users u ON u.id = si.created_by_id
     WHERE sp.company_id = $1
+      AND sp.is_voided = false
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
       AND si.created_at BETWEEN $2 AND $3
@@ -177,6 +178,7 @@ export async function fetchNotesByCashier(
         ON si.id = sp.sale_invoice_id
        AND si.company_id = $1
       WHERE sp.company_id = $1
+        AND sp.is_voided = false
       GROUP BY sp.sale_invoice_id
     )
     SELECT
@@ -234,6 +236,7 @@ export async function fetchAbonosByCashier(
     FROM sale_payments sp
     LEFT JOIN users u ON u.id = sp.created_by_id
     WHERE sp.company_id = $1
+      AND sp.is_voided = false
       AND sp.created_at BETWEEN $2 AND $3
       AND EXISTS (
         SELECT 1 FROM sale_credits sc
@@ -294,6 +297,7 @@ export async function fetchCreditPaymentsProfitShareByCashier(
      AND sc.company_id = $1
     LEFT JOIN note_aggregates na ON na.sale_invoice_id = si.id
     WHERE sp.company_id = $1
+      AND sp.is_voided = false
       AND sp.created_at BETWEEN $2 AND $3
       AND si.is_deleted = false
       AND si.ticket_type = 'SALE'

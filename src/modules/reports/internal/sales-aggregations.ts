@@ -85,6 +85,7 @@ export async function fetchCashSales(
         ON sp.sale_invoice_id = si.id
        AND si.company_id = $1
       WHERE sp.company_id = $1
+        AND sp.is_voided = false
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
         AND sp.payment_method = 'CASH'
@@ -129,6 +130,7 @@ export async function fetchCashNotes(
       WHERE cn.company_id = $1
         AND cn.is_deleted = false
         AND cn.note_type = $2::note_type
+        AND sp.is_voided = false
         AND sp.payment_method = 'CASH'
         AND si.is_deleted = false
         AND si.created_at BETWEEN $3 AND $4
@@ -163,6 +165,7 @@ export async function fetchTransferSales(
         ON sp.sale_invoice_id = si.id
        AND si.company_id = $1
       WHERE sp.company_id = $1
+        AND sp.is_voided = false
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
         AND sp.payment_method = 'TRANSFER'
@@ -186,6 +189,7 @@ export async function fetchTransferSales(
         ON sp.sale_invoice_id = si.id
        AND si.company_id = $1
       WHERE sp.company_id = $1
+        AND sp.is_voided = false
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
         AND sp.payment_method = 'TRANSFER'

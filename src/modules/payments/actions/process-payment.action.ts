@@ -305,10 +305,7 @@ export class ProcessPaymentAction {
       // En transferencia NO hay vuelto: rechazamos change>0 para no divergir
       // del cuadre ni de placepos (que acredita el banco por el neto).
       if (tender.payment_method === ProcessPaymentMethod.TRANSFER && changeBig.gt(0)) {
-        return this.fail(
-          'El pago por transferencia no admite vuelto',
-          ERR.INVALID_CHANGE_AMOUNT,
-        );
+        return this.fail('El pago por transferencia no admite vuelto', ERR.INVALID_CHANGE_AMOUNT);
       }
       if (tender.payment_method === ProcessPaymentMethod.TRANSFER && !tender.bank_id) {
         return this.fail(
@@ -409,6 +406,11 @@ export class ProcessPaymentAction {
         overrideStock: allowOverrideStock,
         actorName: actor.fullName,
         actorUserId: actor.id,
+        // FASE 2 (COMPARTIR): la venta puede incluir productos compartidos por el
+        // principal. El descuento de stock debe pegar en la fila del DUEÑO real
+        // (el principal), no en la sucursal. Un producto NO accesible para la
+        // company activa sigue rechazado (set accesible = propios + compartidos).
+        crossCompanyAccess: true,
       });
     }
 
@@ -839,13 +841,16 @@ export class ProcessPaymentAction {
     if (!payment) {
       return null;
     }
-    // Recuperar TODOS los pagos del sale_invoice — en split tender hay varios.
+    // Recuperar los pagos VIVOS del sale_invoice — en split tender hay varios.
+    // Excluimos pagos reversados (is_voided) para no devolver en el replay un
+    // payment_id que ya fue anulado por la feature de reverso.
     // Orden por id ASC para devolver `payment_ids` en el mismo orden de
     // inserción (tender 0 primero), consistente con el primer procesamiento.
     const payments = await this.dataSource.getRepository(SalePayment).find({
       where: {
         company_id: String(companyId),
         sale_invoice_id: payment.sale_invoice_id,
+        is_voided: false,
       },
       order: { id: 'ASC' },
       select: { id: true },

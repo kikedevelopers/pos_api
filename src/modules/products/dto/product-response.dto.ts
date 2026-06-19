@@ -156,6 +156,26 @@ export class ProductResponseDto {
 
   @ApiProperty({ type: [ProductPriceNestedDto] })
   prices!: ProductPriceNestedDto[];
+
+  /**
+   * FASE 2 (COMPARTIR): `true` si el producto NO es de la company activa sino
+   * compartido por el principal. El front lo trata como SOLO LECTURA (no editar,
+   * no cambiar precio, no comprar). `false`/ausente para productos propios.
+   */
+  @ApiProperty({ example: false })
+  is_shared!: boolean;
+
+  /** Company DUEÑA real del producto (el principal si es compartido). */
+  @ApiProperty({ example: 9 })
+  owner_company_id!: number;
+
+  /**
+   * SUCURSALES (CLONAR): `true` si el producto es una COPIA clonada desde el
+   * principal (es propio de la sucursal, editable). `false` = creado aquí
+   * ("Propio"). Distinto de `is_shared` (que es de otra company, solo lectura).
+   */
+  @ApiProperty({ example: false })
+  is_clone!: boolean;
 }
 
 /**
@@ -218,7 +238,28 @@ export function toProductResponseDto(
         }
       : null,
     prices: (p.prices ?? []).map(mapPriceNested),
+    // FASE 2: `is_shared`/`owner_company_id` los adjunta FindAllProductsAction al
+    // POJO. Para entidades propias normales (sin el campo) → no compartido.
+    is_shared: (p as ProductWithSharing).is_shared === true,
+    owner_company_id:
+      (p as ProductWithSharing).owner_company_id !== undefined
+        ? Number((p as ProductWithSharing).owner_company_id)
+        : Number(p.company_id),
+    is_clone:
+      (p as ProductWithSharing).is_clone !== undefined
+        ? (p as ProductWithSharing).is_clone === true
+        : p.cloned_from_company_id != null,
   };
+}
+
+/**
+ * Product POJO extendido por FindAllProductsAction (FASE 2) con metadatos de
+ * compartición. No es parte de la entidad TypeORM; se adjunta al mapear.
+ */
+interface ProductWithSharing {
+  is_shared?: boolean;
+  owner_company_id?: number;
+  is_clone?: boolean;
 }
 
 function mapPriceNested(pp: ProductPrice): ProductPriceNestedDto {

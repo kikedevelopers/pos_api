@@ -16,6 +16,9 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     bar_code: '7591001234567',
     sku_code: 'SKU-1',
     parent_id: null,
+    // FASE 2 (COMPARTIR): el SQL del POS proyecta p.company_id como dueño.
+    // Igual a la company activa del test (42) → producto propio, is_shared false.
+    company_id: '42',
     packaging_id: '5',
     show_in_pos: true,
     created_at: new Date('2026-05-12T14:30:00.000Z'),
@@ -53,6 +56,9 @@ describe('GetItemsAction (SQL crudo)', () => {
         prices: [{ id: 100, sale_price: 10.5, profit: 8, margin: 76.1905 }],
         stock: 0, // placeholder Fase 11.5 — NO se toca.
         parent: null,
+        // FASE 2 (COMPARTIR): producto propio (company_id == activa).
+        is_shared: false,
+        owner_company_id: 42,
       },
     ]);
   });

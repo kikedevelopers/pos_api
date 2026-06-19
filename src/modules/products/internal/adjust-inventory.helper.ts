@@ -16,6 +16,8 @@ import {
 } from '../entities/inventory-movement.entity';
 import { Product } from '../entities/product.entity';
 
+import { resolveAccessibleProducts } from './accessible-products.helper';
+
 /**
  * Línea de inventario que entra al ajuste. `quantity` está en la unidad de
  * venta del producto (no en la unidad mínima de stock); el helper se encarga
@@ -58,6 +60,16 @@ export interface AdjustInventoryContext {
   overrideStock?: boolean;
   actorName?: string | null;
   actorUserId?: number | null;
+  /**
+   * FASE 2 (COMPARTIR). Si `true`, el `companyId` recibido es la company ACTIVA
+   * (p.ej. la sucursal que vende), pero los productos se resuelven en el set
+   * ACCESIBLE (propios + compartidos por el principal). El stock se descuenta /
+   * lockea / audita en la company DUEÑA REAL de cada producto (el principal para
+   * un producto compartido), nunca en la activa. Sin esta bandera el helper
+   * mantiene el comportamiento estricto por `company_id = companyId` (todas las
+   * llamadas de compras/bulk/anulación quedan IDÉNTICAS).
+   */
+  crossCompanyAccess?: boolean;
 }
 
 const logger = new Logger('AdjustInventoryHelper');
@@ -67,6 +79,8 @@ interface ProductRef {
   parent_id: number | null;
   packaging_id: number | null;
   name: string;
+  /** Company DUEÑA real del producto (donde vive su fila/stock). */
+  owner_company_id: number;
 }
 
 /**
@@ -85,45 +99,76 @@ export class InsufficientStockError extends UnprocessableEntityException {
 
 /**
  * Carga productos por id dentro de la company. Solo los campos necesarios.
+ *
+ * Modo ESTRICTO (default): filtra `company_id = companyId`; `owner_company_id`
+ * de cada ref == companyId.
+ *
+ * Modo CROSS-COMPANY (`crossCompanyAccess`): resuelve en el set ACCESIBLE
+ * (propios + compartidos por el principal) y captura el `owner_company_id` REAL
+ * de cada producto (el principal para uno compartido).
  */
 async function loadProductRefs(
   manager: EntityManager,
   companyId: number,
   itemIds: number[],
+  crossCompanyAccess: boolean,
 ): Promise<Map<number, ProductRef>> {
   if (itemIds.length === 0) {
     return new Map();
   }
+  const map = new Map<number, ProductRef>();
+
+  if (crossCompanyAccess) {
+    const accessible = await resolveAccessibleProducts(manager, companyId, itemIds);
+    for (const ref of accessible.values()) {
+      map.set(ref.id, {
+        id: ref.id,
+        parent_id: ref.parentId,
+        packaging_id: ref.packagingId,
+        name: ref.name,
+        owner_company_id: ref.ownerCompanyId,
+      });
+    }
+    return map;
+  }
+
   const rows = await manager.find(Product, {
     where: { id: In(itemIds.map(String)), company_id: String(companyId) },
     select: { id: true, parent_id: true, packaging_id: true, name: true },
   });
-  const map = new Map<number, ProductRef>();
   for (const row of rows) {
     map.set(Number(row.id), {
       id: Number(row.id),
       parent_id: row.parent_id !== null ? Number(row.parent_id) : null,
       packaging_id: row.packaging_id !== null ? Number(row.packaging_id) : null,
       name: row.name,
+      owner_company_id: companyId,
     });
   }
   return map;
 }
 
 /**
- * Carga el `value` de cada packaging. Multi-tenant: filtra por company_id.
+ * Carga el `value` de cada packaging. En modo estricto filtra por `company_id`;
+ * en modo cross-company los packagings de productos compartidos pertenecen al
+ * principal, así que se cargan por id SIN filtro de company (el id ya proviene
+ * de un producto accesible — no hay fuga cross-tenant: solo se resuelven los
+ * packaging_id de productos que ya pasaron el filtro de accesibilidad).
  */
 async function loadPackagingValues(
   manager: EntityManager,
   companyId: number,
   packagingIds: number[],
+  crossCompanyAccess: boolean,
 ): Promise<Map<number, number>> {
   const map = new Map<number, number>();
   if (packagingIds.length === 0) {
     return map;
   }
   const rows = await manager.find(Packaging, {
-    where: { id: In(packagingIds.map(String)), company_id: String(companyId) },
+    where: crossCompanyAccess
+      ? { id: In(packagingIds.map(String)) }
+      : { id: In(packagingIds.map(String)), company_id: String(companyId) },
     select: { id: true, value: true },
   });
   for (const pkg of rows) {
@@ -146,6 +191,7 @@ async function loadParentRefs(
   manager: EntityManager,
   companyId: number,
   productMap: Map<number, ProductRef>,
+  crossCompanyAccess: boolean,
 ): Promise<void> {
   const parentIds = [
     ...new Set(
@@ -157,7 +203,7 @@ async function loadParentRefs(
   if (parentIds.length === 0) {
     return;
   }
-  const parents = await loadProductRefs(manager, companyId, parentIds);
+  const parents = await loadProductRefs(manager, companyId, parentIds, crossCompanyAccess);
   for (const [id, ref] of parents.entries()) {
     productMap.set(id, ref);
   }
@@ -202,6 +248,8 @@ interface LockedTarget {
   id: number;
   name: string;
   stock: Big;
+  /** Company DUEÑA real del producto destino (donde vive el stock). */
+  ownerCompanyId: number;
 }
 
 /**
@@ -213,26 +261,39 @@ async function lockTargetProducts(
   manager: EntityManager,
   companyId: number,
   targetIds: number[],
+  crossCompanyAccess: boolean,
 ): Promise<Map<number, LockedTarget>> {
   if (targetIds.length === 0) {
     return new Map();
   }
   const sortedIds = [...targetIds].sort((a, b) => a - b);
-  const rows = await manager
+  // En modo cross-company el target puede ser del principal: lockeamos por id
+  // sin filtro de company (los ids ya salieron del set accesible). En modo
+  // estricto se mantiene el filtro `company_id = companyId`.
+  const qb = manager
     .getRepository(Product)
     .createQueryBuilder('p')
     .setLock('pessimistic_write')
-    .where('p.id IN (:...ids) AND p.company_id = :companyId', {
+    .orderBy('p.id', 'ASC')
+    .select(['p.id', 'p.name', 'p.stock', 'p.company_id']);
+  if (crossCompanyAccess) {
+    qb.where('p.id IN (:...ids)', { ids: sortedIds.map(String) });
+  } else {
+    qb.where('p.id IN (:...ids) AND p.company_id = :companyId', {
       ids: sortedIds.map(String),
       companyId: String(companyId),
-    })
-    .orderBy('p.id', 'ASC')
-    .select(['p.id', 'p.name', 'p.stock'])
-    .getMany();
+    });
+  }
+  const rows = await qb.getMany();
   return new Map(
     rows.map((r) => [
       Number(r.id),
-      { id: Number(r.id), name: r.name, stock: new Big(Number(r.stock)) },
+      {
+        id: Number(r.id),
+        name: r.name,
+        stock: new Big(Number(r.stock)),
+        ownerCompanyId: Number(r.company_id),
+      },
     ]),
   );
 }
@@ -269,11 +330,13 @@ export async function adjustInventory(
     return;
   }
 
+  const crossCompanyAccess = ctx.crossCompanyAccess === true;
+
   const itemIds = [...new Set(lines.map((l) => l.item_id))];
-  const productMap = await loadProductRefs(manager, companyId, itemIds);
+  const productMap = await loadProductRefs(manager, companyId, itemIds, crossCompanyAccess);
 
   // Si la operación solo trae hijos, sus padres no están en productMap todavía.
-  await loadParentRefs(manager, companyId, productMap);
+  await loadParentRefs(manager, companyId, productMap, crossCompanyAccess);
 
   const packagingIds = [
     ...new Set(
@@ -282,7 +345,12 @@ export async function adjustInventory(
         .map((p) => p.packaging_id as number),
     ),
   ];
-  const packagingMap = await loadPackagingValues(manager, companyId, packagingIds);
+  const packagingMap = await loadPackagingValues(
+    manager,
+    companyId,
+    packagingIds,
+    crossCompanyAccess,
+  );
 
   const stockDeltas = computeStockDeltas(lines, productMap, packagingMap);
   if (stockDeltas.size === 0) {
@@ -290,14 +358,24 @@ export async function adjustInventory(
   }
 
   const targetIds = Array.from(stockDeltas.keys());
-  const locked = await lockTargetProducts(manager, companyId, targetIds);
+  const locked = await lockTargetProducts(manager, companyId, targetIds, crossCompanyAccess);
 
-  // Gating de validación: solo bloqueamos un DEDUCT cuando el comercio activó
-  // `strict_inventory_control`. Espejo de PlacePos
-  // (`inventoryUtils.ts:230` → `isStrictInventoryEnabled`). Si la bandera está
-  // off, deja pasar incluso ventas que dejen el stock negativo — la mayoría
-  // de comercios prefieren no bloquear nunca la venta.
-  const strict = direction === 'DEDUCT' ? await isStrictInventoryEnabled(manager, companyId) : false;
+  // Gating de validación: solo bloqueamos un DEDUCT cuando el comercio DUEÑO del
+  // stock activó `strict_inventory_control`. En cross-company el dueño es el
+  // principal; cacheamos el flag por owner para no consultarlo N veces.
+  const strictByOwner = new Map<number, boolean>();
+  const resolveStrict = async (ownerCompanyId: number): Promise<boolean> => {
+    if (direction !== 'DEDUCT') {
+      return false;
+    }
+    const cached = strictByOwner.get(ownerCompanyId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const value = await isStrictInventoryEnabled(manager, ownerCompanyId);
+    strictByOwner.set(ownerCompanyId, value);
+    return value;
+  };
 
   const reason = ctx.reason ?? defaultReason(direction);
   const sign = direction === 'DEDUCT' ? -1 : 1;
@@ -315,6 +393,11 @@ export async function adjustInventory(
       throw new Error(`No se pudo lockear el producto #${productId} para ajustar inventario.`);
     }
 
+    // El stock se descuenta y audita en la company DUEÑA del producto (en
+    // cross-company, el principal). En modo estricto coincide con `companyId`.
+    const ownerCompanyId = target.ownerCompanyId;
+    const strict = await resolveStrict(ownerCompanyId);
+
     const stockBefore = target.stock;
     const change = rounded.times(sign);
     const stockAfter = stockBefore.plus(change).round(4, Big.roundHalfUp);
@@ -330,12 +413,12 @@ export async function adjustInventory(
 
     await manager.update(
       Product,
-      { id: String(productId), company_id: String(companyId) },
+      { id: String(productId), company_id: String(ownerCompanyId) },
       { stock: stockAfter.toNumber() },
     );
 
     await recordInventoryMovement(manager, {
-      companyId,
+      companyId: ownerCompanyId,
       productId,
       direction: direction === 'DEDUCT' ? 'OUT' : 'IN',
       quantity: rounded.toNumber(),

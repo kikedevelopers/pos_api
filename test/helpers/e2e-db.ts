@@ -62,12 +62,69 @@ export async function createDisposableCompany(ds: DataSource, name: string): Pro
 }
 
 /**
+ * Crea una company desechable marcada como SUCURSAL (`is_branch = true`).
+ * Limpia una previa con el mismo nombre.
+ */
+export async function createDisposableBranch(ds: DataSource, name: string): Promise<number> {
+  const prev = await ds.query(`SELECT id FROM companies WHERE name = $1`, [name]);
+  for (const row of prev) {
+    await cleanupCompany(ds, parseInt(row.id, 10));
+  }
+  const created = await ds.query(
+    `INSERT INTO companies (name, is_branch) VALUES ($1, true) RETURNING id`,
+    [name],
+  );
+  return parseInt(created[0].id, 10);
+}
+
+/**
+ * Inserta una membresía `company_members(user_id, company_id)` — requisito
+ * anti-IDOR del clonado/switch (el owner debe ser miembro de la sucursal).
+ */
+export async function insertCompanyMember(
+  ds: DataSource,
+  userId: number,
+  companyId: number,
+): Promise<void> {
+  await ds.query(
+    `INSERT INTO company_members (user_id, company_id, role, is_active)
+     VALUES ($1, $2, 'owner', true)
+     ON CONFLICT (user_id, company_id) DO NOTHING`,
+    [String(userId), String(companyId)],
+  );
+}
+
+/**
+ * Crea un usuario owner desechable ligado a `companyId` (su company primaria).
+ * `company_members.user_id` tiene FK a `users`, así que el actor del clonado
+ * debe ser un usuario real. Devuelve su id. Email único por sufijo.
+ */
+export async function insertOwnerUser(
+  ds: DataSource,
+  companyId: number,
+  emailSuffix: string,
+): Promise<number> {
+  const r = await ds.query(
+    `INSERT INTO users (name, lastname, email, password, type, company_id, branches_enabled, branches_allowed)
+     VALUES ('E2E', 'Owner', $1, 'x', 'owner', $2, true, 10) RETURNING id`,
+    [`__e2e_${emailSuffix}_${Date.now()}@example.test`, String(companyId)],
+  );
+  return parseInt(r[0].id, 10);
+}
+
+/**
  * Borra TODO el rastro de una company de prueba. El orden respeta las FKs:
  * historiales (RESTRICT a products) → movimientos/precios → hijos antes que
  * padres (parent_id RESTRICT) → padres → packagings → company.
  */
 export async function cleanupCompany(ds: DataSource, companyId: number): Promise<void> {
   const cid = String(companyId);
+  // FASE 2 (COMPARTIR): inventory_shares tiene FK RESTRICT a companies (source/
+  // target); hay que borrar los vínculos antes de borrar la company.
+  await ds.query(
+    `DELETE FROM inventory_shares WHERE source_company_id = $1 OR target_company_id = $1`,
+    [cid],
+  );
   await ds.query(`DELETE FROM product_price_history WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM product_cost_history WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM inventory_movements WHERE company_id = $1`, [cid]);
@@ -76,6 +133,12 @@ export async function cleanupCompany(ds: DataSource, companyId: number): Promise
   await ds.query(`DELETE FROM products WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM categories WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM packagings WHERE company_id = $1`, [cid]);
+  await ds.query(`DELETE FROM app_settings WHERE company_id = $1`, [cid]);
+  await ds.query(`DELETE FROM company_members WHERE company_id = $1`, [cid]);
+  // Usuarios desechables ligados a esta company (su company primaria). Borrarlos
+  // cascada-elimina sus company_members en OTRAS companies (FK ON DELETE CASCADE),
+  // evitando dejar membresías colgantes del actor de prueba.
+  await ds.query(`DELETE FROM users WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM companies WHERE id = $1`, [cid]);
 }
 
@@ -102,6 +165,9 @@ export const E2E_TABLES = [
   'products',
   'categories',
   'packagings',
+  'app_settings',
+  'company_members',
+  'users',
   'companies',
 ] as const;
 
@@ -131,23 +197,48 @@ export async function insertProduct(
     parentId?: string | null;
     packagingId?: string | null;
     skuCode?: string | null;
+    barCode?: string | null;
+    description?: string | null;
+    categoryId?: string | null;
+    productType?: 'SIMPLE' | 'COMBO';
+    showInPos?: boolean;
+    isPurchasable?: boolean;
   },
 ): Promise<string> {
   const r = await ds.query(
     `INSERT INTO products
-       (company_id, name, cost, stock, parent_id, packaging_id, sku_code,
-        product_type, show_in_pos, is_purchasable, is_archived)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'SIMPLE', true, false, false)
+       (company_id, name, description, cost, stock, parent_id, packaging_id,
+        sku_code, bar_code, category_id, product_type, show_in_pos, is_purchasable, is_archived)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, false)
      RETURNING id`,
     [
       String(companyId),
       opts.name,
+      opts.description ?? null,
       opts.cost,
       opts.stock ?? 0,
       opts.parentId ?? null,
       opts.packagingId ?? null,
       opts.skuCode ?? null,
+      opts.barCode ?? null,
+      opts.categoryId ?? null,
+      opts.productType ?? 'SIMPLE',
+      opts.showInPos ?? true,
+      opts.isPurchasable ?? false,
     ],
+  );
+  return r[0].id;
+}
+
+/** Inserta una categoría y devuelve su id. */
+export async function insertCategory(
+  ds: DataSource,
+  companyId: number,
+  name: string,
+): Promise<string> {
+  const r = await ds.query(
+    `INSERT INTO categories (company_id, name, is_archived) VALUES ($1, $2, false) RETURNING id`,
+    [String(companyId), name],
   );
   return r[0].id;
 }

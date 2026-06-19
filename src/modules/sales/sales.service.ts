@@ -2,7 +2,17 @@ import { Injectable } from '@nestjs/common';
 
 import type { CreditNote } from '@/modules/credit-notes/entities/credit-note.entity';
 
+import {
+  CollectSaleBalanceAction,
+  type CollectSaleActor,
+  type CollectSaleBalanceResult,
+} from './actions/collect-sale-balance.action';
 import { CreateSaleAction, type SaleCreator } from './actions/create-sale.action';
+import {
+  DeleteSalePaymentAction,
+  type DeleteSalePaymentActor,
+  type DeleteSalePaymentResult,
+} from './actions/delete-sale-payment.action';
 import { FindAllSalesAction } from './actions/find-all-sales.action';
 import { FindSaleAction, type SaleAggregate } from './actions/find-sale.action';
 import { GetConsolidatedInvoiceAction } from './actions/get-consolidated-invoice.action';
@@ -25,6 +35,7 @@ import {
 } from './actions/void-sale.action';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import type { CollectSaleBalanceDto } from './dto/collect-sale-balance.dto';
 import type { CreateSaleDto } from './dto/create-sale.dto';
 import type { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import type { SaleListItemDto } from './dto/sale-list-item.dto';
@@ -53,6 +64,8 @@ export class SalesService {
     private readonly updateSaleAction: UpdateSaleAction,
     private readonly updateSaleNoteAction: UpdateSaleNoteAction,
     private readonly voidSaleAction: VoidSaleAction,
+    private readonly deleteSalePaymentAction: DeleteSalePaymentAction,
+    private readonly collectSaleBalanceAction: CollectSaleBalanceAction,
     private readonly getLastSaleAction: GetLastSaleAction,
     private readonly getConsolidatedInvoiceAction: GetConsolidatedInvoiceAction,
     private readonly getConsolidatedInvoiceUpToAction: GetConsolidatedInvoiceUpToAction,
@@ -120,5 +133,32 @@ export class SalesService {
     refundSource?: SaleCorrectionSourceDto | null,
   ): Promise<VoidSaleActionResult> {
     return this.voidSaleAction.execute(id, companyId, actor, reason, refundSource ?? null);
+  }
+
+  deletePayment(
+    saleId: number,
+    paymentId: number,
+    companyId: number,
+    actor: DeleteSalePaymentActor,
+    reason?: string | null,
+    clientOperationId?: string | null,
+  ): Promise<DeleteSalePaymentResult> {
+    return this.deleteSalePaymentAction.execute(
+      saleId,
+      paymentId,
+      companyId,
+      actor,
+      reason ?? null,
+      clientOperationId ?? null,
+    );
+  }
+
+  collect(
+    saleId: number,
+    dto: CollectSaleBalanceDto,
+    companyId: number,
+    actor: CollectSaleActor,
+  ): Promise<CollectSaleBalanceResult> {
+    return this.collectSaleBalanceAction.execute(saleId, dto, companyId, actor);
   }
 }
