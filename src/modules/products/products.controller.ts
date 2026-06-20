@@ -231,7 +231,8 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Historial de ventas de un producto',
     description:
-      'Fase 3: placeholder vacío. Implementación real en Fase 6 cuando exista SaleInvoiceLine.',
+      'Líneas de venta (SALE, no anuladas) donde aparece el producto, con resumen ' +
+      '(veces facturado, unidades, venta/costo/ganancia totales y margen promedio).',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiResponse({ status: HttpStatus.OK, type: SalesHistoryResponseDto })
