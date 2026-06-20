@@ -59,6 +59,13 @@ export class CustomerResponseDto {
   })
   advance_balance!: number;
 
+  @ApiProperty({
+    example: 0,
+    description:
+      'Saldo de PUNTOS acumulados del cliente (>= 0, entero). Acumulación por compras de contado; el canje queda fuera de alcance.',
+  })
+  points!: number;
+
   @ApiPropertyOptional({ example: 'Kike Pacheco', nullable: true })
   created_by!: string | null;
 
@@ -87,6 +94,7 @@ export function toCustomerResponseDto(customer: Customer): CustomerResponseDto {
     balance: customer.balance,
     is_archived: customer.is_archived,
     advance_balance: customer.advance_balance,
+    points: customer.points,
     created_by: customer.created_by,
     created_at: customer.created_at.toISOString(),
   };

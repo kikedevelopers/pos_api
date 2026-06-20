@@ -199,6 +199,17 @@ export class SaleInvoice {
   notes!: string | null;
 
   /**
+   * Puntos otorgados por esta venta — espejo de
+   * `placepos/src/main/database/entities/SaleInvoice.ts → points_awarded`.
+   *
+   * Habilita el modelo RECOMPUTE idempotente (`recomputeSalePoints`):
+   * recalcular el DELTA contra lo ya otorgado en lugar de sumar a ciegas en
+   * cada anulación/edición. Default 0. Mutado solo por el helper de puntos.
+   */
+  @Column({ type: 'integer', default: 0 })
+  points_awarded!: number;
+
+  /**
    * UUID v4 generado por el cliente para deduplicar la creación de la venta.
    * Único por company (índice parcial). Si llega una llave ya usada, el action
    * devuelve la venta existente en vez de crear otra. null en ventas legadas o

@@ -40,6 +40,7 @@ import {
   type ConsolidatedLine,
 } from '../internal/consolidate-invoice.helper';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
+import { recomputeSalePoints } from '../internal/customer-points.helper';
 import { assertMarginAboveMinimum } from '../internal/margin-guard.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
 
@@ -259,6 +260,10 @@ export class UpdateSaleAction {
     }
 
     const customerChanged = this.hasCustomerChanged(dto, consolidated);
+    // Cliente anterior (antes de aplicar el cambio): necesario para mover los
+    // puntos del dueño previo al nuevo. `applyCustomerChange` hace UPDATE y no
+    // muta `sale` en memoria, pero lo capturamos explícitamente por claridad.
+    const oldCustomerId = sale.customer_id;
 
     // Si no llegan líneas, solo se permite cambio de cliente.
     if (!dto.items) {
@@ -266,6 +271,8 @@ export class UpdateSaleAction {
         return this.noChangesResult();
       }
       await this.applyCustomerChange(manager, sale, dto, companyId);
+      // Sin cambios de líneas el consolidado no varía; solo cambia el dueño.
+      await recomputeSalePoints(manager, Number(sale.id), companyId, oldCustomerId);
       return {
         message: 'Cliente de la venta actualizado',
         creditNoteId: null,
@@ -285,6 +292,7 @@ export class UpdateSaleAction {
         return this.noChangesResult();
       }
       await this.applyCustomerChange(manager, sale, dto, companyId);
+      await recomputeSalePoints(manager, Number(sale.id), companyId, oldCustomerId);
       return {
         message: 'Cliente de la venta actualizado',
         creditNoteId: null,
@@ -349,8 +357,7 @@ export class UpdateSaleAction {
         // override_stock solo lo respeta el ajuste si el actor es owner/superadmin
         // — paridad PlacePos `editSale` (processDebitPart: allowOverride).
         overrideStock:
-          dto.override_stock === true &&
-          (actor.type === 'owner' || actor.type === 'superadmin'),
+          dto.override_stock === true && (actor.type === 'owner' || actor.type === 'superadmin'),
       });
       debitNoteId = debit.id;
       debitNoteNumber = debit.number;
@@ -359,6 +366,18 @@ export class UpdateSaleAction {
     if (customerChanged) {
       await this.applyCustomerChange(manager, sale, dto, companyId);
     }
+
+    // PUNTOS: tras emitir NC (PARTIAL_VOID / FULL_VOID) y/o ND (ADDITION) y
+    // aplicar el cambio de cliente, el recompute idempotente recalcula los
+    // puntos sobre el total consolidado actual (total − Σ CREDIT + Σ DEBIT −
+    // creditPrincipal) y ajusta el saldo del cliente vigente por el delta.
+    // Misma TX SERIALIZABLE.
+    await recomputeSalePoints(
+      manager,
+      Number(sale.id),
+      companyId,
+      customerChanged ? oldCustomerId : undefined,
+    );
 
     let message = 'Venta editada exitosamente.';
     if (creditNoteNumber) {

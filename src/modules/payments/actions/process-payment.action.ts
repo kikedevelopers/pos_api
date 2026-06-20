@@ -15,6 +15,7 @@ import {
 } from '@/modules/financial-movements/entities/financial-movement.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
+import { recomputeSalePoints } from '@/modules/sales/internal/customer-points.helper';
 import { assertMarginAboveMinimum } from '@/modules/sales/internal/margin-guard.helper';
 import { SaleCredit, SaleCreditStatus } from '@/modules/sales/entities/sale-credit.entity';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
@@ -447,6 +448,13 @@ export class ProcessPaymentAction {
     if (dto.is_credit && creditAmountBig.gt(0)) {
       creditId = await this.insertCredit(manager, dto, sale, companyId);
     }
+
+    // 11. PUNTOS de cliente (solo CONTADO). La venta acaba de constituirse
+    //     (ticket_type=SALE) y el SaleCredit por el remanente ya existe. El
+    //     recompute idempotente otorga puntos sobre la base de contado
+    //     (`totalConsolidado − creditPrincipal`); si la config está off o no
+    //     hay cliente, no-op. Dentro de la MISMA TX SERIALIZABLE.
+    await recomputeSalePoints(manager, Number(sale.id), companyId);
 
     this.logger.log({
       event: 'payment.processed',

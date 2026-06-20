@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
+import { getCustomerPointsConfig } from '@/modules/app-settings/internal/customer-points-config';
 import { CreditNote } from '@/modules/credit-notes/entities/credit-note.entity';
+import { Customer } from '@/modules/customers/entities/customer.entity';
 
 import { SaleCredit } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
@@ -27,6 +29,18 @@ export interface SaleAggregate {
   payments: SalePayment[];
   credit: SaleCredit | null;
   creditNotes: CreditNote[];
+  /**
+   * Flag del sistema de PUNTOS de cliente (config per-company). El recibo del
+   * TicketViewer (TicketReceipt) muestra los puntos solo si
+   * `pointsEnabled && customerPoints != null`. Paridad PlacePos `getTicketById`.
+   */
+  pointsEnabled: boolean;
+  /**
+   * Saldo ACTUAL de puntos del cliente de la venta (`customers.points`). `null`
+   * si la venta es de mostrador (sin `customer_id`) o si los puntos están
+   * deshabilitados — no tiene sentido leer el saldo si no se va a mostrar.
+   */
+  customerPoints: number | null;
 }
 
 /**
@@ -77,6 +91,21 @@ export class FindSaleAction {
       order: { created_at: 'ASC' },
     });
 
-    return { sale, lines, payments, credit, creditNotes };
+    // Sistema de puntos: una sola lectura de config por request. Si está
+    // habilitado y la venta tiene cliente, leemos el saldo ACTUAL de puntos
+    // (filtrado por company_id — anti-IDOR). En cualquier otro caso → null,
+    // evitando una lectura inútil. Paridad PlacePos `getTicketById`.
+    const pointsConfig = await getCustomerPointsConfig(manager, companyId);
+    const pointsEnabled = pointsConfig.enabled;
+    let customerPoints: number | null = null;
+    if (pointsEnabled && sale.customer_id) {
+      const customer = await manager.findOne(Customer, {
+        where: { id: sale.customer_id, company_id: String(companyId) },
+        select: { points: true },
+      });
+      customerPoints = customer ? customer.points : null;
+    }
+
+    return { sale, lines, payments, credit, creditNotes, pointsEnabled, customerPoints };
   }
 }

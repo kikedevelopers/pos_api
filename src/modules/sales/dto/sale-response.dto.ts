@@ -280,6 +280,25 @@ export class SaleResponseDto {
 
   @ApiProperty({ type: [InvoiceDocumentResponseDto] })
   documents!: InvoiceDocumentResponseDto[];
+
+  @ApiProperty({
+    example: true,
+    description:
+      'Config per-company del sistema de PUNTOS. El recibo muestra los puntos ' +
+      'del cliente solo si `pointsEnabled && customerPoints != null`. Paridad ' +
+      'PlacePos `getTicketById`.',
+  })
+  pointsEnabled!: boolean;
+
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 120,
+    description:
+      'Saldo ACTUAL de puntos del cliente (`customers.points`). null si la ' +
+      'venta es de mostrador o el sistema de puntos está deshabilitado.',
+  })
+  customerPoints!: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +451,8 @@ export function toSaleResponseDto(
   payments: SalePayment[],
   credit: SaleCredit | null,
   creditNotes: CreditNote[] = [],
+  pointsEnabled = false,
+  customerPoints: number | null = null,
 ): SaleResponseDto {
   const sortedNotes = [...creditNotes].sort(
     (a, b) => a.created_at.getTime() - b.created_at.getTime(),
@@ -471,6 +492,8 @@ export function toSaleResponseDto(
     credit: credit ? toTicketCredit(credit) : null,
     voidCreditNote: lastNote ? toVoidCreditNote(lastNote) : null,
     documents: buildInvoiceDocuments(sale, lines, sortedNotes),
+    pointsEnabled,
+    customerPoints,
   };
 }
 

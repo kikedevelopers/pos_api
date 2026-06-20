@@ -64,6 +64,7 @@ export enum PersonType {
  */
 @Entity('customers')
 @Check('chk_customers_name_not_empty', 'length(btrim(name)) > 0')
+@Check('CK_customers_points_nonneg', 'points >= 0')
 export class Customer {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -144,6 +145,19 @@ export class Customer {
     transformer: NumericTransformer,
   })
   advance_balance!: number;
+
+  /**
+   * Saldo de PUNTOS acumulados del cliente — espejo de
+   * `placepos/src/main/database/entities/Customer.ts → points`.
+   *
+   * Invariante: nunca negativo (`CK_customers_points_nonneg`). Solo se MUTA
+   * dentro del modelo RECOMPUTE idempotente (`recomputeSalePoints`) que ajusta
+   * el saldo por el DELTA de puntos que la venta DEBERÍA otorgar según su
+   * estado actual (total + notas − crédito). El canje queda FUERA de alcance
+   * en esta fase. No se acepta desde ningún DTO público.
+   */
+  @Column({ type: 'integer', default: 0 })
+  points!: number;
 
   /**
    * Snapshot del `full_name` del actor (User u Employee) que creó al cliente.

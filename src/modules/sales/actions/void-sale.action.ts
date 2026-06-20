@@ -36,6 +36,7 @@ import type { SaleCorrectionSourceDto } from '../dto/update-sale.dto';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
+import { recomputeSalePoints } from '../internal/customer-points.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
 
 /**
@@ -281,6 +282,13 @@ export class VoidSaleAction {
       { id: sale.id, company_id: String(companyId) },
       { is_deleted: true },
     );
+
+    // PUNTOS: tras emitir la NC FULL_VOID, el total consolidado queda en 0
+    // (total − total). El recompute idempotente lleva los puntos otorgados a 0
+    // y revierte el saldo del cliente por el delta negativo. La venta sigue
+    // siendo ticket_type=SALE (el helper no bailar por is_deleted). Misma TX
+    // SERIALIZABLE.
+    await recomputeSalePoints(manager, Number(sale.id), companyId);
 
     // Reversa CASH: por cada pago CASH (puede haber más de uno) descuento
     // de la caja del actor + log CREDIT_NOTE_FULL_VOID. Paridad PlacePos

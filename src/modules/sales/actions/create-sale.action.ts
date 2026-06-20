@@ -380,7 +380,22 @@ export class CreateSaleAction {
     const credit = await findSaleCredit(manager, saleId, companyId);
     // Una venta recién creada nunca tiene NC/ND, pero el shape del aggregate
     // las exige para mantener el contrato del DTO uniforme.
-    return { sale, lines, payments, credit, creditNotes: [] };
+    //
+    // Los campos del sistema de puntos (`pointsEnabled`/`customerPoints`) solo
+    // alimentan el DETALLE de venta del TicketViewer (`GET /sales/:id` →
+    // `toSaleResponseDto`). La respuesta de creación (`toCreateSaleResponseDto`)
+    // solo usa `invoice_id`/`ticket_number`, así que aquí van en su valor neutro
+    // y NO disparamos lectura de config ni del cliente. La acción que lee el
+    // detalle (`FindSaleAction`) sí los resuelve.
+    return {
+      sale,
+      lines,
+      payments,
+      credit,
+      creditNotes: [],
+      pointsEnabled: false,
+      customerPoints: null,
+    };
   }
 }
 

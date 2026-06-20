@@ -25,6 +25,11 @@ export const APP_SETTING_KEYS = {
   POS_MARGINS_ENABLED: 'pos_margins_enabled',
   POS_MARGINS: 'pos_margins',
   STRICT_INVENTORY_CONTROL: 'strict_inventory_control',
+  // Sistema de PUNTOS de cliente (paridad PlacePos `customerPointsSettings`).
+  // 3 keys: flag + base de pesos + puntos por base.
+  CUSTOMER_POINTS_ENABLED: 'customer_points_enabled',
+  CUSTOMER_POINTS_PESO_BASE: 'customer_points_peso_base',
+  CUSTOMER_POINTS_PER_BASE: 'customer_points_per_base',
 } as const;
 
 export type AppSettingKey = (typeof APP_SETTING_KEYS)[keyof typeof APP_SETTING_KEYS];
