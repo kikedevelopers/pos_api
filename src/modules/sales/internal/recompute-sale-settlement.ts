@@ -32,13 +32,12 @@ import { SalePayment } from '../entities/sale-payment.entity';
  * Efecto sobre SaleCredit
  * --------------------------------------------------------------------------
  *
+ * REGLA DE NEGOCIO: una venta constituida NUNCA pasa a crédito por reversar un
+ * pago. Solo es crédito si nació como crédito (ya tiene SaleCredit). Por eso:
  *   - Si existe SaleCredit → UPDATE (total_amount, paid_amount, balance, status).
- *   - Si NO existe y queda saldo (paid < total):
- *       · con customer_id → crea SaleCredit (referencia create-sale.action).
- *       · sin customer_id → NO crea crédito; la venta queda SALE con saldo
- *         derivado, re-cobrable (paridad placepos: no se puede dejar deuda
- *         formal sin cliente, pero el saldo sigue siendo cobrable).
- *   - Si NO existe y NO queda saldo (paid = total) → no-op (venta pagada).
+ *   - Si NO existe → NUNCA se crea, tenga o no customer_id. Si queda saldo, la
+ *     venta permanece SALE con saldo derivado (pendiente por cobrar /
+ *     re-cobrable); si no queda saldo, es no-op (venta pagada).
  *
  * --------------------------------------------------------------------------
  * Customer.balance
@@ -142,26 +141,11 @@ export async function recomputeSaleSettlement(
         status,
       },
     );
-  } else if (isPending) {
-    // No hay crédito y quedó saldo. Lo creamos solo si la venta tiene cliente.
-    if (sale.customer_id) {
-      const credit = manager.create(SaleCredit, {
-        company_id: String(companyId),
-        sale_invoice_id: sale.id,
-        customer_id: sale.customer_id,
-        total_amount: total,
-        paid_amount: paid,
-        balance,
-        due_date: null,
-        status,
-      });
-      const saved = await manager.save(SaleCredit, credit);
-      creditId = Number(saved.id);
-    }
-    // Sin customer_id: NO se crea crédito. La venta queda SALE con saldo
-    // derivado (re-cobrable). Paridad placepos.
   }
-  // existingCredit == null && !isPending → venta pagada sin crédito: no-op.
+  // NO hay crédito → NUNCA se crea, tenga o no customer_id. Una venta solo es
+  // crédito si nació como crédito. Si quedó saldo, la venta permanece SALE con
+  // saldo derivado (pendiente por cobrar / re-cobrable); si no quedó saldo, es
+  // no-op (venta pagada). Paridad placepos.
 
   return { paid, total, balance, status, isPending, creditId };
 }

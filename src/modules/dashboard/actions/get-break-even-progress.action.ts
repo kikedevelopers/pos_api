@@ -89,9 +89,13 @@ export class GetBreakEvenProgressAction {
     const dailyTarget = round2(toBig(breakEvenAmount).div(breakEvenPeriodDays).toNumber());
     const dayRealProfit = round2(toBig(dayProfit).minus(toBig(dayExpenses)).toNumber());
     const monthRealProfit = round2(toBig(monthProfit).minus(toBig(monthExpenses)).toNumber());
-    const monthProgress = round2(toBig(monthRealProfit).div(breakEvenAmount).toNumber());
+    // Los ratios de progreso se redondean a 4 decimales (no a 2): redondear a 2
+    // da granularidad de 1% y haría que, p. ej., 0.9975 (99.75%) se redondee a
+    // 1.00, marcando falsamente la meta como alcanzada (isReached / "Meta
+    // superada"). Con 4 decimales se conserva la precisión y el progreso real.
+    const monthProgress = toBig(monthRealProfit).div(breakEvenAmount).round(4).toNumber();
     const dayProgress =
-      dailyTarget > 0 ? round2(toBig(dayRealProfit).div(dailyTarget).toNumber()) : 0;
+      dailyTarget > 0 ? toBig(dayRealProfit).div(dailyTarget).round(4).toNumber() : 0;
 
     return {
       configured: true,

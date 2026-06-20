@@ -70,6 +70,9 @@ export function mapNoteToTicket(note: NoteRow): Record<string, unknown> {
     noteType: note.note_type,
     operationType: note.operation_type,
     parentInvoiceId: Number(note.sale_invoice_id),
+    balanceDue: 0,
+    isPending: false,
+    paymentType: 'UNDEFINED',
   };
 }
 

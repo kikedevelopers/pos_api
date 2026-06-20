@@ -35,6 +35,29 @@ interface InvoiceRow {
   is_credit: boolean;
   credit_balance: number;
   credit_status: string | null;
+  // Σ(amount − change_amount) de los pagos VIVOS (is_voided = false). Permite
+  // derivar el saldo pendiente de una venta de contado a la que se le reversó un
+  // pago (queda como VENTA con saldo, sin pasar a crédito). Paridad placepos.
+  paid_amount: number;
+  // Medios de pago DISTINTOS de los pagos vivos, separados por coma
+  // (p. ej. "CASH" o "CASH,TRANSFER"). null si no hay pagos vivos.
+  payment_methods: string | null;
+}
+
+// Clasifica el tipo de pago de una venta a partir de los medios DISTINTOS de
+// sus pagos vivos. Espejo placepos (pos-reports.routes.ts).
+//   - sin pagos vivos            → 'UNDEFINED' ("Sin definir")
+//   - un solo medio              → ese medio ('CASH'/'TRANSFER'/'CREDIT')
+//   - dos o más medios distintos → 'MIXED' ("Mixto")
+type PaymentTypeCode = 'CASH' | 'TRANSFER' | 'CREDIT' | 'MIXED' | 'UNDEFINED';
+
+function derivePaymentType(methodsCsv: string | null): PaymentTypeCode {
+  const methods = (methodsCsv ?? '').split(',').filter(Boolean);
+  if (methods.length === 0) return 'UNDEFINED';
+  if (methods.length > 1) return 'MIXED';
+  const only = methods[0];
+  if (only === 'CASH' || only === 'TRANSFER' || only === 'CREDIT') return only;
+  return 'UNDEFINED';
 }
 
 export interface SalesReportResult {
@@ -169,6 +192,13 @@ export class GetSalesReportAction {
   }
 
   private mapInvoiceTicket(inv: InvoiceRow): Record<string, unknown> {
+    // Saldo pendiente DERIVADO de los pagos vivos. Esta lista solo trae ventas
+    // SIN crédito (sc.id IS NULL), por lo que el pendiente nace de reversar un
+    // pago de una venta de contado: queda como VENTA (SALE) con saldo, sin pasar
+    // a crédito. Solo aplica a ventas constituidas (SALE) vivas.
+    const balanceDue = round2(Number(inv.original_total) - Number(inv.paid_amount));
+    const isPending = inv.ticket_type === 'SALE' && !inv.is_deleted && balanceDue > 0;
+    const paymentType = derivePaymentType(inv.payment_methods);
     return {
       id: Number(inv.id),
       rowType: 'INVOICE',
@@ -194,6 +224,9 @@ export class GetSalesReportAction {
       isCredit: inv.is_credit,
       creditBalance: round2(inv.credit_balance),
       creditStatus: inv.credit_status ?? null,
+      balanceDue,
+      isPending,
+      paymentType,
     };
   }
 
@@ -281,7 +314,21 @@ export class GetSalesReportAction {
         na.note_types,
         (sc.id IS NOT NULL) AS is_credit,
         COALESCE(sc.balance, 0)::float AS credit_balance,
-        sc.status::text AS credit_status
+        sc.status::text AS credit_status,
+        COALESCE((
+          SELECT SUM(sp.amount - COALESCE(sp.change_amount, 0))
+          FROM sale_payments sp
+          WHERE sp.sale_invoice_id = si.id
+            AND sp.company_id = $1
+            AND sp.is_voided = false
+        ), 0)::float AS paid_amount,
+        (
+          SELECT STRING_AGG(DISTINCT sp.payment_method::text, ',')
+          FROM sale_payments sp
+          WHERE sp.sale_invoice_id = si.id
+            AND sp.company_id = $1
+            AND sp.is_voided = false
+        ) AS payment_methods
       FROM sale_invoices si
       LEFT JOIN sale_credits sc
         ON sc.sale_invoice_id = si.id
