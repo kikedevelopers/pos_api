@@ -36,8 +36,11 @@ export class SuperadminTenantOwnerDto {
   @ApiProperty({ example: 9 })
   id!: number;
 
-  @ApiProperty({ example: 'Kike Dev', description: 'Nombre + apellido.' })
+  @ApiProperty({ example: 'Kike', description: 'Nombre (sin apellido).' })
   name!: string;
+
+  @ApiProperty({ example: 'Pacheco' })
+  lastname!: string;
 
   @ApiProperty({ example: 'owner@empresa.com' })
   email!: string;

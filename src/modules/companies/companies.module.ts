@@ -30,6 +30,9 @@ import { Company } from './entities/company.entity';
     UpdateCompanyAction,
     ListAllCompaniesAction,
   ],
-  exports: [TypeOrmModule],
+  // `UpdateCompanyAction` se exporta para que `SuperadminModule` reutilice la
+  // edición de la company (paridad con `PUT /companies/:id`) sin duplicar la
+  // normalización (vacío→null) ni el manejo de campos.
+  exports: [TypeOrmModule, UpdateCompanyAction],
 })
 export class CompaniesModule {}

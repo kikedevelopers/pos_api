@@ -91,7 +91,8 @@ export class GetTenantDetailAction {
       owner: owner
         ? {
             id: Number(owner.id),
-            name: `${owner.name} ${owner.lastname}`.trim(),
+            name: owner.name,
+            lastname: owner.lastname,
             email: owner.email,
           }
         : null,

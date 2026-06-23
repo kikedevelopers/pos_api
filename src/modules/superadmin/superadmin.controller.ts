@@ -18,18 +18,28 @@ import type { Request } from 'express';
 
 import { Public } from '@/common/decorators/public.decorator';
 
+import { UpdateCompanyDto } from '@/modules/companies/dto/update-company.dto';
 import { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
+import { UpdateMeDto } from '@/modules/users/dto/update-me.dto';
 
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
+import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
+import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
+import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
+import {
+  SuperadminTenantCompanyDto,
+  SuperadminTenantOwnerDto,
+} from './dto/superadmin-tenant-detail.dto';
 import {
   SuperadminSubscriptionResponseDto,
   toSuperadminSubscriptionResponseDto,
@@ -66,6 +76,9 @@ export class SuperadminController {
     private readonly updateBranchesAction: UpdateBranchesAction,
     private readonly deleteTenantAction: DeleteTenantAction,
     private readonly createTenantAction: CreateTenantAction,
+    private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
+    private readonly resetTenantOwnerPasswordAction: ResetTenantOwnerPasswordAction,
+    private readonly updateTenantCompanyAction: UpdateTenantCompanyAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -180,6 +193,67 @@ export class SuperadminController {
     @Body() dto: UpdateBranchesDto,
   ): Promise<UpdateBranchesResult> {
     return this.updateBranchesAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/owner
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/owner')
+  @ApiOperation({
+    summary: 'Editar el perfil del owner de un tenant (name/lastname/email).',
+    description:
+      'Reutiliza la lógica de PUT /users/me (update parcial, email a minúsculas). ' +
+      '409 si el email ya pertenece a otra cuenta (EMAIL_TAKEN).',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminTenantOwnerDto })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Email ya registrado (EMAIL_TAKEN)' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
+  updateTenantOwner(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateMeDto,
+  ): Promise<SuperadminTenantOwnerDto> {
+    return this.updateTenantOwnerAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/owner/password
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/owner/password')
+  @ApiOperation({
+    summary: 'Resetear la contraseña del owner de un tenant (operador, sin contraseña actual).',
+    description:
+      'Fija una nueva contraseña (argon2id). No pide la contraseña actual: es una ' +
+      'operación del operador del panel, no del propio owner.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
+  resetTenantOwnerPassword(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: ResetOwnerPasswordDto,
+  ): Promise<{ success: boolean }> {
+    return this.resetTenantOwnerPasswordAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/company
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/company')
+  @ApiOperation({
+    summary: 'Editar los datos de la company de un tenant.',
+    description:
+      'Reutiliza la lógica de PUT /companies/:id (update parcial; cadenas vacías en ' +
+      'document_number/address/email/phone_number se persisten como null).',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminTenantCompanyDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  updateTenantCompany(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateCompanyDto,
+  ): Promise<SuperadminTenantCompanyDto> {
+    return this.updateTenantCompanyAction.execute(companyId, dto);
   }
 
   // --------------------------------------------------------------------------
