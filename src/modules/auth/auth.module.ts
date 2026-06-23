@@ -94,6 +94,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     // Passport.
     JwtStrategy,
   ],
-  exports: [AuthService],
+  // `RegisterAction` se exporta para que `SuperadminModule` cree cuentas desde
+  // el panel kdevs-admin REUTILIZANDO exactamente el flujo de registro cloud
+  // (paridad total con placepos). `AuthModule` no importa `SuperadminModule`,
+  // así que no hay ciclo.
+  exports: [AuthService, RegisterAction],
 })
 export class AuthModule {}

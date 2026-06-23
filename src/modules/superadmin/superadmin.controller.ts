@@ -8,6 +8,7 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -19,12 +20,15 @@ import { Public } from '@/common/decorators/public.decorator';
 
 import { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
 
+import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
+import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
+import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
 import {
   SuperadminSubscriptionResponseDto,
@@ -61,7 +65,39 @@ export class SuperadminController {
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
     private readonly updateBranchesAction: UpdateBranchesAction,
     private readonly deleteTenantAction: DeleteTenantAction,
+    private readonly createTenantAction: CreateTenantAction,
   ) {}
+
+  // --------------------------------------------------------------------------
+  // POST /superadmin/tenants
+  // --------------------------------------------------------------------------
+
+  @Post('tenants')
+  @ApiOperation({
+    summary: 'Crear una cuenta nueva (company + owner + suscripción trial).',
+    description:
+      'Reutiliza el flujo de registro cloud de placepos: crea atómicamente la ' +
+      'company, el owner (argon2id), su membresía, los seeds esenciales y una ' +
+      'suscripción trial de 10 días. La cuenta queda lista para iniciar sesión ' +
+      'en placepos. Requiere firma superadmin válida. 409 si el email ya existe.',
+  })
+  @ApiResponse({ status: HttpStatus.CREATED, type: SuperadminCreateTenantResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Email ya registrado (EMAIL_TAKEN)' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Firma ausente/inválida/expirada' })
+  async createTenant(
+    @Body() dto: CreateTenantDto,
+    @Req() req: Request,
+  ): Promise<SuperadminCreateTenantResponseDto> {
+    const keyId = req.header('x-kdevs-key-id') ?? 'unknown';
+    this.logger.log({
+      event: 'superadmin.tenant.create.request',
+      keyId,
+      ownerEmail: dto.email,
+      companyName: dto.company_name,
+    });
+    return this.createTenantAction.execute(dto);
+  }
 
   // --------------------------------------------------------------------------
   // GET /superadmin/tenants
