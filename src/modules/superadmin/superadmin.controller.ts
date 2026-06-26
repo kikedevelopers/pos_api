@@ -24,7 +24,9 @@ import { UpdateMeDto } from '@/modules/users/dto/update-me.dto';
 
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
+import { ExportTenantAction } from './actions/export-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
+import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
@@ -32,6 +34,7 @@ import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { ImportTenantDto } from './dto/import-tenant.dto';
 import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
@@ -48,6 +51,7 @@ import { SuperadminTenantDetailDto } from './dto/superadmin-tenant-detail.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
+import type { ImportResult, TenantBackup } from './tenant-backup/tenant-backup.util';
 
 /**
  * Endpoints `/superadmin/*` para el panel kdevs-admin.
@@ -79,6 +83,8 @@ export class SuperadminController {
     private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
     private readonly resetTenantOwnerPasswordAction: ResetTenantOwnerPasswordAction,
     private readonly updateTenantCompanyAction: UpdateTenantCompanyAction,
+    private readonly exportTenantAction: ExportTenantAction,
+    private readonly importTenantAction: ImportTenantAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -186,7 +192,10 @@ export class SuperadminController {
       'el owner desde su POS.',
   })
   @ApiResponse({ status: HttpStatus.OK })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido o no es principal' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Payload inválido o no es principal',
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
   updateBranches(
     @Param('companyId', ParseIntPipe) companyId: number,
@@ -254,6 +263,57 @@ export class SuperadminController {
     @Body() dto: UpdateCompanyDto,
   ): Promise<SuperadminTenantCompanyDto> {
     return this.updateTenantCompanyAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /superadmin/tenants/:companyId/export
+  // --------------------------------------------------------------------------
+
+  @Get('tenants/:companyId/export')
+  @ApiOperation({
+    summary: 'Exportar un respaldo COMPLETO del tenant (snapshot JSON de todas sus tablas).',
+    description:
+      'Descubre dinámicamente del catálogo TODAS las tablas con scoping por company_id y ' +
+      'vuelca sus filas para esta company (más la fila companies). Incluye un hash sha256 de ' +
+      'integridad. El panel empaqueta el snapshot en un .zip por tabla.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  exportTenant(@Param('companyId', ParseIntPipe) companyId: number): Promise<TenantBackup> {
+    return this.exportTenantAction.execute(companyId);
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /superadmin/tenants/:companyId/import
+  // --------------------------------------------------------------------------
+
+  @Post('tenants/:companyId/import')
+  @ApiOperation({
+    summary: 'Importar un respaldo: inserta lo que falta, ignora lo que ya existe.',
+    description:
+      'Valida el hash de integridad (400 si fue alterado) y que el respaldo corresponde a esta ' +
+      'company. Inserta en orden topológico con ON CONFLICT DO NOTHING (ids originales): los ' +
+      'datos existentes se ignoran y los nuevos se crean. Reporta cuántas filas se insertaron, ' +
+      'ignoraron y saltaron.',
+  })
+  @ApiResponse({ status: HttpStatus.CREATED })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Respaldo inválido, alterado o de otra company',
+  })
+  importTenant(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: ImportTenantDto,
+    @Req() req: Request,
+  ): Promise<ImportResult> {
+    const keyId = req.header('x-kdevs-key-id') ?? 'unknown';
+    this.logger.log({
+      event: 'superadmin.tenant.import.request',
+      companyId,
+      keyId,
+      rowCount: dto.meta?.rowCount,
+    });
+    return this.importTenantAction.execute(companyId, dto as unknown as TenantBackup);
   }
 
   // --------------------------------------------------------------------------

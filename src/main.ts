@@ -1,6 +1,7 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import Big from 'big.js';
@@ -21,7 +22,27 @@ async function bootstrap(): Promise<void> {
   // Lo necesita `SuperadminSignatureGuard` para hashear el cuerpo EXACTO tal
   // como lo firmó el navegador (kdevs-admin), sin re-serializar. No altera el
   // parsing normal del body.
-  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
+
+  // El import de respaldos de tenant (superadmin) envía snapshots JSON que
+  // pueden pesar varios MB; el límite por defecto del body parser (~100kb) los
+  // rechazaría. Subimos el límite del parser JSON. El 2º argumento `true`
+  // PRESERVA la captura de `req.rawBody` (verify) que necesita el
+  // `SuperadminSignatureGuard`; sin él, la firma de TODOS los /superadmin/* se
+  // rompería.
+  // Nota: en esta versión la firma de TIPOS de `useBodyParser` es de 2 args,
+  // pero la implementación real es `(type, rawBody, options)`. Llamamos con los
+  // 3 argumentos reales (vía cast) para conservar `rawBody` + subir el límite.
+  (
+    app.useBodyParser as unknown as (
+      type: string,
+      rawBody: boolean,
+      options: { limit: string },
+    ) => void
+  )('json', true, { limit: '64mb' });
 
   // Logger estructurado (Pino) reemplaza al logger nativo de Nest.
   app.useLogger(app.get(Logger));

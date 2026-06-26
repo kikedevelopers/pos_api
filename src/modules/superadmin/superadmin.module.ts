@@ -10,7 +10,9 @@ import { UsersModule } from '@/modules/users/users.module';
 
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
+import { ExportTenantAction } from './actions/export-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
+import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction } from './actions/update-branches.action';
@@ -56,6 +58,8 @@ import { SuperadminController } from './superadmin.controller';
     UpdateTenantOwnerAction,
     ResetTenantOwnerPasswordAction,
     UpdateTenantCompanyAction,
+    ExportTenantAction,
+    ImportTenantAction,
   ],
 })
 export class SuperadminModule {}
