@@ -14,18 +14,26 @@ import {
 } from '@/modules/financial-movements/entities/financial-movement.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 
+import {
+  FixedExpensePeriodResponseDto,
+  toFixedExpensePeriodResponseDto,
+} from '../dto/fixed-expense-period-response.dto';
 import type { PayFixedExpensePeriodsDto } from '../dto/pay-fixed-expense-periods.dto';
 import {
   FixedExpensePeriod,
   type FixedExpensePeriodStatus,
 } from '../entities/fixed-expense-period.entity';
 import { FixedExpense } from '../entities/fixed-expense.entity';
+import { loadPeriodPayments } from '../internal/load-period-payments';
 
 import type { FixedExpenseActor } from './create-fixed-expense.action';
 
 export interface PayFixedExpensePeriodsResult {
-  /** TODOS los cortes del gasto, ya actualizados (orden period_number ASC). */
-  periods: FixedExpensePeriod[];
+  /**
+   * TODOS los cortes del gasto, ya actualizados (orden period_number ASC), con
+   * el histórico de abonos embebido por corte.
+   */
+  periods: FixedExpensePeriodResponseDto[];
   /** Monto total efectivamente aplicado. */
   paid_total: number;
 }
@@ -242,7 +250,9 @@ export class PayFixedExpensePeriodsAction {
 
       const paidTotal = preciseNumber(amountBig.minus(remaining), 2);
 
-      // 4. Devolver TODOS los cortes del gasto actualizados (para refrescar el modal).
+      // 4. Devolver TODOS los cortes del gasto actualizados (para refrescar el
+      //    modal), con el histórico de abonos embebido. El snapshot de pagos se
+      //    lee con el MISMO manager, dentro de la transacción (consistencia).
       const periods = await manager.find(FixedExpensePeriod, {
         where: {
           fixed_expense_id: String(fixedExpenseId),
@@ -251,7 +261,18 @@ export class PayFixedExpensePeriodsAction {
         order: { period_number: 'ASC' },
       });
 
-      return { periods, paid_total: paidTotal };
+      const paymentsByPeriod = await loadPeriodPayments(
+        manager.getRepository(Expense),
+        companyId,
+        periods.map((p) => p.id),
+      );
+
+      return {
+        periods: periods.map((period) =>
+          toFixedExpensePeriodResponseDto(period, paymentsByPeriod.get(period.id) ?? []),
+        ),
+        paid_total: paidTotal,
+      };
     });
   }
 }

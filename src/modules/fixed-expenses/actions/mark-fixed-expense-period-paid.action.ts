@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
 
+import type { FixedExpensePeriodResponseDto } from '../dto/fixed-expense-period-response.dto';
 import type { PayFixedExpensePeriodDto } from '../dto/pay-fixed-expense-period.dto';
 import { FixedExpensePeriod } from '../entities/fixed-expense-period.entity';
 
@@ -36,7 +37,7 @@ export class MarkFixedExpensePeriodPaidAction {
     dto: PayFixedExpensePeriodDto,
     companyId: number,
     actor: FixedExpenseActor,
-  ): Promise<FixedExpensePeriod> {
+  ): Promise<FixedExpensePeriodResponseDto> {
     // Resolver el saldo pendiente del corte (anti-IDOR por company_id).
     const period = await this.dataSource.getRepository(FixedExpensePeriod).findOne({
       where: {
@@ -66,7 +67,7 @@ export class MarkFixedExpensePeriodPaidAction {
       actor,
     );
 
-    const updated = periods.find((p) => p.id === String(periodId));
+    const updated = periods.find((p) => p.id === periodId);
     if (!updated) {
       // No debería ocurrir: el corte pertenece al gasto.
       throw new NotFoundException('Corte no encontrado tras el pago.');

@@ -24,10 +24,7 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { CreateFixedExpenseDto } from './dto/create-fixed-expense.dto';
-import {
-  FixedExpensePeriodResponseDto,
-  toFixedExpensePeriodResponseDto,
-} from './dto/fixed-expense-period-response.dto';
+import { FixedExpensePeriodResponseDto } from './dto/fixed-expense-period-response.dto';
 import { PayFixedExpensePeriodDto } from './dto/pay-fixed-expense-period.dto';
 import { PayFixedExpensePeriodsDto } from './dto/pay-fixed-expense-periods.dto';
 import { PayFixedExpensePeriodsResponseDto } from './dto/pay-fixed-expense-periods-response.dto';
@@ -177,8 +174,8 @@ export class FixedExpensesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
   ): Promise<FixedExpensePeriodResponseDto[]> {
-    const periods = await this.service.listPeriods(id, companyId);
-    return periods.map(toFixedExpensePeriodResponseDto);
+    // La action ya devuelve los DTOs con el histórico de abonos embebido.
+    return this.service.listPeriods(id, companyId);
   }
 
   // --------------------------------------------------------------------------
@@ -219,14 +216,11 @@ export class FixedExpensesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<PayFixedExpensePeriodsResponseDto> {
-    const { periods, paid_total } = await this.service.payPeriods(id, dto, companyId, {
+    // El service ya devuelve los cortes serializados con el histórico de abonos.
+    return this.service.payPeriods(id, dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
-    return {
-      periods: periods.map(toFixedExpensePeriodResponseDto),
-      paid_total,
-    };
   }
 
   // --------------------------------------------------------------------------
@@ -260,10 +254,10 @@ export class FixedExpensesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<FixedExpensePeriodResponseDto> {
-    const row = await this.service.markPeriodPaid(id, periodId, dto, companyId, {
+    // El service ya devuelve el corte serializado con su histórico de abonos.
+    return this.service.markPeriodPaid(id, periodId, dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
-    return toFixedExpensePeriodResponseDto(row);
   }
 }

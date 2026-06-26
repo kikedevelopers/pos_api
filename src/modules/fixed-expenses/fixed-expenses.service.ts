@@ -18,10 +18,10 @@ import {
 } from './actions/pay-fixed-expense-periods.action';
 import { UpdateFixedExpenseAction } from './actions/update-fixed-expense.action';
 import type { CreateFixedExpenseDto } from './dto/create-fixed-expense.dto';
+import type { FixedExpensePeriodResponseDto } from './dto/fixed-expense-period-response.dto';
 import type { PayFixedExpensePeriodDto } from './dto/pay-fixed-expense-period.dto';
 import type { PayFixedExpensePeriodsDto } from './dto/pay-fixed-expense-periods.dto';
 import type { UpdateFixedExpenseDto } from './dto/update-fixed-expense.dto';
-import type { FixedExpensePeriod } from './entities/fixed-expense-period.entity';
 import type { FixedExpense } from './entities/fixed-expense.entity';
 
 export type { FixedExpenseActor } from './actions/create-fixed-expense.action';
@@ -67,7 +67,10 @@ export class FixedExpensesService {
     return this.archiveAction.execute(id, companyId);
   }
 
-  listPeriods(fixedExpenseId: number, companyId: number): Promise<FixedExpensePeriod[]> {
+  listPeriods(
+    fixedExpenseId: number,
+    companyId: number,
+  ): Promise<FixedExpensePeriodResponseDto[]> {
     return this.listPeriodsAction.execute(fixedExpenseId, companyId);
   }
 
@@ -77,7 +80,7 @@ export class FixedExpensesService {
     dto: PayFixedExpensePeriodDto,
     companyId: number,
     actor: FixedExpenseActor,
-  ): Promise<FixedExpensePeriod> {
+  ): Promise<FixedExpensePeriodResponseDto> {
     return this.markPeriodPaidAction.execute(fixedExpenseId, periodId, dto, companyId, actor);
   }
 

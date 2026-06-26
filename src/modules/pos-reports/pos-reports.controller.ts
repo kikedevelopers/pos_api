@@ -6,10 +6,12 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { ComparativeByDayQueryDto } from './dto/comparative-by-day-query.dto';
 import { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
 import { DashboardSalesQueryDto, SalesReportQueryDto } from './dto/sales-report-query.dto';
 import { PosReportsService } from './pos-reports.service';
 import type {
+  ComparativeByDayResult,
   ComparativeReportResult,
   DashboardSalesResult,
   SalesReportResult,
@@ -76,5 +78,19 @@ export class PosReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<ComparativeReportResult> {
     return this.posReportsService.getComparativeReport(companyId, query);
+  }
+
+  @Get('comparative/by-day')
+  @Roles('owner', 'manager')
+  @ApiOperation({
+    summary:
+      'Comparativa por día: el MISMO día del mes (ej. 26) entre el mes de referencia y los anteriores (ventas/costo/ganancia/margen) con crecimiento encadenado. Misma matemática que /pos-reports/comparative.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  comparativeByDay(
+    @Query() query: ComparativeByDayQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<ComparativeByDayResult> {
+    return this.posReportsService.getComparativeByDayReport(companyId, query);
   }
 }

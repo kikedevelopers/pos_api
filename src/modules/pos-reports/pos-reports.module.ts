@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { GetComparativeByDayReportAction } from './actions/get-comparative-by-day-report.action';
 import { GetComparativeReportAction } from './actions/get-comparative-report.action';
 import { GetDashboardSalesAction } from './actions/get-dashboard-sales.action';
 import { GetSalesReportAction } from './actions/get-sales-report.action';
@@ -16,6 +17,7 @@ import { PosReportsService } from './pos-reports.service';
     GetSalesReportAction,
     GetDashboardSalesAction,
     GetComparativeReportAction,
+    GetComparativeByDayReportAction,
   ],
   exports: [PosReportsService],
 })

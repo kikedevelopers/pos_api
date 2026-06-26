@@ -3,6 +3,10 @@ import { Injectable } from '@nestjs/common';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import {
+  GetComparativeByDayReportAction,
+  type ComparativeByDayResult,
+} from './actions/get-comparative-by-day-report.action';
+import {
   GetComparativeReportAction,
   type ComparativeReportResult,
 } from './actions/get-comparative-report.action';
@@ -11,10 +15,16 @@ import {
   type DashboardSalesResult,
 } from './actions/get-dashboard-sales.action';
 import { GetSalesReportAction, type SalesReportResult } from './actions/get-sales-report.action';
+import type { ComparativeByDayQueryDto } from './dto/comparative-by-day-query.dto';
 import type { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
 import type { DashboardSalesQueryDto, SalesReportQueryDto } from './dto/sales-report-query.dto';
 
-export type { ComparativeReportResult, DashboardSalesResult, SalesReportResult };
+export type {
+  ComparativeByDayResult,
+  ComparativeReportResult,
+  DashboardSalesResult,
+  SalesReportResult,
+};
 
 /**
  * Facade del módulo `pos-reports`. ZERO lógica — solo delega.
@@ -25,6 +35,7 @@ export class PosReportsService {
     private readonly salesReport: GetSalesReportAction,
     private readonly dashboardSales: GetDashboardSalesAction,
     private readonly comparativeReport: GetComparativeReportAction,
+    private readonly comparativeByDayReport: GetComparativeByDayReportAction,
   ) {}
 
   getSalesReport(
@@ -47,5 +58,12 @@ export class PosReportsService {
     query: ComparativeReportQueryDto,
   ): Promise<ComparativeReportResult> {
     return this.comparativeReport.execute(companyId, query);
+  }
+
+  getComparativeByDayReport(
+    companyId: number,
+    query: ComparativeByDayQueryDto,
+  ): Promise<ComparativeByDayResult> {
+    return this.comparativeByDayReport.execute(companyId, query);
   }
 }
