@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -36,6 +37,7 @@ export class PosReportsController {
 
   @Get('sales')
   @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSalesReport')
   @ApiOperation({
     summary:
       'Listado de tickets (INVOICE + NOTE) con filtros avanzados (rango, search, ticketTypes, noteFilter, showDeleted) + summary.',
@@ -68,6 +70,7 @@ export class PosReportsController {
 
   @Get('comparative')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessSalesReport')
   @ApiOperation({
     summary:
       'Informe Comparativo "a la fecha": período actual vs anterior de igual duración (ventas/costo/ganancia/margen) + breakdown por sub-buckets. Misma matemática que /dashboard/performance.',
@@ -82,6 +85,7 @@ export class PosReportsController {
 
   @Get('comparative/by-day')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessSalesReport')
   @ApiOperation({
     summary:
       'Comparativa por día: el MISMO día del mes (ej. 26) entre el mes de referencia y los anteriores (ventas/costo/ganancia/margen) con crecimiento encadenado. Misma matemática que /pos-reports/comparative.',

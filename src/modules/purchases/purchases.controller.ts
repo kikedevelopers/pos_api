@@ -24,6 +24,7 @@ import type { Response } from 'express';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -59,6 +60,10 @@ import { PurchasesService } from './purchases.service';
 @ApiTags('purchases')
 @ApiBearerAuth('bearer')
 @Controller('purchases')
+// FASE 4: todo el módulo de compras (incluidos los GET) exige el permiso
+// `canAccessPurchase`. El POS no consume `/purchases`, así que protegerlo
+// completo no afecta la operación de venta. owner/superadmin pasan siempre.
+@RequirePermission('canAccessPurchase')
 export class PurchasesController {
   constructor(private readonly purchasesService: PurchasesService) {}
 
@@ -133,7 +138,7 @@ export class PurchasesController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary: 'Crear una compra (cabecera + líneas + credit), generando folio per-company.',
   })
@@ -166,7 +171,7 @@ export class PurchasesController {
 
   @Put(':id/receive')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary:
       'Marcar una compra como recibida (transportadora + receptor). Solo desde estado PENDING.',
@@ -200,7 +205,7 @@ export class PurchasesController {
 
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary: 'Archivar (anular) una compra. Reembolsa pagos a la caja indicada. Paridad PlacePos.',
     description:
@@ -241,7 +246,7 @@ export class PurchasesController {
 
   @Post('bulk-payments')
   @HttpCode(HttpStatus.CREATED)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary: 'Aplica múltiples abonos a compras en UNA sola transacción atómica (todo o nada).',
     description:
@@ -279,7 +284,7 @@ export class PurchasesController {
   // --------------------------------------------------------------------------
 
   @Post(':id/payments')
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary: 'Registrar un abono a una compra (idempotente vía uuid).',
     description:
@@ -329,7 +334,7 @@ export class PurchasesController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
   @ApiOperation({
     summary: 'Editar una compra: reemplaza líneas, recalcula totales y reconcilia el credit.',
     description:

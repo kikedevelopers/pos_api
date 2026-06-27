@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { UpdateTicketSettingDto } from './dto/update-ticket-setting.dto';
@@ -60,7 +61,8 @@ export class TicketSettingsController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Actualizar prefix/suffix de la configuración de folio',
     description:

@@ -21,6 +21,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -115,7 +116,8 @@ export class SuppliersController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSuppliers')
   @ApiOperation({ summary: 'Crear supplier' })
   @ApiBody({ type: CreateSupplierDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: SupplierResponseDto })
@@ -136,7 +138,8 @@ export class SuppliersController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSuppliers')
   @ApiOperation({ summary: 'Actualizar supplier' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: UpdateSupplierDto })
@@ -156,7 +159,8 @@ export class SuppliersController {
 
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSuppliers')
   @ApiOperation({
     summary: 'Archivar supplier (soft-delete)',
     description: 'Paridad PlacePos: si ya está archivado, responde 404.',

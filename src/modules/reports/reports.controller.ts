@@ -2,6 +2,7 @@ import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { CreditsReportQueryDto } from './dto/credits-report-query.dto';
@@ -42,6 +43,7 @@ export class ReportsController {
 
   @Get('daily-closure')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessDailyClosureReport')
   @ApiOperation({
     summary: 'Cierre diario consolidado: ventas, abonos, créditos, gastos y notas de ajuste.',
   })
@@ -55,6 +57,7 @@ export class ReportsController {
 
   @Get('extended-summary')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessDailyClosureReport')
   @ApiOperation({
     summary:
       'Resumen financiero extendido sobre un rango [from, to] (hora Colombia): ventas, gastos, ganancia real, cartera, compras/transportistas y cajas.',
@@ -71,6 +74,7 @@ export class ReportsController {
 
   @Get('credits')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessSalesReport')
   @ApiOperation({
     summary: 'Listado de créditos con filtros (rango fechas, search, status) + summary.',
   })
@@ -90,6 +94,7 @@ export class ReportsController {
    */
   @Get('customers-rfm/day-tickets')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessClientsReport')
   @ApiOperation({
     summary: 'Drill-down RFM: tickets SALE de un cliente en una fecha específica.',
   })
@@ -103,6 +108,7 @@ export class ReportsController {
 
   @Get('customers-rfm')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessClientsReport')
   @ApiOperation({
     summary:
       'Análisis RFM por cliente (Recency / Frequency / Monetary) en rango [from, to] (default 90d).',

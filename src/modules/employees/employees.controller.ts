@@ -21,6 +21,7 @@ import { Throttle } from '@nestjs/throttler';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -55,6 +56,9 @@ import { EmployeesService } from './employees.service';
 @ApiBearerAuth('bearer')
 @Controller('employees')
 @Roles('owner')
+// FASE 4: por consistencia con el catálogo de permisos. No afecta al owner
+// (que pasa siempre); el gating real ya lo hace `@Roles('owner')`.
+@RequirePermission('canAccessEmployees')
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 

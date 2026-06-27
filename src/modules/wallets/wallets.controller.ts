@@ -20,6 +20,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -59,7 +60,8 @@ export class WalletsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessWallets')
   @ApiOperation({ summary: 'Crear wallet' })
   @ApiBody({ type: CreateWalletDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: WalletResponseDto })
@@ -81,7 +83,8 @@ export class WalletsController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessWallets')
   @ApiOperation({ summary: 'Renombrar wallet' })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiBody({ type: UpdateWalletDto })
@@ -98,7 +101,8 @@ export class WalletsController {
 
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessWallets')
   @ApiOperation({
     summary: 'Archivar wallet (soft-delete). Idempotente. Paridad PlacePos.',
     description: 'Responde 200 con `{ archived: true }`.',
@@ -125,6 +129,7 @@ export class WalletsController {
   @Post(':id/adjustments')
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'superadmin')
+  @RequirePermission('canAccessWallets')
   @ApiOperation({
     summary: 'Aplicar corrección manual de saldo (solo owner/superadmin).',
     description:

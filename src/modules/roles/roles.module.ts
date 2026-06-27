@@ -34,6 +34,9 @@ import { RolesService } from './roles.service';
     DeleteRoleAction,
     ResolveEffectivePermissionsAction,
   ],
-  exports: [RolesService],
+  // `RolesService` para `AuthModule` (perfil) y
+  // `ResolveEffectivePermissionsAction` para el `PermissionsGuard` global
+  // (FASE 4), que se instancia en el contexto raíz de `AppModule`.
+  exports: [RolesService, ResolveEffectivePermissionsAction],
 })
 export class RolesModule {}

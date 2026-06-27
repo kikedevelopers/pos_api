@@ -2,6 +2,7 @@ import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { DashboardService } from './dashboard.service';
@@ -98,6 +99,7 @@ export class DashboardController {
 
   @Get('today-by-cashier')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCashierReport')
   @ApiOperation({
     summary:
       'Resumen del día agrupado por cajero: ventas, recaudo, abonos, ganancia y créditos generados.',

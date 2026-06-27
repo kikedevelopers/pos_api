@@ -11,6 +11,7 @@ import { AppService } from './app.service';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ActiveCompanyGuard } from './common/guards/active-company.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { ResponseWrapperInterceptor } from './common/interceptors/response-wrapper.interceptor';
 import { configurationLoaders } from './config/configuration';
@@ -286,6 +287,14 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
+    },
+    // Enforcement de permisos de módulo (FASE 4). Tras RolesGuard: el gating
+    // grueso por `UserType` corre primero; este refina por permiso granular en
+    // los endpoints decorados con `@RequirePermission`. Solo consulta la BD
+    // cuando el endpoint está decorado y el actor es un empleado.
+    {
+      provide: APP_GUARD,
+      useClass: PermissionsGuard,
     },
     {
       provide: APP_GUARD,

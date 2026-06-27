@@ -9,6 +9,7 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { GetCustomerPointsAction } from './actions/get-customer-points.action';
@@ -79,7 +80,8 @@ export class AppSettingsController {
 
   @Put('pos-margins')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Set configuración de márgenes POS',
     description:
@@ -108,7 +110,8 @@ export class AppSettingsController {
 
   @Put('strict-inventory')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'superadmin')
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Set flag global de control estricto de inventario',
     description:
@@ -140,7 +143,8 @@ export class AppSettingsController {
 
   @Put('customer-points')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Set configuración del sistema de puntos de cliente',
     description:
@@ -189,7 +193,8 @@ export class AppSettingsController {
 
   @Put(':key')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Set value de un setting (upsert)',
     description: 'Si la clave no existe, se crea. Si existe, se actualiza el value. Idempotente.',
