@@ -15,6 +15,7 @@ export interface RoleListRow {
   icon: string | null;
   permissions: PermissionKey[];
   is_system: boolean;
+  is_editable: boolean;
   employee_count: number;
   created_at: Date;
   updated_at: Date;
@@ -44,6 +45,14 @@ export class RoleResponseDto {
   @ApiProperty({ example: false, description: 'Rol de fábrica no borrable.' })
   is_system!: boolean;
 
+  @ApiProperty({
+    example: true,
+    description:
+      'Si el rol se puede editar/eliminar. El rol de fábrica "Administrador" es ' +
+      'inmutable (false); el resto es true.',
+  })
+  is_editable!: boolean;
+
   @ApiProperty({ example: 3, description: 'Empleados activos asignados a este rol.' })
   employee_count!: number;
 
@@ -69,6 +78,7 @@ export function roleToResponseDto(role: Role, employeeCount: number): RoleRespon
     icon: role.icon,
     permissions: (role.permissions ?? []).filter(isValidPermissionKey),
     is_system: role.is_system,
+    is_editable: role.is_editable,
     employee_count: employeeCount,
     created_at: role.created_at.toISOString(),
     updated_at: role.updated_at.toISOString(),
@@ -86,6 +96,7 @@ export function roleRowToResponseDto(row: RoleListRow): RoleResponseDto {
     icon: row.icon,
     permissions: (row.permissions ?? []).filter(isValidPermissionKey),
     is_system: row.is_system,
+    is_editable: row.is_editable,
     employee_count: Number(row.employee_count),
     created_at: new Date(row.created_at).toISOString(),
     updated_at: new Date(row.updated_at).toISOString(),

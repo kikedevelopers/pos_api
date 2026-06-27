@@ -143,7 +143,7 @@ export class RegisterAction {
       //    alert_configs). Comparten el `manager`: rollback total si algo falla.
       await this.seedCompanyAction.execute(manager, { companyId, createdBy });
 
-      // 5b. Roles de fábrica (Administrador, Cajero, Inventarista) de la company.
+      // 5b. Roles de fábrica (Administrador, Cajero) de la company.
       //     Idempotente y dentro de la misma transacción: cada company nace con
       //     sus roles de sistema (FASE 1, roles y permisos).
       await seedSystemRolesForCompany(manager, companyId);

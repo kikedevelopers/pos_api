@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 import type { UpdateRoleDto } from '../dto/update-role.dto';
 import { Role } from '../entities/role.entity';
 import { isValidPermissionKey, type PermissionKey } from '../internal/permission-catalog';
-import { translateRoleConstraintError } from '../internal/role-constraint-errors';
+import { assertRoleEditable, translateRoleConstraintError } from '../internal/role-constraint-errors';
 import { countActiveEmployeesForRole, findRoleInCompany } from '../internal/role-lookups';
 
 /** Resultado del update: el rol actualizado + su conteo de empleados activos. */
@@ -34,7 +34,11 @@ export class UpdateRoleAction {
   async execute(id: number, dto: UpdateRoleDto, companyId: number): Promise<UpdateRoleResult> {
     return this.dataSource.transaction<UpdateRoleResult>(async (manager) => {
       // Pre-validar existencia + tenancy (404 si ajeno/inexistente).
-      await findRoleInCompany(manager, id, companyId);
+      const existing = await findRoleInCompany(manager, id, companyId);
+
+      // Rol inmutable ('Administrador') → 422. Inamovible para todos (owner
+      // incluido): acceso total que no se puede degradar.
+      assertRoleEditable(existing);
 
       const patch: Partial<Role> = {};
       if (dto.name !== undefined) {

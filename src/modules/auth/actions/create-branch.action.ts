@@ -94,8 +94,8 @@ export class CreateBranchAction {
         createdBy: { id: creator.userId, fullName: creator.fullName },
       });
 
-      // 3b. Roles de fábrica (Administrador, Cajero, Inventarista) — igual que
-      //     el register: cada sucursal nace con sus 3 roles de sistema. Mismo
+      // 3b. Roles de fábrica (Administrador, Cajero) — igual que
+      //     el register: cada sucursal nace con sus 2 roles de sistema. Mismo
       //     manager → rollback total si algo falla (FASE 2, roles y permisos).
       await seedSystemRolesForCompany(manager, Number(savedCompany.id));
 

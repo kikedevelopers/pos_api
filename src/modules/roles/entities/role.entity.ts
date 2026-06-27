@@ -43,9 +43,9 @@ import type { PermissionKey } from '../internal/permission-catalog';
  * Roles de sistema (`is_system = true`)
  * --------------------------------------------------------------------------
  *
- *   Sembrados al crear la company (Administrador, Cajero, Inventarista). No son
- *   borrables (la regla la aplicará el service de Fase 2; la DB sólo persiste
- *   el flag).
+ *   Sembrados al crear la company (Administrador, Cajero). No son borrables (la
+ *   regla la aplica el service; la DB sólo persiste el flag). 'Administrador'
+ *   además es INMUTABLE (`is_editable = false`).
  */
 @Entity('roles')
 @Check('chk_roles_name_not_empty', 'length(btrim(name)) > 0')
@@ -94,6 +94,16 @@ export class Role {
    */
   @Column({ type: 'boolean', default: false })
   is_system!: boolean;
+
+  /**
+   * ¿El rol se puede editar/eliminar? Por defecto `true`. El rol de fábrica
+   * 'Administrador' nace con `is_editable = false` (INMUTABLE: acceso total
+   * inamovible, ni el owner lo edita o borra). 'Cajero' y todo rol creado vía
+   * API son editables. Los actions de update/delete rechazan (422) cuando es
+   * `false`; la DB sólo persiste el flag.
+   */
+  @Column({ type: 'boolean', default: true })
+  is_editable!: boolean;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

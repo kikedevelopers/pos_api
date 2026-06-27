@@ -5,8 +5,10 @@ import { seedSystemRolesForCompany } from '@/modules/roles/internal/system-roles
 /**
  * FASE 1 (ROLES Y PERMISOS) — back-fill de roles de fábrica.
  *
- * Siembra los 3 roles de sistema (Administrador, Cajero, Inventarista) para
- * TODAS las companies existentes que aún no los tengan. Companies nuevas los
+ * Siembra los roles de sistema de fábrica para TODAS las companies existentes
+ * que aún no los tengan. (En FASE 1 eran 3 —Administrador, Cajero,
+ * Inventarista—; FASE 5 los redujo a 2 y eliminó Inventarista vía
+ * `FinalizeFactoryRoles`.) Companies nuevas los
  * reciben en `RegisterAction`; esta migración cubre las preexistentes.
  *
  * Reutiliza `seedSystemRolesForCompany` (misma maquinaria que el register), que

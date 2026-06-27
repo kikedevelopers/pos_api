@@ -33,6 +33,7 @@ export class ListRolesAction {
               r.icon,
               r.permissions,
               r.is_system,
+              r.is_editable,
               r.created_at,
               r.updated_at,
               COUNT(e.id) FILTER (WHERE e.is_archived = false)::int AS employee_count

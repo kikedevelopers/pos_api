@@ -1,5 +1,5 @@
 import type { Logger } from '@nestjs/common';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 
 /**
@@ -16,6 +16,28 @@ export const PG_UNIQUE_VIOLATION = '23505';
  * catch genérico.
  */
 export const IDX_ROLES_NAME_UNIQUE = 'idx_roles_company_name_unique';
+
+/**
+ * Código de error programático para un rol inmutable (`is_editable = false`).
+ * Lo emiten update/delete cuando el target es el rol de fábrica 'Administrador'
+ * (acceso total inamovible). El front lo usa para ocultar acciones de edición.
+ */
+export const ROLE_NOT_EDITABLE = 'ROLE_NOT_EDITABLE';
+
+/**
+ * Falla (422) si el rol no es editable (`is_editable = false`). Aplica a
+ * update Y delete: el rol 'Administrador' es INMUTABLE para todos, owner
+ * incluido. No depende de `is_system` (es una restricción más fuerte y
+ * ortogonal: un rol puede ser de sistema y editable —p.ej. 'Cajero'—).
+ */
+export function assertRoleEditable(role: { is_editable: boolean }): void {
+  if (!role.is_editable) {
+    throw new UnprocessableEntityException({
+      message: 'Este rol no se puede editar',
+      payload: { code: ROLE_NOT_EDITABLE },
+    });
+  }
+}
 
 /**
  * Traduce errores de Postgres del dominio `roles` a `HttpException`s legibles.

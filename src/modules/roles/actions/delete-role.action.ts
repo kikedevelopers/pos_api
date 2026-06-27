@@ -2,6 +2,7 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { Role } from '../entities/role.entity';
+import { assertRoleEditable } from '../internal/role-constraint-errors';
 import { findRoleInCompany } from '../internal/role-lookups';
 
 /**
@@ -23,6 +24,10 @@ export class DeleteRoleAction {
   async execute(id: number, companyId: number): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const role = await findRoleInCompany(manager, id, companyId);
+
+      // Rol inmutable ('Administrador') → 422 (code ROLE_NOT_EDITABLE), antes
+      // que el check de sistema: un rol inmutable nunca se borra, ni el owner.
+      assertRoleEditable(role);
 
       if (role.is_system) {
         throw new UnprocessableEntityException('No se puede eliminar un rol de sistema');

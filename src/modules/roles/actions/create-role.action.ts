@@ -11,6 +11,7 @@ import { translateRoleConstraintError } from '../internal/role-constraint-errors
  *
  *   - `company_id` se asigna desde el parámetro (req.user) — NUNCA del DTO.
  *   - `is_system = false` SIEMPRE: no se crean roles de sistema vía API.
+ *   - `is_editable = true` SIEMPRE: no se crean roles inmutables vía API.
  *   - `permissions` se deduplica y se filtra a keys válidas (defensa en
  *     profundidad; el DTO ya valida con `@IsIn`).
  *   - Nombre duplicado por company (case/trim-insensitive) → 409 vía el índice
@@ -36,6 +37,9 @@ export class CreateRoleAction {
         icon: dto.icon ?? null,
         permissions,
         is_system: false,
+        // Los roles creados vía API SIEMPRE son editables: no se pueden crear
+        // roles inmutables (igual que `is_system = false`).
+        is_editable: true,
       });
 
       try {

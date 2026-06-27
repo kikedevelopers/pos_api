@@ -19,14 +19,14 @@ import { tryInitDataSource } from './helpers/e2e-db';
  *   3. Opt-in: `RUN_ROLES_E2E=1 pnpm test:e2e`.
  *
  * Cobertura:
- *   - GET /roles (3 de sistema, employee_count, orden).
- *   - POST /roles (201; 400 permission inválida; 409 nombre duplicado).
- *   - PUT /roles (editar custom y de sistema; is_system inmutable).
- *   - DELETE /roles (422 sistema; ok no-sistema → empleado queda sin rol).
+ *   - GET /roles (2 de sistema, employee_count, orden, is_editable).
+ *   - POST /roles (201 is_editable=true; 400 permission inválida; 409 nombre duplicado).
+ *   - PUT /roles (editar custom y Cajero; Administrador inmutable → 422).
+ *   - DELETE /roles (422 inmutable; 422 sistema; ok no-sistema → empleado queda sin rol).
  *   - 403 para no-owner (empleado).
  *   - Asignar role_id a empleado (create/update); role_id de otra company → 400.
  *   - GET /auth/profile incluye `permissions` (owner=18; empleado=rol; legacy).
- *   - Crear sucursal → nace con 3 roles de sistema.
+ *   - Crear sucursal → nace con 2 roles de sistema.
  *
  * Sigue el patrón de `auth.e2e-spec.ts`: registra owners con emails únicos y NO
  * limpia (Postgres de dev tolera filas residuales).
@@ -53,6 +53,7 @@ interface RolePayload {
   icon: string | null;
   permissions: string[];
   is_system: boolean;
+  is_editable: boolean;
   employee_count: number;
 }
 
@@ -141,20 +142,25 @@ describeIf('Roles (e2e)', () => {
     }
   });
 
-  // ---------- GET /roles: 3 de sistema, employee_count, orden ----------
-  it('GET /roles (200) lista los 3 roles de sistema, is_system primero', async () => {
+  // ---------- GET /roles: 2 de sistema, employee_count, orden, editabilidad ----------
+  it('GET /roles (200) lista los 2 roles de sistema, is_system primero', async () => {
     const res = await request(httpServer)
       .get('/api/v1/roles')
       .set('Authorization', `Bearer ${tokenA}`);
 
     expect(res.status).toBe(HttpStatus.OK);
     const roles = (res.body as SuccessEnvelope<RolePayload[]>).payload;
-    expect(roles).toHaveLength(3);
-    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero', 'Inventarista']);
+    // FASE 5: SOLO 2 roles de fábrica; 'Inventarista' fue eliminado.
+    expect(roles).toHaveLength(2);
+    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero']);
+    expect(roles.find((r) => r.name === 'Inventarista')).toBeUndefined();
     expect(roles.every((r) => r.is_system === true)).toBe(true);
     expect(roles.every((r) => r.employee_count === 0)).toBe(true);
     const admin = roles.find((r) => r.name === 'Administrador');
     expect(admin?.permissions).toHaveLength(18);
+    // Administrador INMUTABLE; Cajero EDITABLE.
+    expect(admin?.is_editable).toBe(false);
+    expect(roles.find((r) => r.name === 'Cajero')?.is_editable).toBe(true);
   });
 
   // ---------- POST /roles: 400 permission inválida ----------
@@ -185,6 +191,8 @@ describeIf('Roles (e2e)', () => {
     expect(res.status).toBe(HttpStatus.CREATED);
     const role = (res.body as SuccessEnvelope<RolePayload>).payload;
     expect(role.is_system).toBe(false);
+    // Todo rol creado vía API es editable (nunca inmutable).
+    expect(role.is_editable).toBe(true);
     expect(role.employee_count).toBe(0);
     expect(role.permissions).toEqual(['canAccessPOS', 'canAccessExpenses']);
     expect(role.color).toBe('#abcdef');
@@ -239,8 +247,36 @@ describeIf('Roles (e2e)', () => {
     expect(role.permissions).toEqual(['canAccessPOS']);
   });
 
-  // ---------- DELETE /roles/:id: 422 sobre rol de sistema ----------
-  it('DELETE /roles/:id (422) no permite borrar un rol de sistema', async () => {
+  // ---------- PUT /roles/:id: 422 sobre el rol INMUTABLE 'Administrador' ----------
+  it('PUT /roles/:id (422) no permite editar el Administrador → ROLE_NOT_EDITABLE', async () => {
+    const list = await request(httpServer)
+      .get('/api/v1/roles')
+      .set('Authorization', `Bearer ${tokenA}`);
+    const admin = (list.body as SuccessEnvelope<RolePayload[]>).payload.find(
+      (r) => r.name === 'Administrador',
+    );
+    expect(admin).toBeDefined();
+
+    const res = await request(httpServer)
+      .put(`/api/v1/roles/${admin!.id}`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ permissions: ['canAccessPOS'] });
+
+    expect(res.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect((res.body as ErrorEnvelope).payload?.code).toBe('ROLE_NOT_EDITABLE');
+
+    // El Administrador conserva sus 18 permisos (no se degradó).
+    const after = await request(httpServer)
+      .get('/api/v1/roles')
+      .set('Authorization', `Bearer ${tokenA}`);
+    const adminAfter = (after.body as SuccessEnvelope<RolePayload[]>).payload.find(
+      (r) => r.name === 'Administrador',
+    );
+    expect(adminAfter?.permissions).toHaveLength(18);
+  });
+
+  // ---------- DELETE /roles/:id: 422 sobre el rol INMUTABLE 'Administrador' ----------
+  it('DELETE /roles/:id (422) no permite borrar el Administrador → ROLE_NOT_EDITABLE', async () => {
     const list = await request(httpServer)
       .get('/api/v1/roles')
       .set('Authorization', `Bearer ${tokenA}`);
@@ -252,6 +288,24 @@ describeIf('Roles (e2e)', () => {
       .delete(`/api/v1/roles/${admin!.id}`)
       .set('Authorization', `Bearer ${tokenA}`);
 
+    expect(res.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect((res.body as ErrorEnvelope).payload?.code).toBe('ROLE_NOT_EDITABLE');
+  });
+
+  // ---------- DELETE /roles/:id: 422 sobre rol de sistema EDITABLE (Cajero) ----------
+  it('DELETE /roles/:id (422) no permite borrar el Cajero (rol de sistema)', async () => {
+    const list = await request(httpServer)
+      .get('/api/v1/roles')
+      .set('Authorization', `Bearer ${tokenA}`);
+    const cajero = (list.body as SuccessEnvelope<RolePayload[]>).payload.find(
+      (r) => r.name === 'Cajero',
+    );
+
+    const res = await request(httpServer)
+      .delete(`/api/v1/roles/${cajero!.id}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    // Cajero es editable pero de sistema → 422 por is_system.
     expect(res.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
   });
 
@@ -410,7 +464,7 @@ describeIf('Roles (e2e)', () => {
   });
 
   // ---------- Seed de roles en una sucursal nueva ----------
-  it('POST /branches → la sucursal nace con los 3 roles de sistema', async () => {
+  it('POST /branches → la sucursal nace con los 2 roles de sistema', async () => {
     if (!ds) {
       console.warn('pos_db no disponible — verificación de seed en sucursal omitida');
       return;
@@ -433,7 +487,7 @@ describeIf('Roles (e2e)', () => {
       `SELECT name, is_system FROM roles WHERE company_id = $1 AND is_system = true ORDER BY name`,
       [String(branch.id)],
     );
-    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero', 'Inventarista']);
+    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero']);
   });
 
   // Sanity: companyAId capturado (depende de pos_db).

@@ -21,10 +21,13 @@ import { tryInitDataSource } from './helpers/e2e-db';
  * Cobertura:
  *   - El `PermissionsGuard` GATEA de verdad a un empleado en los endpoints
  *     donde su `@Roles` ya admite `employee` y añadimos `@RequirePermission`:
- *       · GET /purchases (canAccessPurchase): Inventarista (con la key) pasa;
- *         Cajero (sin la key) → 403.
+ *       · GET /purchases (canAccessPurchase): un rol custom "Inventario" (con la
+ *         key) pasa; Cajero (sin la key) → 403.
  *       · GET /pos-reports/sales (canAccessSalesReport): Cajero (con la key)
- *         pasa; Inventarista (sin la key) → 403.
+ *         pasa; el rol "Inventario" (sin la key) → 403.
+ *
+ * FASE 5: 'Inventarista' dejó de ser rol de fábrica; el suite crea un rol custom
+ * equivalente para los cruces (mismas keys de catálogo/compras).
  *   - owner SIEMPRE pasa los endpoints protegidos (mutaciones y reportes).
  *   - Mutación protegida (POST /banks): owner pasa; un empleado sin la key
  *     recibe 403.
@@ -134,16 +137,33 @@ describeIf('Permissions enforcement (e2e)', () => {
       .set('Authorization', `Bearer ${ownerToken}`);
     const roles = (rolesRes.body as SuccessEnvelope<RolePayload[]>).payload;
     const cajero = roles.find((r) => r.name === 'Cajero');
-    const inventarista = roles.find((r) => r.name === 'Inventarista');
     expect(cajero).toBeDefined();
-    expect(inventarista).toBeDefined();
 
-    // Sanity de los seeds: las keys que sustentan el cruce de tests.
+    // Sanity del seed: las keys que sustentan el cruce de tests.
     expect(cajero!.permissions).toContain('canAccessSalesReport');
     expect(cajero!.permissions).not.toContain('canAccessPurchase');
     expect(cajero!.permissions).not.toContain('canAccessBanks');
-    expect(inventarista!.permissions).toContain('canAccessPurchase');
-    expect(inventarista!.permissions).not.toContain('canAccessSalesReport');
+
+    // FASE 5: 'Inventarista' YA NO es rol de fábrica. Creamos un rol custom
+    // equivalente (acceso a catálogo + compras/proveedores) para los cruces de
+    // enforcement: tiene canAccessPurchase y NO canAccessSalesReport.
+    const invRes = await request(httpServer)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        name: `Inventario ${uniqueSuffix()}`,
+        permissions: [
+          'canAccessInventory',
+          'canAccessPackaging',
+          'canAccessCategories',
+          'canAccessSuppliers',
+          'canAccessPurchase',
+        ],
+      });
+    expect(invRes.status).toBe(HttpStatus.CREATED);
+    const inventarista = (invRes.body as SuccessEnvelope<RolePayload>).payload;
+    expect(inventarista.permissions).toContain('canAccessPurchase');
+    expect(inventarista.permissions).not.toContain('canAccessSalesReport');
 
     cajeroToken = await createEmployeeWithRole(
       `cajero-${uniqueSuffix()}`,
@@ -153,7 +173,7 @@ describeIf('Permissions enforcement (e2e)', () => {
     inventaristaToken = await createEmployeeWithRole(
       `invent-${uniqueSuffix()}`,
       'InventPass1!',
-      inventarista!.id,
+      inventarista.id,
     );
   });
 

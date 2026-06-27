@@ -14,17 +14,24 @@ export interface SystemRoleSeed {
   color: string;
   /** Permisos del catálogo que el rol concede. */
   permissions: readonly PermissionKey[];
+  /**
+   * ¿El owner puede editarlo/eliminarlo? El 'Administrador' es INMUTABLE
+   * (`is_editable = false`, acceso total inamovible); el 'Cajero' SÍ es
+   * editable. Persistido en `roles.is_editable`.
+   */
+  isEditable: boolean;
 }
 
 /**
- * Los 3 roles de fábrica que toda company nueva recibe. Mantener en paridad
+ * Los 2 roles de fábrica que toda company nueva recibe. Mantener en paridad
  * con placepos. El orden es estable (Administrador primero) por prolijidad,
  * pero el seed es idempotente por nombre, no por orden.
  *
  *   - Administrador → TODAS las 18 keys (derivadas de `PERMISSION_KEYS` para
- *     que el set crezca solo si el catálogo crece).
- *   - Cajero        → operación de venta + informes de su día.
- *   - Inventarista  → catálogo + compras/proveedores.
+ *     que el set crezca solo si el catálogo crece). INMUTABLE
+ *     (`is_editable = false`): no se puede editar ni eliminar, ni siquiera el
+ *     owner — concede siempre acceso total.
+ *   - Cajero        → operación de venta + informes de su día. EDITABLE.
  */
 export const SYSTEM_ROLE_SEEDS: readonly SystemRoleSeed[] = [
   {
@@ -32,6 +39,7 @@ export const SYSTEM_ROLE_SEEDS: readonly SystemRoleSeed[] = [
     icon: 'ShieldCheck',
     color: '#6366f1',
     permissions: [...PERMISSION_KEYS],
+    isEditable: false,
   },
   {
     name: 'Cajero',
@@ -44,18 +52,7 @@ export const SYSTEM_ROLE_SEEDS: readonly SystemRoleSeed[] = [
       'canAccessExpenses',
       'canAccessCustomers',
     ],
-  },
-  {
-    name: 'Inventarista',
-    icon: 'Package',
-    color: '#f59e0b',
-    permissions: [
-      'canAccessInventory',
-      'canAccessPackaging',
-      'canAccessCategories',
-      'canAccessSuppliers',
-      'canAccessPurchase',
-    ],
+    isEditable: true,
   },
 ];
 
@@ -65,7 +62,7 @@ function normalizeRoleName(name: string): string {
 }
 
 /**
- * Siembra (de forma IDEMPOTENTE) los 3 roles de fábrica (`is_system = true`)
+ * Siembra (de forma IDEMPOTENTE) los 2 roles de fábrica (`is_system = true`)
  * de una company.
  *
  * Reutilizable en dos contextos:
@@ -105,9 +102,16 @@ export async function seedSystemRolesForCompany(
     }
 
     await manager.query(
-      `INSERT INTO roles (company_id, name, color, icon, permissions, is_system)
-       VALUES ($1, $2, $3, $4, $5::jsonb, true)`,
-      [cid, seed.name, seed.color, seed.icon, JSON.stringify(seed.permissions)],
+      `INSERT INTO roles (company_id, name, color, icon, permissions, is_system, is_editable)
+       VALUES ($1, $2, $3, $4, $5::jsonb, true, $6)`,
+      [
+        cid,
+        seed.name,
+        seed.color,
+        seed.icon,
+        JSON.stringify(seed.permissions),
+        seed.isEditable,
+      ],
     );
     present.add(norm);
   }
