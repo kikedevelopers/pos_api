@@ -45,6 +45,14 @@ export class EmployeeResponseDto {
   @ApiProperty({ example: EmployeeRole.EMPLOYEE, enum: EmployeeRole })
   role!: EmployeeRole;
 
+  @ApiPropertyOptional({
+    example: 5,
+    nullable: true,
+    description:
+      'FASE 2 (ROLES) — Id del rol PERSONALIZADO de acceso a módulos. NULL = sin rol (permisos legacy).',
+  })
+  role_id!: number | null;
+
   @ApiProperty({ example: false })
   login_enabled!: boolean;
 
@@ -121,6 +129,7 @@ function toEmployeeBaseResponse(
     email: employee.email,
     address: employee.address,
     role: employee.role,
+    role_id: employee.role_id !== null ? Number(employee.role_id) : null,
     login_enabled: employee.login_enabled,
     username: employee.username,
     has_credentials: Boolean(employee.username),

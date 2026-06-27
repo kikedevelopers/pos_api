@@ -4,6 +4,8 @@ import type { Company } from '@/modules/companies/entities/company.entity';
 import type { Employee } from '@/modules/employees/entities/employee.entity';
 import type { User } from '@/modules/users/entities/user.entity';
 
+import type { PermissionKey } from '@/modules/roles/internal/permission-catalog';
+
 import type { AuthUserDto, CompanyProfileItemDto, UserProfileDto } from '../dto/auth-response.dto';
 
 import { bigintToNumber } from './bigint-to-number';
@@ -58,9 +60,14 @@ export function employeeToAuthUserDto(employee: Employee, logger: Logger): AuthU
 /**
  * Proyecta un `User` al `UserProfileDto` de `GET /auth/profile`.
  *
- * Reglas: igual que `userToAuthUserDto` + añade `created_at` ISO.
+ * Reglas: igual que `userToAuthUserDto` + añade `created_at` ISO + los
+ * `permissions` efectivos (resueltos por el caller con `RolesService`).
  */
-export function userToUserProfileDto(user: User, logger: Logger): UserProfileDto {
+export function userToUserProfileDto(
+  user: User,
+  logger: Logger,
+  permissions: PermissionKey[],
+): UserProfileDto {
   return {
     id: bigintToNumber(user.id, logger, 'User'),
     name: user.name,
@@ -70,6 +77,7 @@ export function userToUserProfileDto(user: User, logger: Logger): UserProfileDto
     created_at: user.created_at.toISOString(),
     branches_enabled: user.branches_enabled ?? false,
     branches_allowed: user.branches_allowed ?? 0,
+    permissions,
   };
 }
 
@@ -77,8 +85,15 @@ export function userToUserProfileDto(user: User, logger: Logger): UserProfileDto
  * Proyecta un `Employee` al `UserProfileDto` de `GET /auth/profile`.
  *
  * Paridad con `placepos/auth.routes.ts:230` (path employee).
+ *
+ * `permissions` son los efectivos del empleado (rol personalizado o legacy),
+ * resueltos por el caller con `RolesService`.
  */
-export function employeeToUserProfileDto(employee: Employee, logger: Logger): UserProfileDto {
+export function employeeToUserProfileDto(
+  employee: Employee,
+  logger: Logger,
+  permissions: PermissionKey[],
+): UserProfileDto {
   return {
     id: bigintToNumber(employee.id, logger, 'Employee'),
     name: employee.name,
@@ -89,6 +104,7 @@ export function employeeToUserProfileDto(employee: Employee, logger: Logger): Us
     // Los empleados no gestionan sucursales.
     branches_enabled: false,
     branches_allowed: 0,
+    permissions,
   };
 }
 

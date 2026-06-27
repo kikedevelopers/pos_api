@@ -3,8 +3,10 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsOptional,
+  IsPositive,
   IsString,
   MaxLength,
   MinLength,
@@ -66,6 +68,21 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsEnum(EmployeeRole, { message: 'role debe ser uno de: manager, employee' })
   role?: EmployeeRole;
+
+  @ApiPropertyOptional({
+    example: 5,
+    nullable: true,
+    description:
+      'FASE 2 (ROLES) — Id del rol PERSONALIZADO de acceso a módulos. Opcional. ' +
+      'Debe pertenecer a la company del actor. `null` o ausente = sin rol (permisos legacy).',
+  })
+  // Sólo validar tipo cuando viene un valor no-null. `null` se acepta para
+  // limpiar el rol en el update; el service valida la pertenencia a la company.
+  @IsOptional()
+  @ValidateIf((o: CreateEmployeeDto) => o.role_id !== null)
+  @IsInt({ message: 'role_id debe ser un entero' })
+  @IsPositive({ message: 'role_id debe ser un entero positivo' })
+  role_id?: number | null;
 
   @ApiProperty({
     example: false,

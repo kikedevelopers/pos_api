@@ -8,6 +8,7 @@ import type { CreateEmployeeDto } from '../dto/create-employee.dto';
 import { Employee, EmployeeRole } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
 import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
+import { assertRoleBelongsToCompany } from '../internal/role-validation';
 
 /**
  * Datos del owner creador que el controller propaga al action. Evita pasar el
@@ -67,12 +68,20 @@ export class CreateEmployeeAction {
         : null;
 
     const saved = await this.dataSource.transaction<Employee>(async (manager) => {
+      // FASE 2 (ROLES): si viene role_id, debe pertenecer a la company del actor
+      // (blindaje multi-tenant). null/ausente → sin rol (permisos legacy).
+      if (dto.role_id !== undefined && dto.role_id !== null) {
+        await assertRoleBelongsToCompany(manager, dto.role_id, companyId);
+      }
+
       const employee = manager.create(Employee, {
         company_id: String(companyId),
         name: dto.name,
         phone: dto.phone ?? null,
         email: dto.email ?? null,
         address: dto.address ?? null,
+        // FASE 2 (ROLES): rol personalizado opcional (FK validada arriba).
+        role_id: dto.role_id != null ? String(dto.role_id) : null,
         // Default `employee` cuando el cliente no envía role (paridad PlacePos
         // — su formulario no expone el campo). El owner puede promoverlo
         // a `manager` después vía PUT.

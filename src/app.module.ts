@@ -51,6 +51,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { RolesModule } from './modules/roles/roles.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { SubscriptionGuard } from './modules/subscriptions/subscription.guard';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
@@ -172,6 +173,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CompaniesModule,
     UsersModule,
     EmployeesModule,
+    // FASE 2 — Roles y permisos (CRUD /roles + resolución de permisos
+    // efectivos para el perfil). Va antes de AuthModule, que lo importa para
+    // exponer `permissions` en GET /auth/profile.
+    RolesModule,
     // Fase 3 — Catálogo.
     PackagingsModule,
     // Fase 2A — Categorías (debe declararse antes de ProductsModule para que

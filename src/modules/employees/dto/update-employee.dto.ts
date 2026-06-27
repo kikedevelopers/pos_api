@@ -21,5 +21,5 @@ import { CreateEmployeeDto } from './create-employee.dto';
  * vacío no rompe). `PickType` selecciona el subconjunto permitido.
  */
 export class UpdateEmployeeDto extends PartialType(
-  PickType(CreateEmployeeDto, ['name', 'phone', 'email', 'address', 'role'] as const),
+  PickType(CreateEmployeeDto, ['name', 'phone', 'email', 'address', 'role', 'role_id'] as const),
 ) {}

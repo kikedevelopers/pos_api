@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import type { UpdateEmployeeDto } from '../dto/update-employee.dto';
 import { Employee } from '../entities/employee.entity';
 import { findEmployeeInCompany } from '../internal/employee-lookups';
+import { assertRoleBelongsToCompany } from '../internal/role-validation';
 
 /**
  * Actualiza campos de perfil (name/phone/email/address/role). NO toca
@@ -47,6 +48,15 @@ export class UpdateEmployeeAction {
       }
       if (dto.role !== undefined) {
         patch.role = dto.role;
+      }
+      // FASE 2 (ROLES): asignar/limpiar el rol personalizado. Si viene un
+      // role_id no-null, validar pertenencia a la company (multi-tenant). `null`
+      // desasigna el rol (cae a permisos legacy).
+      if (dto.role_id !== undefined) {
+        if (dto.role_id !== null) {
+          await assertRoleBelongsToCompany(manager, dto.role_id, companyId);
+        }
+        patch.role_id = dto.role_id != null ? String(dto.role_id) : null;
       }
 
       if (Object.keys(patch).length === 0) {

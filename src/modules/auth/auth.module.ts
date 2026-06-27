@@ -8,6 +8,7 @@ import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { EmployeesModule } from '@/modules/employees/employees.module';
 import { ProductsModule } from '@/modules/products/products.module';
+import { RolesModule } from '@/modules/roles/roles.module';
 import { SubscriptionsModule } from '@/modules/subscriptions/subscriptions.module';
 import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.module';
 import { UsersModule } from '@/modules/users/users.module';
@@ -71,6 +72,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     // POST /branches/:id/clone-products. ProductsModule no importa AuthModule
     // (sin ciclo).
     ProductsModule,
+    // FASE 2 (ROLES): expone RolesService para resolver los permisos efectivos
+    // del usuario en GET /auth/profile. RolesModule no importa AuthModule.
+    RolesModule,
   ],
   controllers: [AuthController, BranchesController],
   providers: [

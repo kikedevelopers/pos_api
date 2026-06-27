@@ -1,5 +1,6 @@
 import {
   isValidPermissionKey,
+  LEGACY_EMPLOYEE_PERMISSIONS,
   PERMISSION_KEYS,
   PERMISSION_SECTIONS,
   type PermissionKey,
@@ -91,6 +92,31 @@ describe('permission-catalog', () => {
       'Operación',
       'Sistema',
     ]);
+  });
+
+  // FASE 2 (ROLES) — fallback de empleado sin rol personalizado. El array es
+  // contrato de PARIDAD con placepos: mismas keys, mismo orden.
+  describe('LEGACY_EMPLOYEE_PERMISSIONS', () => {
+    it('es exactamente el set legacy acordado, en orden', () => {
+      expect(LEGACY_EMPLOYEE_PERMISSIONS).toEqual([
+        'canAccessPOS',
+        'canAccessInventory',
+        'canAccessPackaging',
+        'canAccessCategories',
+        'canAccessCustomers',
+        'canAccessCarriers',
+        'canAccessSalesReport',
+        'canAccessClientsReport',
+        'canAccessExpenses',
+      ]);
+    });
+
+    it('todas sus keys son válidas y sin duplicados', () => {
+      for (const key of LEGACY_EMPLOYEE_PERMISSIONS) {
+        expect(isValidPermissionKey(key)).toBe(true);
+      }
+      expect(new Set(LEGACY_EMPLOYEE_PERMISSIONS).size).toBe(LEGACY_EMPLOYEE_PERMISSIONS.length);
+    });
   });
 
   describe('isValidPermissionKey', () => {

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import type { UserType } from '@/common/types/jwt-payload.type';
+import type { PermissionKey } from '@/modules/roles/internal/permission-catalog';
 
 /**
  * Usuario serializado tal como lo expone el contrato PlacePos en el payload
@@ -122,6 +123,22 @@ export class UserProfileDto {
 
   @ApiProperty({ example: 2 })
   branches_allowed!: number;
+
+  /**
+   * FASE 2 (ROLES) — Permisos EFECTIVOS de acceso a módulos del usuario.
+   *
+   *   - owner/superadmin → las 18 keys del catálogo (acceso total).
+   *   - empleado con rol personalizado → las keys de su rol.
+   *   - empleado sin rol → permisos legacy (`LEGACY_EMPLOYEE_PERMISSIONS`).
+   *
+   * El cliente gatea la visibilidad de módulos con este array.
+   */
+  @ApiProperty({
+    example: ['canAccessPOS', 'canAccessExpenses'],
+    isArray: true,
+    description: 'Permisos efectivos de acceso a módulos.',
+  })
+  permissions!: PermissionKey[];
 }
 
 /**

@@ -5,6 +5,8 @@ import type { Repository } from 'typeorm';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Employee } from '@/modules/employees/entities/employee.entity';
+import { PERMISSION_KEYS, type PermissionKey } from '@/modules/roles/internal/permission-catalog';
+import { RolesService } from '@/modules/roles/roles.service';
 import { UsersService } from '@/modules/users/users.service';
 
 import type { ProfileResponseDto, UserProfileDto } from '../dto/auth-response.dto';
@@ -41,6 +43,7 @@ export class GetProfileAction {
     @InjectRepository(Employee)
     private readonly employeesRepo: Repository<Employee>,
     private readonly listBranchesAction: ListBranchesAction,
+    private readonly rolesService: RolesService,
   ) {}
 
   async execute(authUser: AuthUser): Promise<ProfileResponseDto> {
@@ -61,11 +64,15 @@ export class GetProfileAction {
           created_at: new Date(0).toISOString(),
           branches_enabled: false,
           branches_allowed: 0,
+          // superadmin → acceso total (las 18 keys del catálogo).
+          permissions: [...PERMISSION_KEYS],
         },
       };
     }
 
-    const userProfile = await this.resolveUserProfile(authUser);
+    // Permisos efectivos del usuario (owner→todas; empleado→rol o legacy).
+    const permissions = await this.rolesService.resolveEffectivePermissions(authUser);
+    const userProfile = await this.resolveUserProfile(authUser, permissions);
 
     const company = await this.companiesRepo.findOne({
       where: { id: String(authUser.company_id) },
@@ -106,7 +113,10 @@ export class GetProfileAction {
    *     `placepos/auth.routes.ts:217`.
    *   - resto (`'user'`): lee `users` por id en company.
    */
-  private async resolveUserProfile(authUser: AuthUser): Promise<UserProfileDto> {
+  private async resolveUserProfile(
+    authUser: AuthUser,
+    permissions: PermissionKey[],
+  ): Promise<UserProfileDto> {
     const companyId = authUser.company_id as number;
 
     if (authUser.account === 'employee') {
@@ -120,7 +130,7 @@ export class GetProfileAction {
       if (!employee || !employee.login_enabled) {
         throw new NotFoundException('Empleado no encontrado');
       }
-      return employeeToUserProfileDto(employee, this.logger);
+      return employeeToUserProfileDto(employee, this.logger, permissions);
     }
 
     // El owner (account 'user'): por user_id, no por company del JWT — su
@@ -129,6 +139,6 @@ export class GetProfileAction {
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }
-    return userToUserProfileDto(user, this.logger);
+    return userToUserProfileDto(user, this.logger, permissions);
   }
 }

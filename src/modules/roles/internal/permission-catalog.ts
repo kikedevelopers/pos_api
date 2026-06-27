@@ -118,6 +118,30 @@ export const PERMISSION_SECTIONS: readonly PermissionSection[] = [
   },
 ];
 
+/**
+ * Permisos LEGACY de un empleado SIN rol personalizado asignado (fallback).
+ *
+ * Cuando un `Employee` no tiene `role_id` (o el rol referenciado no se
+ * encuentra), `resolveEffectivePermissions` cae a este set. Reproduce el
+ * acceso histórico de PlacePos para empleados antes de existir el sistema de
+ * roles personalizados, de modo que las cuentas viejas no pierdan acceso al
+ * migrar.
+ *
+ * PARIDAD: debe permanecer IDÉNTICO (mismas keys, mismo orden) a su gemelo en
+ * placepos. NO reordenar ni cambiar sin replicar el cambio allá.
+ */
+export const LEGACY_EMPLOYEE_PERMISSIONS: PermissionKey[] = [
+  'canAccessPOS',
+  'canAccessInventory',
+  'canAccessPackaging',
+  'canAccessCategories',
+  'canAccessCustomers',
+  'canAccessCarriers',
+  'canAccessSalesReport',
+  'canAccessClientsReport',
+  'canAccessExpenses',
+];
+
 /** Set de búsqueda O(1) para validación. Se construye una sola vez al cargar. */
 const PERMISSION_KEY_SET: ReadonlySet<string> = new Set(PERMISSION_KEYS);
 
