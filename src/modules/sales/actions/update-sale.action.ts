@@ -14,6 +14,7 @@ import {
   CashRegisterLog,
   CashRegisterLogType,
 } from '@/modules/cash-register/entities/cash-register-log.entity';
+import { getOrCreateCashRegisterForUser } from '@/modules/cash-register/internal/get-or-create-cash-register-for-user.helper';
 import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
 import {
   CreditNote,
@@ -770,19 +771,15 @@ export class UpdateSaleAction {
           : CashRegisterLogType.DEBIT_NOTE;
       const direction = params.direction === 'CREDIT' ? 'OUT' : 'IN';
 
-      // Validar ownership multi-tenant de la cash_register.
-      const register = await manager.findOne(CashRegister, {
-        where: {
-          id: String(params.source.id),
-          company_id: String(params.companyId),
-        },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!register) {
-        throw new UnprocessableEntityException(
-          'La caja registradora seleccionada no pertenece a la empresa',
-        );
-      }
+      // La caja es PERMANENTE por `(company_id, user_id)`: se resuelve desde el
+      // actor autenticado, NO desde `source.id` (vestigial para cash_register —
+      // PlacePos envía `id: 0` por ser una caja única). Espejo de
+      // `reverseCashPayment` en `void-sale.action.ts`.
+      const register = await getOrCreateCashRegisterForUser(
+        manager,
+        params.companyId,
+        params.actor.id,
+      );
 
       const currentBalance = toBig(register.balance);
       const newBalance =

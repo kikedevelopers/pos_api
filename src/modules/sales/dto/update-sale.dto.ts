@@ -189,11 +189,13 @@ export class SaleCorrectionSourceDto {
   @ApiProperty({
     example: 1,
     description:
-      'ID de la cuenta (bank/wallet) o de la cash_register asociada. Multi-tenant: el service valida ownership.',
+      'ID de la cuenta bank/wallet asociada (el service valida ownership multi-tenant). ' +
+      'Para `cash_register` es vestigial: PlacePos envía `0` porque la caja es única por ' +
+      'usuario y el service la resuelve desde el actor autenticado, no desde este id.',
   })
   @Type(() => Number)
   @IsInt({ message: 'correction_source.id debe ser entero' })
-  @Min(1, { message: 'correction_source.id debe ser >= 1' })
+  @Min(0, { message: 'correction_source.id debe ser >= 0' })
   id!: number;
 
   @ApiProperty({ example: 'Caja registradora principal' })
