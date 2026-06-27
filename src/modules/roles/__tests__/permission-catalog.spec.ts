@@ -1,0 +1,113 @@
+import {
+  isValidPermissionKey,
+  PERMISSION_KEYS,
+  PERMISSION_SECTIONS,
+  type PermissionKey,
+} from '../internal/permission-catalog';
+
+/**
+ * Tests unitarios del catálogo canónico de permisos.
+ *
+ * Blindan la PARIDAD con placepos (mismas 18 keys, mismo orden, mismas
+ * secciones/labels) y los invariantes de los que depende todo el sistema de
+ * roles:
+ *   - exactamente 18 keys, sin duplicados.
+ *   - toda key aparece en EXACTAMENTE una sección (cobertura total, sin huérfanas).
+ *   - las secciones no inventan keys fuera del catálogo.
+ *   - `isValidPermissionKey` acepta sólo keys del catálogo.
+ */
+describe('permission-catalog', () => {
+  // Snapshot literal de las 18 keys EXACTAS, en orden. Si alguien reordena o
+  // renombra una key sin querer, este test lo caza (y recuerda replicar en
+  // placepos).
+  const EXPECTED_KEYS: PermissionKey[] = [
+    'canAccessDashboard',
+    'canAccessPOS',
+    'canAccessInventory',
+    'canAccessPackaging',
+    'canAccessCategories',
+    'canAccessBanks',
+    'canAccessWallets',
+    'canAccessCustomers',
+    'canAccessEmployees',
+    'canAccessCarriers',
+    'canAccessSuppliers',
+    'canAccessPurchase',
+    'canAccessSalesReport',
+    'canAccessDailyClosureReport',
+    'canAccessCashierReport',
+    'canAccessClientsReport',
+    'canAccessExpenses',
+    'canAccessSettings',
+  ];
+
+  it('expone exactamente 18 keys en el orden canónico', () => {
+    expect(PERMISSION_KEYS).toHaveLength(18);
+    expect([...PERMISSION_KEYS]).toEqual(EXPECTED_KEYS);
+  });
+
+  it('no tiene keys duplicadas', () => {
+    const unique = new Set<string>(PERMISSION_KEYS);
+    expect(unique.size).toBe(PERMISSION_KEYS.length);
+  });
+
+  it('cada key del catálogo aparece en EXACTAMENTE una sección', () => {
+    const keysInSections = PERMISSION_SECTIONS.flatMap((section) =>
+      section.items.map((item) => item.key),
+    );
+
+    // Cobertura total: las 18 keys están repartidas.
+    expect(keysInSections).toHaveLength(PERMISSION_KEYS.length);
+    expect(new Set(keysInSections)).toEqual(new Set(PERMISSION_KEYS));
+
+    // Sin repeticiones entre secciones.
+    expect(new Set(keysInSections).size).toBe(keysInSections.length);
+
+    // Toda key del catálogo está presente en alguna sección.
+    for (const key of PERMISSION_KEYS) {
+      expect(keysInSections).toContain(key);
+    }
+  });
+
+  it('las secciones no contienen keys fuera del catálogo', () => {
+    for (const section of PERMISSION_SECTIONS) {
+      expect(section.title.length).toBeGreaterThan(0);
+      for (const item of section.items) {
+        expect(isValidPermissionKey(item.key)).toBe(true);
+        expect(item.label.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('mantiene los títulos de sección en el orden acordado', () => {
+    const titles = PERMISSION_SECTIONS.map((section) => section.title);
+    expect(titles).toEqual([
+      'General',
+      'Catálogos',
+      'Tesorería',
+      'Terceros',
+      'Proveedores',
+      'Informes',
+      'Operación',
+      'Sistema',
+    ]);
+  });
+
+  describe('isValidPermissionKey', () => {
+    it('acepta todas las keys del catálogo', () => {
+      for (const key of PERMISSION_KEYS) {
+        expect(isValidPermissionKey(key)).toBe(true);
+      }
+    });
+
+    it('rechaza keys desconocidas y valores no-string', () => {
+      expect(isValidPermissionKey('canAccessLicenses')).toBe(false);
+      expect(isValidPermissionKey('canAccessUnknown')).toBe(false);
+      expect(isValidPermissionKey('')).toBe(false);
+      expect(isValidPermissionKey(null)).toBe(false);
+      expect(isValidPermissionKey(undefined)).toBe(false);
+      expect(isValidPermissionKey(123)).toBe(false);
+      expect(isValidPermissionKey({})).toBe(false);
+    });
+  });
+});

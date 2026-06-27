@@ -5,6 +5,7 @@ import { DataSource, QueryFailedError } from 'typeorm';
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
 import { CompanyMember } from '@/modules/companies/entities/company-member.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
+import { seedSystemRolesForCompany } from '@/modules/roles/internal/system-roles';
 import { CreateSubscriptionAction } from '@/modules/subscriptions/actions/create-subscription.action';
 import {
   SUBSCRIPTION_MIGRATION_DAYS,
@@ -141,6 +142,11 @@ export class RegisterAction {
       // 5. Seeds esenciales (wallet, ticket_settings, app_settings,
       //    alert_configs). Comparten el `manager`: rollback total si algo falla.
       await this.seedCompanyAction.execute(manager, { companyId, createdBy });
+
+      // 5b. Roles de fábrica (Administrador, Cajero, Inventarista) de la company.
+      //     Idempotente y dentro de la misma transacción: cada company nace con
+      //     sus roles de sistema (FASE 1, roles y permisos).
+      await seedSystemRolesForCompany(manager, companyId);
 
       // 6. Suscripción ÚNICA del owner — vive en el negocio principal y cubre
       //    también sus futuras sucursales. Registro normal = 10 días; migración

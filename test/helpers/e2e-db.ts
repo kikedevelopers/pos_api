@@ -134,6 +134,10 @@ export async function cleanupCompany(ds: DataSource, companyId: number): Promise
   await ds.query(`DELETE FROM categories WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM packagings WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM app_settings WHERE company_id = $1`, [cid]);
+  // FASE 1 (ROLES Y PERMISOS): roles tiene FK RESTRICT a companies. employees.
+  // role_id es SET NULL, así que borrar roles no arrastra empleados. Hay que
+  // eliminarlos antes que la company.
+  await ds.query(`DELETE FROM roles WHERE company_id = $1`, [cid]);
   await ds.query(`DELETE FROM company_members WHERE company_id = $1`, [cid]);
   // Usuarios desechables ligados a esta company (su company primaria). Borrarlos
   // cascada-elimina sus company_members en OTRAS companies (FK ON DELETE CASCADE),

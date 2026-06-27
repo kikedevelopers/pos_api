@@ -2,6 +2,9 @@ import { HttpStatus, type INestApplication, ValidationPipe } from '@nestjs/commo
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { Server } from 'node:http';
 import request from 'supertest';
+import type { DataSource } from 'typeorm';
+
+import { tryInitDataSource } from './helpers/e2e-db';
 
 // IMPORTANTE: NO importamos `AppModule` ni nada de `src/` a nivel de módulo.
 // `ConfigModule.forRoot` corre al cargar `AppModule` y valida env (Joi); si
@@ -87,6 +90,9 @@ const uniqueSuffix = (): string =>
 describeIf('Auth (e2e)', () => {
   let app: INestApplication;
   let httpServer: Server;
+  // DataSource auxiliar para aserciones directas en BD (FASE 1: roles de sistema
+  // sembrados por el register). Best-effort: si no conecta, el test lo omite.
+  let ds: DataSource | null = null;
 
   // Datos compartidos entre tests para evitar 60 registros por corrida.
   // Shape PLANO — paridad cliente PlacePos en modo CLOUD.
@@ -127,9 +133,13 @@ describeIf('Auth (e2e)', () => {
     app.setGlobalPrefix('api/v1');
     await app.init();
     httpServer = app.getHttpServer() as Server;
+    ds = await tryInitDataSource();
   });
 
   afterAll(async () => {
+    if (ds) {
+      await ds.destroy();
+    }
     if (app) {
       await app.close();
     }
@@ -147,6 +157,33 @@ describeIf('Auth (e2e)', () => {
     expect(body.payload.user.email).toBe(validRegister.email);
     expect(body.payload.user.type).toBe('owner');
     issuedToken = body.payload.access_token;
+  });
+
+  // ---------- 1b) FASE 1: el register siembra los 3 roles de sistema ----------
+  it('tras POST /auth/register la company nace con los 3 roles de sistema', async () => {
+    if (!ds) {
+      console.warn('pos_db no disponible — verificación de roles omitida');
+      return;
+    }
+
+    const userRows: Array<{ company_id: string }> = await ds.query(
+      `SELECT company_id FROM users WHERE email = $1`,
+      [validRegister.email],
+    );
+    expect(userRows).toHaveLength(1);
+    const companyId = userRows[0].company_id;
+
+    const roles: Array<{ name: string; is_system: boolean; permissions: string[] }> = await ds.query(
+      `SELECT name, is_system, permissions FROM roles
+       WHERE company_id = $1 AND is_system = true ORDER BY name`,
+      [companyId],
+    );
+
+    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero', 'Inventarista']);
+    expect(roles.every((r) => r.is_system === true)).toBe(true);
+    // Administrador concede las 18 keys; sanity sobre el conteo.
+    const admin = roles.find((r) => r.name === 'Administrador');
+    expect(admin?.permissions).toHaveLength(18);
   });
 
   // ---------- 2) register con email tomado ----------

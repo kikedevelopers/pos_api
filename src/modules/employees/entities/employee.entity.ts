@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 
 import { Company } from '@/modules/companies/entities/company.entity';
+import { Role } from '@/modules/roles/entities/role.entity';
 import { User } from '@/modules/users/entities/user.entity';
 
 /**
@@ -190,6 +191,28 @@ export class Employee {
   })
   @JoinColumn({ name: 'user_id' })
   user!: User | null;
+
+  /**
+   * FK al rol PERSONALIZADO (`roles.id`) que define los módulos accesibles del
+   * empleado (FASE 1, modelo de datos). NULL = sin rol personalizado asignado
+   * (cae al control por rol fijo legacy hasta Fase 2). Mapeado como
+   * `string | null` porque pg devuelve bigint como string.
+   *
+   * FK `ON DELETE SET NULL`: borrar un rol desasigna a sus empleados, no los
+   * borra. Índice parcial-no, índice plano `idx_employees_role_id` en la
+   * migración `1747011860000-add-role-id-to-employees.ts`.
+   */
+  @Index('idx_employees_role_id')
+  @Column({ type: 'bigint', nullable: true })
+  role_id!: string | null;
+
+  @ManyToOne(() => Role, {
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'role_id' })
+  customRole!: Role | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
