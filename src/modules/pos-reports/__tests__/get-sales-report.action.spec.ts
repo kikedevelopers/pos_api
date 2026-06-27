@@ -117,6 +117,34 @@ describe('GetSalesReportAction', () => {
     expect(invoiceCall.params).toContain('ORDER');
   });
 
+  it('categoryIds: EXISTS sobre sale_invoice_lines→products filtrando company_id $1 y category_id IN', async () => {
+    await action.execute(
+      42,
+      {
+        dateFrom: '2026-05-01',
+        dateTo: '2026-05-31',
+        categoryIds: [3, 7],
+      },
+      OWNER,
+    );
+    const invoiceCall = allCalls()[0];
+    // Semi-join: EXISTS contra las líneas + producto, sin duplicar filas.
+    expect(invoiceCall.sql).toMatch(/EXISTS\s*\(/);
+    expect(invoiceCall.sql).toMatch(/FROM sale_invoice_lines sil/);
+    expect(invoiceCall.sql).toMatch(/JOIN products p ON p\.id = sil\.product_id AND p\.company_id = \$1/);
+    expect(invoiceCall.sql).toMatch(/sil\.company_id\s*=\s*\$1/);
+    expect(invoiceCall.sql).toMatch(/p\.category_id IN \(\$\d+,\$\d+\)/);
+    // Los ids de categoría se enlazan como parámetros (no interpolados).
+    expect(invoiceCall.params).toContain(3);
+    expect(invoiceCall.params).toContain(7);
+  });
+
+  it('categoryIds vacío/ausente: NO añade el EXISTS de categoría', async () => {
+    await action.execute(42, { dateFrom: '2026-05-01', dateTo: '2026-05-31' }, OWNER);
+    const invoiceCall = allCalls()[0];
+    expect(invoiceCall.sql).not.toMatch(/p\.category_id IN/);
+  });
+
   it('owner/manager: NO añade filtro por created_by_id (ven todas las ventas)', async () => {
     await action.execute(42, { dateFrom: '2026-05-01', dateTo: '2026-05-31' }, OWNER);
     for (const c of allCalls()) {

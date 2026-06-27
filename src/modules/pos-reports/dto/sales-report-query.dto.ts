@@ -4,10 +4,12 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
+  Min,
 } from 'class-validator';
 
 export const NOTE_FILTERS = [
@@ -81,6 +83,30 @@ export class SalesReportQueryDto {
   @Transform(({ value }): boolean => value === true || value === 'true')
   @IsBoolean()
   showDeleted?: boolean;
+
+  /**
+   * IDs de categoría (CSV en la URL, ej `3,7`). Filtra los tickets que
+   * contengan AL MENOS UN producto de alguna de estas categorías. Espejo
+   * PlacePos. Vacío/undefined = sin filtro de categoría.
+   */
+  @ApiPropertyOptional({ example: '3,7', isArray: true, type: Number })
+  @IsOptional()
+  @Transform(({ value }): number[] | undefined => {
+    const raw =
+      typeof value === 'string'
+        ? value.split(',')
+        : Array.isArray(value)
+          ? (value as unknown[])
+          : [];
+    const ids = raw
+      .map((v) => Number(v))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    return ids.length > 0 ? ids : undefined;
+  })
+  @IsArray()
+  @IsInt({ each: true, message: 'categoryIds contiene valores inválidos' })
+  @Min(1, { each: true, message: 'categoryIds contiene valores inválidos' })
+  categoryIds?: number[];
 }
 
 /**

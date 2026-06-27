@@ -129,11 +129,13 @@ export class GetSalesReportAction {
     }
 
     // Notas huérfanas: PlacePos las muestra cuando el filtro de tipos NO está
-    // o incluye 'NOTE' explícitamente.
+    // o incluye 'NOTE' explícitamente. Con filtro de categoría activo NO se
+    // muestran: su ticket padre no contiene la categoría buscada.
     const showOrphanNotes =
-      !filters.ticketTypes ||
-      filters.ticketTypes.length === 0 ||
-      filters.ticketTypes.includes('NOTE');
+      (!filters.ticketTypes ||
+        filters.ticketTypes.length === 0 ||
+        filters.ticketTypes.includes('NOTE')) &&
+      (!filters.categoryIds || filters.categoryIds.length === 0);
     if (showOrphanNotes) {
       for (const note of orphanNotes) {
         tickets.push(mapNoteToTicket(note));
@@ -170,9 +172,16 @@ export class GetSalesReportAction {
     const totalProfit = calcProfit(totalRevenue, totalCost);
     const averageMargin = calcMargin(totalRevenue, totalCost);
 
+    // Conteo de notas COHERENTE con lo que se muestra: cuando las huérfanas se
+    // ocultan (filtro por categoría / por tipo sin 'NOTE') solo contamos las
+    // notas adjuntas a facturas visibles; si se muestran, todas. Espejo placepos.
+    const visibleNotesCount = showOrphanNotes
+      ? noteRows.length
+      : noteRows.filter((n) => invoiceIds.has(Number(n.sale_invoice_id))).length;
+
     const summary = {
       total_sales_count: activeSales.length,
-      total_notes_count: noteRows.length,
+      total_notes_count: visibleNotesCount,
       total_orders_count: invoiceRows.filter((r) => r.ticket_type === 'ORDER' && !r.is_deleted)
         .length,
       total_voided_count: invoiceRows.filter((r) => r.is_deleted).length,
@@ -268,6 +277,23 @@ export class GetSalesReportAction {
     if (filters.ticketTypes && filters.ticketTypes.length > 0) {
       const phs = filters.ticketTypes.map((t) => placeholder(t));
       conditions.push(`si.ticket_type::text IN (${phs.join(',')})`);
+    }
+
+    // Filtro por categoría (espejo placepos): el ticket pasa si tiene AL MENOS
+    // UNA línea cuyo producto pertenece a alguna de las categorías. EXISTS evita
+    // duplicar filas (semi-join) y conserva el SELECT/JOINs. Multi-tenant:
+    // sil.company_id y p.company_id = $1.
+    if (filters.categoryIds && filters.categoryIds.length > 0) {
+      const phs = filters.categoryIds.map((id) => placeholder(id));
+      conditions.push(
+        `EXISTS (
+          SELECT 1 FROM sale_invoice_lines sil
+          JOIN products p ON p.id = sil.product_id AND p.company_id = $1
+          WHERE sil.sale_invoice_id = si.id
+            AND sil.company_id = $1
+            AND p.category_id IN (${phs.join(',')})
+        )`,
+      );
     }
 
     // Paridad PlacePos (`POSReportController.buildInvoiceQuery`): el empleado
