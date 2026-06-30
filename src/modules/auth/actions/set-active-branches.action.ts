@@ -61,7 +61,9 @@ export class SetActiveBranchesAction {
       // Marcar: sucursales elegidas activas; resto suspendidas. El principal
       // (is_branch=false) no se toca (siempre activo).
       for (const m of members) {
-        if (!branchIds.has(m.company_id)) continue;
+        if (!branchIds.has(m.company_id)) {
+          continue;
+        }
         const shouldBeActive = activeSet.has(m.company_id);
         if (m.is_active !== shouldBeActive) {
           m.is_active = shouldBeActive;

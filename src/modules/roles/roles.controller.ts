@@ -10,17 +10,20 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { CreateRoleDto } from './dto/create-role.dto';
-import {
-  RoleResponseDto,
-  roleRowToResponseDto,
-  roleToResponseDto,
-} from './dto/role-response.dto';
+import { RoleResponseDto, roleRowToResponseDto, roleToResponseDto } from './dto/role-response.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RolesService } from './roles.service';
 
@@ -80,8 +83,7 @@ export class RolesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Editar rol (name/color/icon/permissions)',
-    description:
-      'Permitido también sobre roles de sistema. El flag `is_system` nunca se modifica.',
+    description: 'Permitido también sobre roles de sistema. El flag `is_system` nunca se modifica.',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: UpdateRoleDto })
@@ -107,8 +109,7 @@ export class RolesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Eliminar rol personalizado',
-    description:
-      'Sólo roles no-sistema. Los empleados con ese rol quedan sin rol (FK SET NULL).',
+    description: 'Sólo roles no-sistema. Los empleados con ese rol quedan sin rol (FK SET NULL).',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiResponse({ status: HttpStatus.OK, description: 'Rol eliminado (payload: null)' })

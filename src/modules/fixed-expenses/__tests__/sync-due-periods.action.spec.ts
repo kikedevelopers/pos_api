@@ -13,7 +13,7 @@ import {
   isCalendarPeriodUnit,
   type ScheduleExpense,
 } from '../internal/period-schedule';
-import { FixedExpense, type FixedExpensePeriodUnit } from '../entities/fixed-expense.entity';
+import { FixedExpense } from '../entities/fixed-expense.entity';
 import { FixedExpensePeriod } from '../entities/fixed-expense-period.entity';
 import { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
 
@@ -30,8 +30,7 @@ import { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
 
 /** Instante de un anclaje Bogotá: día 15 → endOf('day'); fin de mes → endOf('month'). */
 const day15 = (ym: string): Date => dayjs.tz(`${ym}-15`, APP_TIMEZONE).endOf('day').toDate();
-const endOfMonth = (ym: string): Date =>
-  dayjs.tz(`${ym}-01`, APP_TIMEZONE).endOf('month').toDate();
+const endOfMonth = (ym: string): Date => dayjs.tz(`${ym}-01`, APP_TIMEZONE).endOf('month').toDate();
 /** Medianoche local Bogotá de una fecha (para `start_date`). */
 const startAt = (date: string): Date => dayjs.tz(`${date} 00:00:00`, APP_TIMEZONE).toDate();
 
@@ -42,7 +41,12 @@ describe('Algoritmo canónico §2 — vectores §3 (V1–V5)', () => {
     const start = startAt('2026-01-10');
     const anchors = calendarAnchorsAfter({ period_unit: 'end_of_month', start_date: start }, 4);
     expect(isoList(anchors)).toEqual(
-      isoList([endOfMonth('2026-01'), endOfMonth('2026-02'), endOfMonth('2026-03'), endOfMonth('2026-04')]),
+      isoList([
+        endOfMonth('2026-01'),
+        endOfMonth('2026-02'),
+        endOfMonth('2026-03'),
+        endOfMonth('2026-04'),
+      ]),
     );
 
     // amount(n) = completo SIEMPRE; due_at(n) = a_n.
@@ -56,7 +60,9 @@ describe('Algoritmo canónico §2 — vectores §3 (V1–V5)', () => {
 
     // now=2026-02-15 12:00 → completed=1.
     const now = dayjs.tz('2026-02-15 12:00:00', APP_TIMEZONE).toDate();
-    expect(calendarCompletedPeriods({ period_unit: 'end_of_month', start_date: start }, now)).toBe(1);
+    expect(calendarCompletedPeriods({ period_unit: 'end_of_month', start_date: start }, now)).toBe(
+      1,
+    );
   });
 
   it('V2 — Quincenal (semimonthly), start 2026-02-01', () => {
@@ -95,7 +101,7 @@ describe('Algoritmo canónico §2 — vectores §3 (V1–V5)', () => {
   });
 
   it('legacy (month=30 días fijos) conserva el cálculo de horas — no usa calendario', () => {
-    expect(isCalendarPeriodUnit('month' as FixedExpensePeriodUnit)).toBe(false);
+    expect(isCalendarPeriodUnit('month')).toBe(false);
     const start = startAt('2026-01-01');
     const schedule: ScheduleExpense = {
       period_unit: 'month',
@@ -195,15 +201,21 @@ describe('SyncDuePeriodsAction', () => {
     };
     // Repo de FixedExpensePeriod (period_number existentes).
     const periodRepo = {
-      find: jest.fn().mockResolvedValue(
-        [...opts.existingPeriodNumbers].map((period_number) => ({ period_number })),
-      ),
+      find: jest
+        .fn()
+        .mockResolvedValue(
+          [...opts.existingPeriodNumbers].map((period_number) => ({ period_number })),
+        ),
     };
 
     const dataSourceMock = {
       getRepository: jest.fn((entity: unknown) => {
-        if (entity === FixedExpense) return expenseRepo;
-        if (entity === FixedExpensePeriod) return periodRepo;
+        if (entity === FixedExpense) {
+          return expenseRepo;
+        }
+        if (entity === FixedExpensePeriod) {
+          return periodRepo;
+        }
         return {};
       }),
       transaction: jest.fn(async <T>(cb: (m: typeof mocks.manager) => Promise<T>) =>
@@ -331,7 +343,10 @@ describe('SyncDuePeriodsAction', () => {
     // Corte 1 en conflicto (no cuenta), corte 2 sí se crea.
     expect(result.createdPeriods).toBe(1);
     expect(mocks.savedAlerts).toHaveLength(1);
-    expect(mocks.savedAlerts[0] && (mocks.savedAlerts[0].metadata as { period_number: number }).period_number).toBe(2);
+    expect(
+      mocks.savedAlerts[0] &&
+        (mocks.savedAlerts[0].metadata as { period_number: number }).period_number,
+    ).toBe(2);
   });
 
   it('respeta el cooldown lazy por company y lo ignora con force', async () => {

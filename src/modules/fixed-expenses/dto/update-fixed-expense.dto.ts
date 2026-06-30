@@ -50,8 +50,7 @@ export class UpdateFixedExpenseDto {
   @ApiPropertyOptional({
     enum: FIXED_EXPENSE_PERIOD_UNITS,
     example: 'month',
-    description:
-      'Legacy: hour/day/week/month. Calendario: semimonthly / end_of_month.',
+    description: 'Legacy: hour/day/week/month. Calendario: semimonthly / end_of_month.',
   })
   @IsOptional()
   @IsString()
@@ -62,8 +61,7 @@ export class UpdateFixedExpenseDto {
 
   @ApiPropertyOptional({
     example: 1,
-    description:
-      'Para convenciones de calendario se ignora (se normaliza a 1).',
+    description: 'Para convenciones de calendario se ignora (se normaliza a 1).',
   })
   @IsOptional()
   @Type(() => Number)

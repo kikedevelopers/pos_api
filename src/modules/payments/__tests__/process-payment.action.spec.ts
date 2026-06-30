@@ -5,7 +5,8 @@ import { FinancialMovementsService } from '@/modules/financial-movements/financi
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 
 import { ProcessPaymentAction } from '../actions/process-payment.action';
-import { ProcessPaymentDto, ProcessPaymentMethod } from '../dto/process-payment.dto';
+import type { ProcessPaymentDto } from '../dto/process-payment.dto';
+import { ProcessPaymentMethod } from '../dto/process-payment.dto';
 
 // --------------------------------------------------------------------------
 // Mocks de helpers internos. La action los importa como funciones módulo —
@@ -45,9 +46,16 @@ describe('ProcessPaymentAction (split tender)', () => {
 
   // Estado observable del manager mock.
   let saves: Array<{ entity: string; payload: Record<string, unknown> }>;
-  let updates: Array<{ entity: string; where: Record<string, unknown>; patch: Record<string, unknown> }>;
+  let updates: Array<{
+    entity: string;
+    where: Record<string, unknown>;
+    patch: Record<string, unknown>;
+  }>;
   let recordSpy: jest.Mock;
-  let banks: Map<string, { id: string; company_id: string; name: string; balance: number; is_archived: boolean }>;
+  let banks: Map<
+    string,
+    { id: string; company_id: string; name: string; balance: number; is_archived: boolean }
+  >;
   let cashRegisterBalance: number;
   let savedPaymentSeq: number;
 
@@ -57,26 +65,28 @@ describe('ProcessPaymentAction (split tender)', () => {
 
   function buildManagerMock() {
     return {
-      findOne: jest.fn((entity: { name?: string } | string, options: { where: Record<string, unknown> }) => {
-        const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
-        const where = options.where;
-        if (name === 'SaleInvoice') {
-          return Promise.resolve({
-            id: '142',
-            company_id: String(where.company_id),
-            customer_id: '55',
-            ticket_type: 'ORDER',
-            total: 150,
-            cost: 80,
-            is_deleted: false,
-          });
-        }
-        if (name === 'Bank') {
-          const key = `${String(where.id)}|${String(where.company_id)}`;
-          return Promise.resolve(banks.get(key) ?? null);
-        }
-        return Promise.resolve(null);
-      }),
+      findOne: jest.fn(
+        (entity: { name?: string } | string, options: { where: Record<string, unknown> }) => {
+          const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
+          const where = options.where;
+          if (name === 'SaleInvoice') {
+            return Promise.resolve({
+              id: '142',
+              company_id: String(where.company_id),
+              customer_id: '55',
+              ticket_type: 'ORDER',
+              total: 150,
+              cost: 80,
+              is_deleted: false,
+            });
+          }
+          if (name === 'Bank') {
+            const key = `${String(where.id)}|${String(where.company_id)}`;
+            return Promise.resolve(banks.get(key) ?? null);
+          }
+          return Promise.resolve(null);
+        },
+      ),
       find: jest.fn().mockResolvedValue([]), // sin líneas → no toca inventario
       create: jest.fn((_entity: unknown, input: Record<string, unknown>) => input),
       save: jest.fn((entity: { name?: string } | string, payload: Record<string, unknown>) => {
@@ -85,16 +95,24 @@ describe('ProcessPaymentAction (split tender)', () => {
         savedPaymentSeq += 1;
         return Promise.resolve({ ...payload, id: String(savedPaymentSeq) });
       }),
-      update: jest.fn((entity: { name?: string } | string, where: Record<string, unknown>, patch: Record<string, unknown>) => {
-        const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
-        updates.push({ entity: name, where, patch });
-        if (name === 'Bank') {
-          const key = `${String(where.id)}|${String(where.company_id)}`;
-          const bank = banks.get(key);
-          if (bank && typeof patch.balance === 'number') banks.set(key, { ...bank, balance: patch.balance });
-        }
-        return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
-      }),
+      update: jest.fn(
+        (
+          entity: { name?: string } | string,
+          where: Record<string, unknown>,
+          patch: Record<string, unknown>,
+        ) => {
+          const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
+          updates.push({ entity: name, where, patch });
+          if (name === 'Bank') {
+            const key = `${String(where.id)}|${String(where.company_id)}`;
+            const bank = banks.get(key);
+            if (bank && typeof patch.balance === 'number') {
+              banks.set(key, { ...bank, balance: patch.balance });
+            }
+          }
+          return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
+        },
+      ),
     };
   }
 
@@ -129,7 +147,9 @@ describe('ProcessPaymentAction (split tender)', () => {
       if (name === 'SalePayment') {
         return {
           findOne: jest.fn((opts: { where: { uuid?: string } }) =>
-            Promise.resolve(opts.where.uuid ? (existingPaymentsByUuid.get(opts.where.uuid) ?? null) : null),
+            Promise.resolve(
+              opts.where.uuid ? (existingPaymentsByUuid.get(opts.where.uuid) ?? null) : null,
+            ),
           ),
           find: jest.fn((opts: { where: { sale_invoice_id?: string } }) =>
             Promise.resolve(paymentsByInvoice.get(String(opts.where.sale_invoice_id)) ?? []),
@@ -165,7 +185,13 @@ describe('ProcessPaymentAction (split tender)', () => {
   const actor = { id: 7, fullName: 'Kike Pacheco', type: 'owner' };
 
   function seedBank(id: number, balance: number) {
-    banks.set(`${id}|42`, { id: String(id), company_id: '42', name: `Bank ${id}`, balance, is_archived: false });
+    banks.set(`${id}|42`, {
+      id: String(id),
+      company_id: '42',
+      name: `Bank ${id}`,
+      balance,
+      is_archived: false,
+    });
   }
 
   it('split exacto: CASH 100 + TRANSFER 50 = 150 → 2 SalePayment, banco +50, caja +100', async () => {
@@ -175,7 +201,12 @@ describe('ProcessPaymentAction (split tender)', () => {
       amount_due: 150,
       payments: [
         { payment_method: ProcessPaymentMethod.CASH, amount_paid: 100, change_amount: 0 },
-        { payment_method: ProcessPaymentMethod.TRANSFER, amount_paid: 50, bank_id: 7, bank_name: 'Bank 7' },
+        {
+          payment_method: ProcessPaymentMethod.TRANSFER,
+          amount_paid: 50,
+          bank_id: 7,
+          bank_name: 'Bank 7',
+        },
       ],
       is_credit: false,
       credit_amount: 0,
@@ -262,7 +293,9 @@ describe('ProcessPaymentAction (split tender)', () => {
     const dto: ProcessPaymentDto = {
       invoice_id: 142,
       amount_due: 150,
-      payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 200, change_amount: 50 }],
+      payments: [
+        { payment_method: ProcessPaymentMethod.CASH, amount_paid: 200, change_amount: 50 },
+      ],
       is_credit: false,
       credit_amount: 0,
     };
@@ -280,7 +313,12 @@ describe('ProcessPaymentAction (split tender)', () => {
       invoice_id: 142,
       amount_due: 150,
       payments: [
-        { payment_method: ProcessPaymentMethod.TRANSFER, amount_paid: 160, change_amount: 10, bank_id: 7 },
+        {
+          payment_method: ProcessPaymentMethod.TRANSFER,
+          amount_paid: 160,
+          change_amount: 10,
+          bank_id: 7,
+        },
       ],
       is_credit: false,
       credit_amount: 0,
@@ -320,7 +358,12 @@ describe('ProcessPaymentAction (split tender)', () => {
       invoice_id: 142,
       amount_due: 150,
       payments: [
-        { payment_method: ProcessPaymentMethod.TRANSFER, amount_paid: 150, bank_id: 7, bank_name: 'Bank 7' },
+        {
+          payment_method: ProcessPaymentMethod.TRANSFER,
+          amount_paid: 150,
+          bank_id: 7,
+          bank_name: 'Bank 7',
+        },
       ],
       is_credit: false,
       credit_amount: 0,

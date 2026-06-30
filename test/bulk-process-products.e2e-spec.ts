@@ -2,7 +2,6 @@ import Big from 'big.js';
 import type { DataSource } from 'typeorm';
 
 import { BulkProcessProductsAction } from '@/modules/products/actions/bulk-process-products.action';
-import type { BulkItemDto } from '@/modules/products/dto/bulk-products.dto';
 
 import {
   cleanupCompany,
@@ -93,7 +92,9 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   }
 
   it('CREATE válido con código → created=1, precio con profit/margin Big.js, categoría creada', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const res = await action.execute(
       [
         {
@@ -105,7 +106,7 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
           stock: 10,
           cost: 2.5,
           prices: [{ sale_price: 5.0 }],
-        } as BulkItemDto,
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -126,7 +127,9 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('re-import idéntico → skipped, sin nuevos movimientos', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const movBefore = await movementsCount();
     const res = await action.execute(
       [
@@ -139,7 +142,7 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
           stock: 10,
           cost: 2.5,
           prices: [{ sale_price: 5.0 }],
-        } as BulkItemDto,
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -151,7 +154,9 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('UPDATE (cost/precio/stock/description) → updated=1, inventory_movement por delta', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const before = await getBySku('SKU-001');
     const productId = before[0].id as string;
     const stockBefore = parseFloat(before[0].stock);
@@ -167,7 +172,7 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
           stock: 25,
           cost: 3.0,
           prices: [{ sale_price: 6.5 }],
-        } as BulkItemDto,
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -198,7 +203,9 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('UPDATE preserve-on-empty: description/category/flags/stock + sku/bar omitidos preservan → skipped', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const before = await getBySku('SKU-001');
     const movBefore = await movementsCount();
 
@@ -213,7 +220,7 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
           description: '',
           cost: 3.0,
           prices: [{ sale_price: 6.5 }],
-        } as BulkItemDto,
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -230,16 +237,31 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('preserve-on-empty de códigos: sku presente, bar omitido + cost distinto → bar_code se conserva', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     await action.execute(
       [
-        { name: 'Fix Producto A', sku_code: 'A', bar_code: '123', cost: 1.0, prices: [{ sale_price: 5.0 }] } as BulkItemDto,
+        {
+          name: 'Fix Producto A',
+          sku_code: 'A',
+          bar_code: '123',
+          cost: 1.0,
+          prices: [{ sale_price: 5.0 }],
+        },
       ],
       companyId,
       E2E_ACTOR,
     );
     const res = await action.execute(
-      [{ name: 'Fix Producto A', sku_code: 'A', cost: 2.0, prices: [{ sale_price: 5.0 }] } as BulkItemDto],
+      [
+        {
+          name: 'Fix Producto A',
+          sku_code: 'A',
+          cost: 2.0,
+          prices: [{ sale_price: 5.0 }],
+        },
+      ],
       companyId,
       E2E_ACTOR,
     );
@@ -250,10 +272,19 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('preserve-on-empty de códigos: match por bar, sku omitido → sku_code se conserva', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     // Producto sku=A bar=123 ya existe (cost=2.0). Match por bar, sku omitido.
     const res = await action.execute(
-      [{ name: 'Fix Producto A', bar_code: '123', cost: 3.0, prices: [{ sale_price: 5.0 }] } as BulkItemDto],
+      [
+        {
+          name: 'Fix Producto A',
+          bar_code: '123',
+          cost: 3.0,
+          prices: [{ sale_price: 5.0 }],
+        },
+      ],
       companyId,
       E2E_ACTOR,
     );
@@ -267,11 +298,23 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('mismo sku en batch (idéntico) → created=1 + skipped=1, sin duplicado', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const res = await action.execute(
       [
-        { name: 'Doble', sku_code: 'SKU-DOBLE', cost: 1.0, prices: [{ sale_price: 3.0 }] } as BulkItemDto,
-        { name: 'Doble', sku_code: 'SKU-DOBLE', cost: 1.0, prices: [{ sale_price: 3.0 }] } as BulkItemDto,
+        {
+          name: 'Doble',
+          sku_code: 'SKU-DOBLE',
+          cost: 1.0,
+          prices: [{ sale_price: 3.0 }],
+        },
+        {
+          name: 'Doble',
+          sku_code: 'SKU-DOBLE',
+          cost: 1.0,
+          prices: [{ sale_price: 3.0 }],
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -286,11 +329,23 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('mismo sku en batch con datos distintos → created=1 + updated=1, estado=segundo', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const res = await action.execute(
       [
-        { name: 'Seq', sku_code: 'SKU-SEQ', cost: 1.0, prices: [{ sale_price: 4.0 }] } as BulkItemDto,
-        { name: 'Seq', sku_code: 'SKU-SEQ', cost: 2.0, prices: [{ sale_price: 8.0 }] } as BulkItemDto,
+        {
+          name: 'Seq',
+          sku_code: 'SKU-SEQ',
+          cost: 1.0,
+          prices: [{ sale_price: 4.0 }],
+        },
+        {
+          name: 'Seq',
+          sku_code: 'SKU-SEQ',
+          cost: 2.0,
+          prices: [{ sale_price: 8.0 }],
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -303,12 +358,19 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('nombre duplicado sin código → conflict; el batch no aborta', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const res = await action.execute(
       [
-        { name: 'Sin Codigo Dup', cost: 1.0, prices: [{ sale_price: 2.0 }] } as BulkItemDto,
-        { name: 'Sin Codigo Dup', cost: 1.5, prices: [{ sale_price: 3.0 }] } as BulkItemDto,
-        { name: 'Valido Tres', sku_code: 'SKU-TRES', cost: 1.0, prices: [{ sale_price: 5.0 }] } as BulkItemDto,
+        { name: 'Sin Codigo Dup', cost: 1.0, prices: [{ sale_price: 2.0 }] },
+        { name: 'Sin Codigo Dup', cost: 1.5, prices: [{ sale_price: 3.0 }] },
+        {
+          name: 'Valido Tres',
+          sku_code: 'SKU-TRES',
+          cost: 1.0,
+          prices: [{ sale_price: 5.0 }],
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -320,9 +382,18 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('precio negativo / 0 / sin precios en CREATE → conflict "No tiene precios válidos."', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const resNeg = await action.execute(
-      [{ name: 'Neg', sku_code: 'SKU-NEG', cost: 1.0, prices: [{ sale_price: -5.0 }] } as BulkItemDto],
+      [
+        {
+          name: 'Neg',
+          sku_code: 'SKU-NEG',
+          cost: 1.0,
+          prices: [{ sale_price: -5.0 }],
+        },
+      ],
       companyId,
       E2E_ACTOR,
     );
@@ -330,14 +401,21 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
     expect(resNeg.conflicts[0]?.reason).toBe('No tiene precios válidos.');
 
     const resCero = await action.execute(
-      [{ name: 'Cero', sku_code: 'SKU-CERO', cost: 1.0, prices: [{ sale_price: 0 }] } as BulkItemDto],
+      [
+        {
+          name: 'Cero',
+          sku_code: 'SKU-CERO',
+          cost: 1.0,
+          prices: [{ sale_price: 0 }],
+        },
+      ],
       companyId,
       E2E_ACTOR,
     );
     expect(resCero.conflicts[0]?.reason).toBe('No tiene precios válidos.');
 
     const resSin = await action.execute(
-      [{ name: 'SinPrecios', sku_code: 'SKU-SINP', cost: 1.0, prices: [] } as BulkItemDto],
+      [{ name: 'SinPrecios', sku_code: 'SKU-SINP', cost: 1.0, prices: [] }],
       companyId,
       E2E_ACTOR,
     );
@@ -345,9 +423,18 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('nombre vacío → conflict "Nombre vacío."', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const res = await action.execute(
-      [{ name: '   ', sku_code: 'SKU-NV', cost: 1.0, prices: [{ sale_price: 5.0 }] } as BulkItemDto],
+      [
+        {
+          name: '   ',
+          sku_code: 'SKU-NV',
+          cost: 1.0,
+          prices: [{ sale_price: 5.0 }],
+        },
+      ],
       companyId,
       E2E_ACTOR,
     );
@@ -355,12 +442,26 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('categoría accent-insensitive: "Bebidas"≡"BÉBIDAS"≢"bebida"', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const catBefore = await categoryCount();
     const res = await action.execute(
       [
-        { name: 'Agua 1L', sku_code: 'SKU-AGUA', category: 'BÉBIDAS', cost: 0.5, prices: [{ sale_price: 1.5 }] } as BulkItemDto,
-        { name: 'Jugo', sku_code: 'SKU-JUGO', category: 'bebida', cost: 1.0, prices: [{ sale_price: 3.0 }] } as BulkItemDto,
+        {
+          name: 'Agua 1L',
+          sku_code: 'SKU-AGUA',
+          category: 'BÉBIDAS',
+          cost: 0.5,
+          prices: [{ sale_price: 1.5 }],
+        },
+        {
+          name: 'Jugo',
+          sku_code: 'SKU-JUGO',
+          category: 'bebida',
+          cost: 1.0,
+          prices: [{ sale_price: 3.0 }],
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -377,13 +478,30 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('batch mixto [válido, nombre-vacío, válido, precio-0] → created=2, conflicts=2', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const res = await action.execute(
       [
-        { name: 'Mixto A', sku_code: 'SKU-MIXA', cost: 1.0, prices: [{ sale_price: 3.0 }] } as BulkItemDto,
-        { name: '', sku_code: 'SKU-MIXB', cost: 1.0, prices: [{ sale_price: 3.0 }] } as BulkItemDto,
-        { name: 'Mixto C', sku_code: 'SKU-MIXC', cost: 1.0, prices: [{ sale_price: 4.0 }] } as BulkItemDto,
-        { name: 'Mixto D', sku_code: 'SKU-MIXD', cost: 1.0, prices: [{ sale_price: 0 }] } as BulkItemDto,
+        {
+          name: 'Mixto A',
+          sku_code: 'SKU-MIXA',
+          cost: 1.0,
+          prices: [{ sale_price: 3.0 }],
+        },
+        { name: '', sku_code: 'SKU-MIXB', cost: 1.0, prices: [{ sale_price: 3.0 }] },
+        {
+          name: 'Mixto C',
+          sku_code: 'SKU-MIXC',
+          cost: 1.0,
+          prices: [{ sale_price: 4.0 }],
+        },
+        {
+          name: 'Mixto D',
+          sku_code: 'SKU-MIXD',
+          cost: 1.0,
+          prices: [{ sale_price: 0 }],
+        },
       ],
       companyId,
       E2E_ACTOR,
@@ -396,7 +514,9 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
   });
 
   it('cleanup deja la company sin rastro', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     await cleanupCompany(ds, companyId);
     for (const table of E2E_TABLES) {
       expect(await countRows(ds, table, companyId)).toBe(0);

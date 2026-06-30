@@ -55,7 +55,12 @@ export class ActiveCompanyGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<Request & { user?: AuthUser }>();
     const user = request.user;
-    if (!user || user.account !== 'user' || user.company_id === null || user.company_id === undefined) {
+    if (
+      !user ||
+      user.account !== 'user' ||
+      user.company_id === null ||
+      user.company_id === undefined
+    ) {
       return true;
     }
 

@@ -25,7 +25,10 @@ import {
   type AccountReference,
 } from '@/modules/financial-movements/entities/financial-movement.entity';
 import { Customer } from '@/modules/customers/entities/customer.entity';
-import { Delivery, type DeliveryPaymentMethod } from '@/modules/deliveries/entities/delivery.entity';
+import {
+  Delivery,
+  type DeliveryPaymentMethod,
+} from '@/modules/deliveries/entities/delivery.entity';
 import { DeliveryCompany } from '@/modules/deliveries/entities/delivery-company.entity';
 import { Employee, EmployeeRole } from '@/modules/employees/entities/employee.entity';
 import { ensureMirrorUserForEmployee } from '@/modules/employees/internal/ensure-mirror-user-for-employee.helper';
@@ -799,9 +802,7 @@ export class ImportZipAction {
           company_id: ctx.companyIdReal,
           name: final,
           is_archived: asBoolean(row.is_archived),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('categories', localId, saved.id);
@@ -837,9 +838,7 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('packagings', localId, saved.id);
@@ -924,9 +923,7 @@ export class ImportZipAction {
           created_by_id: this.remapUserId(ctx, row.created_by_id),
           updated_by: asNullableString(row.updated_by),
           updated_by_id: null,
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('products', localId, saved.id);
@@ -992,9 +989,7 @@ export class ImportZipAction {
           iva_percentage: asNumber(row.iva_percentage),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('product_prices', localId, saved.id);
@@ -1005,7 +1000,9 @@ export class ImportZipAction {
       ctx.warnings.push(`product_prices: ${skipped} filas descartadas por product_id no resoluble`);
     }
     if (skippedInvalid > 0) {
-      ctx.warnings.push(`product_prices: ${skippedInvalid} precios descartados por sale_price <= 0`);
+      ctx.warnings.push(
+        `product_prices: ${skippedInvalid} precios descartados por sale_price <= 0`,
+      );
     }
     if (skippedCap > 0) {
       ctx.warnings.push(
@@ -1039,9 +1036,7 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('customers', localId, saved.id);
@@ -1074,9 +1069,7 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('suppliers', localId, saved.id);
@@ -1115,9 +1108,7 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('banks', localId, saved.id);
@@ -1156,9 +1147,7 @@ export class ImportZipAction {
           is_archived: asBoolean(row.is_archived),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('carriers', localId, saved.id);
@@ -1324,9 +1313,7 @@ export class ImportZipAction {
           // (campo informacional), NO el vendedor. Permanece en el owner cloud.
           created_by_id: ctx.userIdReal, // owner creador (no remapear)
           user_id: null,
-          ...(created_at !== null
-            ? { created_at, updated_at: updated_at ?? created_at }
-            : {}),
+          ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),
         }),
       );
       ctx.remapper.set('employees', localId, saved.id);
@@ -1497,8 +1484,7 @@ export class ImportZipAction {
             asNullableString(row.product_price_id),
           ),
           description:
-            (asString(row.description) || asString(row.name)).trim() ||
-            `Producto ${productIdReal}`,
+            (asString(row.description) || asString(row.name)).trim() || `Producto ${productIdReal}`,
           quantity,
           unit_price: Math.max(0, asNumber(row.unit_price ?? row.price)),
           unit_cost: Math.max(0, asNumber(row.unit_cost ?? row.cost)),
@@ -1626,9 +1612,7 @@ export class ImportZipAction {
       count++;
     }
     if (skippedNoDate > 0) {
-      ctx.warnings.push(
-        `sale_credits: ${skippedNoDate} filas descartadas por falta de created_at`,
-      );
+      ctx.warnings.push(`sale_credits: ${skippedNoDate} filas descartadas por falta de created_at`);
     }
     if (skipped > 0) {
       ctx.warnings.push(
@@ -1826,9 +1810,7 @@ export class ImportZipAction {
       );
     }
     if (skippedNoDate > 0) {
-      ctx.warnings.push(
-        `credit_notes: ${skippedNoDate} filas descartadas por falta de created_at`,
-      );
+      ctx.warnings.push(`credit_notes: ${skippedNoDate} filas descartadas por falta de created_at`);
     }
     return count;
   }
@@ -1873,8 +1855,7 @@ export class ImportZipAction {
           product_id: productIdReal,
           packaging_id: ctx.remapper.getOptional('packagings', asNullableString(row.packaging_id)),
           description:
-            (asString(row.description) || asString(row.name)).trim() ||
-            `Producto ${productIdReal}`,
+            (asString(row.description) || asString(row.name)).trim() || `Producto ${productIdReal}`,
           quantity,
           unit_price: Math.max(0, asNumber(row.unit_price ?? row.price)),
           unit_cost: Math.max(0, asNumber(row.unit_cost ?? row.cost)),
@@ -2305,8 +2286,7 @@ export class ImportZipAction {
           // previos a la columna `is_fixed`: los pagos de gastos fijos usan el
           // prefijo determinista "Gasto fijo:".
           is_fixed:
-            asBoolean(row.is_fixed) ||
-            /^Gasto fijo:/.test(asString(row.description).trim()),
+            asBoolean(row.is_fixed) || /^Gasto fijo:/.test(asString(row.description).trim()),
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
           created_at,
@@ -3154,7 +3134,9 @@ export class ImportZipAction {
       count++;
     }
     if (skipped > 0) {
-      ctx.warnings.push(`financial_movements: ${skipped} movimientos descartados por monto inválido`);
+      ctx.warnings.push(
+        `financial_movements: ${skipped} movimientos descartados por monto inválido`,
+      );
     }
     if (skippedNoEndpoint > 0) {
       ctx.warnings.push(

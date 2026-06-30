@@ -66,8 +66,7 @@ async function bootstrap(): Promise<void> {
   //     localhost y cualquier IP de red privada (LAN) en cualquier puerto, para
   //     poder probar la PWA desde el navegador local o desde el celular
   //     (`http://192.168.x.x:5180`) sin tocar config en cada cambio de IP/puerto.
-  const isProdLikeEnv =
-    appConfig.nodeEnv === 'production' || appConfig.nodeEnv === 'staging';
+  const isProdLikeEnv = appConfig.nodeEnv === 'production' || appConfig.nodeEnv === 'staging';
   // localhost / 127.0.0.1 / [::1] y rangos privados 10.x, 172.16–31.x, 192.168.x.
   const privateLanOriginRe =
     /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})(:\d+)?$/;
@@ -99,12 +98,7 @@ async function bootstrap(): Promise<void> {
     // `ngrok-skip-browser-warning` lo envía el cliente PWA cuando el API se
     // expone por un túnel ngrok en dev (salta la interstitial de ngrok). Sin
     // él en la whitelist, el preflight del navegador falla con "Error de CORS".
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Request-Id',
-      'ngrok-skip-browser-warning',
-    ],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'ngrok-skip-browser-warning'],
   });
 
   // Prefijo global. Por defecto vacío — el cliente PlacePos llama al API en

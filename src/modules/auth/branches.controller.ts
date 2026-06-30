@@ -143,18 +143,29 @@ export class BranchesController {
   })
   @ApiBody({ type: CloneProductsDto })
   @ApiResponse({ status: HttpStatus.OK, type: CloneProductsResponseDto })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Origen no es el principal o destino no es sucursal' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'No es owner o no es miembro de la sucursal' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Origen no es el principal o destino no es sucursal',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'No es owner o no es miembro de la sucursal',
+  })
   cloneProducts(
     @Param('branchCompanyId', ParseIntPipe) branchCompanyId: number,
     @Body() dto: CloneProductsDto,
     @CurrentCompany() sourceCompanyId: number,
     @CurrentUser() user: AuthUser,
   ): Promise<CloneProductsResponseDto> {
-    return this.cloneProductsToBranchAction.execute(sourceCompanyId, branchCompanyId, dto.productIds, {
-      id: user.user_id,
-      fullName: `${user.name} ${user.lastname ?? ''}`.trim(),
-    });
+    return this.cloneProductsToBranchAction.execute(
+      sourceCompanyId,
+      branchCompanyId,
+      dto.productIds,
+      {
+        id: user.user_id,
+        fullName: `${user.name} ${user.lastname ?? ''}`.trim(),
+      },
+    );
   }
 
   @Post(':branchCompanyId/share-products')
@@ -170,18 +181,29 @@ export class BranchesController {
   })
   @ApiBody({ type: ShareProductsDto })
   @ApiResponse({ status: HttpStatus.OK, type: ShareProductsResponseDto })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Origen no es el principal o destino no es sucursal' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'No es owner o no es miembro de la sucursal' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Origen no es el principal o destino no es sucursal',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'No es owner o no es miembro de la sucursal',
+  })
   shareProducts(
     @Param('branchCompanyId', ParseIntPipe) branchCompanyId: number,
     @Body() dto: ShareProductsDto,
     @CurrentCompany() sourceCompanyId: number,
     @CurrentUser() user: AuthUser,
   ): Promise<ShareProductsResponseDto> {
-    return this.shareProductsToBranchAction.execute(sourceCompanyId, branchCompanyId, dto.productIds, {
-      id: user.user_id,
-      fullName: `${user.name} ${user.lastname ?? ''}`.trim(),
-    });
+    return this.shareProductsToBranchAction.execute(
+      sourceCompanyId,
+      branchCompanyId,
+      dto.productIds,
+      {
+        id: user.user_id,
+        fullName: `${user.name} ${user.lastname ?? ''}`.trim(),
+      },
+    );
   }
 
   @Get(':branchCompanyId/shares')

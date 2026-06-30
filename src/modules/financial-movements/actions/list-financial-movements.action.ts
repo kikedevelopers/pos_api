@@ -44,8 +44,12 @@ export class ListFinancialMovementsAction {
 
     // Filtro de rango opcional: el cliente envía instantes ISO (corte del día
     // en zona Colombia). Inclusivo en ambos extremos.
-    if (from) qb.andWhere('m.created_at >= :from', { from: new Date(from) });
-    if (to) qb.andWhere('m.created_at <= :to', { to: new Date(to) });
+    if (from) {
+      qb.andWhere('m.created_at >= :from', { from: new Date(from) });
+    }
+    if (to) {
+      qb.andWhere('m.created_at <= :to', { to: new Date(to) });
+    }
 
     return qb.orderBy('m.created_at', 'DESC').getMany();
   }

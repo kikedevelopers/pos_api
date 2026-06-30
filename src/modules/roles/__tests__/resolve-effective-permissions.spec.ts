@@ -17,8 +17,8 @@ import {
  * Tests unitarios de `ResolveEffectivePermissionsAction`.
  *
  * Cubren las 4 ramas + el aislamiento multi-tenant:
- *   - owner → las 18 keys.
- *   - superadmin → las 18 keys.
+ *   - owner → las 22 keys.
+ *   - superadmin → las 22 keys.
  *   - empleado CON rol → permisos del rol (filtrados a keys válidas).
  *   - empleado SIN rol (role_id null) → LEGACY.
  *   - empleado cuyo rol no se encuentra → LEGACY.
@@ -68,18 +68,18 @@ describe('ResolveEffectivePermissionsAction', () => {
     company_id: 10,
   };
 
-  it('owner → TODAS las 18 keys, sin tocar la BD', async () => {
+  it('owner → TODAS las 22 keys, sin tocar la BD', async () => {
     const { action, employeeFindOne, roleFindOne } = makeAction({});
 
     const perms = await action.execute(ownerActor);
 
     expect(perms).toEqual([...PERMISSION_KEYS]);
-    expect(perms).toHaveLength(18);
+    expect(perms).toHaveLength(22);
     expect(employeeFindOne).not.toHaveBeenCalled();
     expect(roleFindOne).not.toHaveBeenCalled();
   });
 
-  it('superadmin → TODAS las 18 keys, sin tocar la BD', async () => {
+  it('superadmin → TODAS las 22 keys, sin tocar la BD', async () => {
     const { action, employeeFindOne } = makeAction({});
 
     const perms = await action.execute(superadminActor);

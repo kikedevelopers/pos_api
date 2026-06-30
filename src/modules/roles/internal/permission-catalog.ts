@@ -15,8 +15,13 @@
 // interno de desarrollo, nunca asignable a un rol de usuario.
 
 /**
- * Las 18 keys EXACTAS, en su orden canónico. El orden importa para la paridad
+ * Las 22 keys EXACTAS, en su orden canónico. El orden importa para la paridad
  * con placepos y para derivar el set "todos los permisos" del rol Administrador.
+ *
+ * NOTA sobre `canViewAllSales`: a diferencia del resto (que controla VISIBILIDAD
+ * de un módulo), esta key es de ALCANCE DE DATOS — si el rol la tiene, ve las
+ * ventas de TODOS los cajeros (igual que el owner); si no, solo las suyas. Vive
+ * en el catálogo para reusar la maquinaria de resolución/asignación de permisos.
  */
 export const PERMISSION_KEYS = [
   'canAccessDashboard',
@@ -32,10 +37,14 @@ export const PERMISSION_KEYS = [
   'canAccessSuppliers',
   'canAccessPurchase',
   'canAccessSalesReport',
+  'canAccessCreditsReport',
+  'canAccessComparativeReport',
   'canAccessDailyClosureReport',
   'canAccessCashierReport',
   'canAccessClientsReport',
+  'canViewAllSales',
   'canAccessExpenses',
+  'canAccessFixedExpenses',
   'canAccessSettings',
 ] as const;
 
@@ -60,7 +69,7 @@ export interface PermissionSection {
   items: PermissionItem[];
 }
 
-/** Agrupación de los 18 permisos en secciones, en el orden EXACTO acordado. */
+/** Agrupación de los 22 permisos en secciones, en el orden EXACTO acordado. */
 export const PERMISSION_SECTIONS: readonly PermissionSection[] = [
   {
     title: 'General',
@@ -102,15 +111,21 @@ export const PERMISSION_SECTIONS: readonly PermissionSection[] = [
   {
     title: 'Informes',
     items: [
-      { key: 'canAccessSalesReport', label: 'Ventas / Cartera / Comparativa' },
+      { key: 'canAccessSalesReport', label: 'Ventas' },
+      { key: 'canAccessCreditsReport', label: 'Cartera' },
+      { key: 'canAccessComparativeReport', label: 'Comparativa' },
       { key: 'canAccessDailyClosureReport', label: 'Finanzas' },
       { key: 'canAccessCashierReport', label: 'Cajeros' },
       { key: 'canAccessClientsReport', label: 'Clientes' },
+      { key: 'canViewAllSales', label: 'Ver ventas de todos los cajeros' },
     ],
   },
   {
     title: 'Operación',
-    items: [{ key: 'canAccessExpenses', label: 'Gastos y Domiciliarios' }],
+    items: [
+      { key: 'canAccessExpenses', label: 'Gastos variables y Domiciliarios' },
+      { key: 'canAccessFixedExpenses', label: 'Gastos fijos' },
+    ],
   },
   {
     title: 'Sistema',
@@ -129,6 +144,12 @@ export const PERMISSION_SECTIONS: readonly PermissionSection[] = [
  *
  * PARIDAD: debe permanecer IDÉNTICO (mismas keys, mismo orden) a su gemelo en
  * placepos. NO reordenar ni cambiar sin replicar el cambio allá.
+ *
+ * NOTA: `canAccessCreditsReport`, `canAccessComparativeReport` y
+ * `canAccessFixedExpenses` se incluyen para PRESERVAR el acceso histórico: antes
+ * de separarse, `canAccessSalesReport` encendía Ventas+Cartera+Comparativa y
+ * `canAccessExpenses` incluía los gastos fijos. NO se incluye `canViewAllSales`:
+ * el empleado legacy históricamente solo veía sus propias ventas.
  */
 export const LEGACY_EMPLOYEE_PERMISSIONS: PermissionKey[] = [
   'canAccessPOS',
@@ -138,8 +159,11 @@ export const LEGACY_EMPLOYEE_PERMISSIONS: PermissionKey[] = [
   'canAccessCustomers',
   'canAccessCarriers',
   'canAccessSalesReport',
+  'canAccessCreditsReport',
+  'canAccessComparativeReport',
   'canAccessClientsReport',
   'canAccessExpenses',
+  'canAccessFixedExpenses',
 ];
 
 /** Set de búsqueda O(1) para validación. Se construye una sola vez al cargar. */

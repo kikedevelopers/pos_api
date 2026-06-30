@@ -56,9 +56,7 @@ export class CreateBranchAction {
       );
       const currentBranches = Number(countRows[0]?.count ?? 0);
       if (currentBranches >= owner.branches_allowed) {
-        throw new ForbiddenException(
-          `Límite de sucursales alcanzado (${owner.branches_allowed}).`,
-        );
+        throw new ForbiddenException(`Límite de sucursales alcanzado (${owner.branches_allowed}).`);
       }
 
       // 1. Company nueva marcada como sucursal. TypeORM 0.3 no aplica defaults

@@ -1,3 +1,8 @@
+// CAMINO MUERTO: este módulo no lo importa nadie en producción ni en tests; el
+// flujo VIVO de edición vive en `update-sale.action.ts`
+// (`calculatePlacePosLineDifferences` + `emitCreditNote`/`emitDebitNote`). Por
+// eso NO propaga el snapshot `packaging_value` del FIX #2. Si algún día se
+// revive, debe leer/guardar `packaging_value` igual que `update-sale.action.ts`.
 import type { EntityManager } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';

@@ -1,4 +1,4 @@
-import { DataSource } from 'typeorm';
+import type { DataSource } from 'typeorm';
 
 import { GetItemsAction } from '../actions/get-items.action';
 

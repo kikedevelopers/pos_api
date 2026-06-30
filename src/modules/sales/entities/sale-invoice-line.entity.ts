@@ -202,6 +202,24 @@ export class SaleInvoiceLine {
   })
   margin!: number;
 
+  /**
+   * Snapshot del factor de conversión del empaque (`packagings.value`)
+   * CONGELADO al momento en que las unidades se comprometieron. El motor de
+   * inventario (`adjustInventory`) lo usa como override; si es `null` (líneas
+   * legacy creadas antes de FIX #2) cae al packaging vigente del producto
+   * (comportamiento actual). Garantiza que el `DEDUCT` al cobrar y su `RETURN`
+   * posterior (anulación / NC) usen el MISMO factor aunque alguien edite el
+   * `value` del empaque entre cobro y devolución (simetría → no corrompe stock).
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 4,
+    nullable: true,
+    transformer: NumericTransformer,
+  })
+  packaging_value!: number | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 }

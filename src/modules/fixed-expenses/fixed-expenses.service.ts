@@ -67,10 +67,7 @@ export class FixedExpensesService {
     return this.archiveAction.execute(id, companyId);
   }
 
-  listPeriods(
-    fixedExpenseId: number,
-    companyId: number,
-  ): Promise<FixedExpensePeriodResponseDto[]> {
+  listPeriods(fixedExpenseId: number, companyId: number): Promise<FixedExpensePeriodResponseDto[]> {
     return this.listPeriodsAction.execute(fixedExpenseId, companyId);
   }
 

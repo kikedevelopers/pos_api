@@ -65,11 +65,7 @@ export class ListTenantsAction {
     const base = this.repo
       .createQueryBuilder('u')
       .innerJoinAndSelect('u.company', 'c')
-      .leftJoin(
-        Subscription,
-        's',
-        's.company_id = u.company_id',
-      )
+      .leftJoin(Subscription, 's', 's.company_id = u.company_id')
       .where('u.type = :type', { type: UserType.OWNER });
 
     if (query.search) {

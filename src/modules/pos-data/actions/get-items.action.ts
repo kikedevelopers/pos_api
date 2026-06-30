@@ -67,7 +67,14 @@ interface RawPosItemRow {
   /** stock real del producto (placeholder; el post-proceso usa 0). */
   stock: string | number;
   company_id: string;
-  prices: { id: number | string; sale_price: number | string; profit: number | string; margin: number | string }[] | null;
+  prices:
+    | {
+        id: number | string;
+        sale_price: number | string;
+        profit: number | string;
+        margin: number | string;
+      }[]
+    | null;
 }
 
 @Injectable()

@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import type { UpdateRoleDto } from '../dto/update-role.dto';
 import { Role } from '../entities/role.entity';
 import { isValidPermissionKey, type PermissionKey } from '../internal/permission-catalog';
-import { assertRoleEditable, translateRoleConstraintError } from '../internal/role-constraint-errors';
+import {
+  assertRoleEditable,
+  translateRoleConstraintError,
+} from '../internal/role-constraint-errors';
 import { countActiveEmployeesForRole, findRoleInCompany } from '../internal/role-lookups';
 
 /** Resultado del update: el rol actualizado + su conteo de empleados activos. */

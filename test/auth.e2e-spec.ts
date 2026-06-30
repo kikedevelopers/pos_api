@@ -159,8 +159,8 @@ describeIf('Auth (e2e)', () => {
     issuedToken = body.payload.access_token;
   });
 
-  // ---------- 1b) FASE 1/5: el register siembra los 2 roles de sistema ----------
-  it('tras POST /auth/register la company nace con los 2 roles de sistema', async () => {
+  // ---------- 1b) FASE 1/5: el register siembra los 3 roles de sistema ----------
+  it('tras POST /auth/register la company nace con los 3 roles de sistema', async () => {
     if (!ds) {
       console.warn('pos_db no disponible — verificación de roles omitida');
       return;
@@ -184,12 +184,12 @@ describeIf('Auth (e2e)', () => {
       [companyId],
     );
 
-    // FASE 5: SOLO 2 roles de fábrica; 'Inventarista' fue eliminado.
-    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero']);
+    // 3 roles de fábrica (orden alfabético por el ORDER BY name); 'Inventarista' eliminado.
+    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero', 'Vendedor']);
     expect(roles.every((r) => r.is_system === true)).toBe(true);
-    // Administrador concede las 18 keys y es INMUTABLE; Cajero es editable.
+    // Administrador concede las 22 keys y es INMUTABLE; Cajero es editable.
     const admin = roles.find((r) => r.name === 'Administrador');
-    expect(admin?.permissions).toHaveLength(18);
+    expect(admin?.permissions).toHaveLength(22);
     expect(admin?.is_editable).toBe(false);
     const cajero = roles.find((r) => r.name === 'Cajero');
     expect(cajero?.is_editable).toBe(true);

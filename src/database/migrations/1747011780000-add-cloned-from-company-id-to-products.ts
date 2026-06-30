@@ -13,20 +13,20 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * Informativo; sin FK para no acoplar el borrado de companies a este marcador.
  */
 export class AddClonedFromCompanyIdToProducts1747011780000 implements MigrationInterface {
-    name = 'AddClonedFromCompanyIdToProducts1747011780000';
+  name = 'AddClonedFromCompanyIdToProducts1747011780000';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(
-            `ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "cloned_from_company_id" bigint`,
-        );
-        await queryRunner.query(
-            `COMMENT ON COLUMN "products"."cloned_from_company_id" IS 'Si es COPIA (clon), company de origen (el principal). NULL = propio.'`,
-        );
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "cloned_from_company_id" bigint`,
+    );
+    await queryRunner.query(
+      `COMMENT ON COLUMN "products"."cloned_from_company_id" IS 'Si es COPIA (clon), company de origen (el principal). NULL = propio.'`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(
-            `ALTER TABLE "products" DROP COLUMN IF EXISTS "cloned_from_company_id"`,
-        );
-    }
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "products" DROP COLUMN IF EXISTS "cloned_from_company_id"`,
+    );
+  }
 }

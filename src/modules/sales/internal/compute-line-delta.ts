@@ -1,3 +1,8 @@
+// CAMINO MUERTO: solo lo consume `generate-edit-notes.ts` (que tampoco se usa).
+// El flujo VIVO de delta de edición es `calculatePlacePosLineDifferences` en
+// `update-sale.action.ts`. Este `LineDifference` NO lleva `packaging_value`
+// (FIX #2) a propósito: el camino real lo gestiona en el action. Si se revive,
+// añadir `packaging_value` al shape y propagarlo al motor + credit_note_line.
 import type Big from 'big.js';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';

@@ -70,7 +70,9 @@ describe('Products scoping per-company (e2e, pos_db) — FASE 0 caracterización
   });
 
   it('findProductInCompany: encuentra en su company; NotFound desde otra company', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const idA = await insertProduct(ds, companyA, { name: 'Producto A', cost: 10, stock: 5 });
 
     // Encuentra dentro de su propia company.
@@ -88,7 +90,9 @@ describe('Products scoping per-company (e2e, pos_db) — FASE 0 caracterización
   });
 
   it('índice único de sku es per-company: mismo sku en A y B coexiste; duplicar en A choca (23505)', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const sku = 'SKU-SHARED-CODE';
 
     // Mismo sku en A y en B → AMBOS permitidos (el UNIQUE es parcial por company).
@@ -107,7 +111,9 @@ describe('Products scoping per-company (e2e, pos_db) — FASE 0 caracterización
   });
 
   it('FindAllProductsAction: A ve solo lo de A; B no ve lo de A', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const idA = await insertProduct(ds, companyA, { name: 'Catalogo Solo A', cost: 3, stock: 1 });
 
     const listA = await findAll.execute(companyA, EMPTY_QUERY);
@@ -123,7 +129,9 @@ describe('Products scoping per-company (e2e, pos_db) — FASE 0 caracterización
   });
 
   it('GetItemsAction (POS): A ve solo lo de A; B no ve lo de A', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const pkgA = await insertPackaging(ds, companyA, 'Caja POS A', 1);
     const idA = await insertProduct(ds, companyA, {
       name: 'POS Solo A',
@@ -147,7 +155,9 @@ describe('Products scoping per-company (e2e, pos_db) — FASE 0 caracterización
   });
 
   it('cleanup deja ambas companies sin rastro', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     await cleanupCompany(ds, companyA);
     await cleanupCompany(ds, companyB);
     for (const table of E2E_TABLES) {

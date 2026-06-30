@@ -156,10 +156,14 @@ export class EnableTenantCascadeDelete1747011300000 implements MigrationInterfac
   ];
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    for (const stmt of this.forward) await queryRunner.query(stmt);
+    for (const stmt of this.forward) {
+      await queryRunner.query(stmt);
+    }
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    for (const stmt of this.backward) await queryRunner.query(stmt);
+    for (const stmt of this.backward) {
+      await queryRunner.query(stmt);
+    }
   }
 }

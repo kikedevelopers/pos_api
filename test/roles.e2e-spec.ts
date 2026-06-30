@@ -150,14 +150,14 @@ describeIf('Roles (e2e)', () => {
 
     expect(res.status).toBe(HttpStatus.OK);
     const roles = (res.body as SuccessEnvelope<RolePayload[]>).payload;
-    // FASE 5: SOLO 2 roles de fábrica; 'Inventarista' fue eliminado.
-    expect(roles).toHaveLength(2);
-    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero']);
+    // 3 roles de fábrica (Administrador, Cajero, Vendedor); 'Inventarista' eliminado.
+    expect(roles).toHaveLength(3);
+    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero', 'Vendedor']);
     expect(roles.find((r) => r.name === 'Inventarista')).toBeUndefined();
     expect(roles.every((r) => r.is_system === true)).toBe(true);
     expect(roles.every((r) => r.employee_count === 0)).toBe(true);
     const admin = roles.find((r) => r.name === 'Administrador');
-    expect(admin?.permissions).toHaveLength(18);
+    expect(admin?.permissions).toHaveLength(22);
     // Administrador INMUTABLE; Cajero EDITABLE.
     expect(admin?.is_editable).toBe(false);
     expect(roles.find((r) => r.name === 'Cajero')?.is_editable).toBe(true);
@@ -265,14 +265,14 @@ describeIf('Roles (e2e)', () => {
     expect(res.status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
     expect((res.body as ErrorEnvelope).payload?.code).toBe('ROLE_NOT_EDITABLE');
 
-    // El Administrador conserva sus 18 permisos (no se degradó).
+    // El Administrador conserva sus 22 permisos (no se degradó).
     const after = await request(httpServer)
       .get('/api/v1/roles')
       .set('Authorization', `Bearer ${tokenA}`);
     const adminAfter = (after.body as SuccessEnvelope<RolePayload[]>).payload.find(
       (r) => r.name === 'Administrador',
     );
-    expect(adminAfter?.permissions).toHaveLength(18);
+    expect(adminAfter?.permissions).toHaveLength(22);
   });
 
   // ---------- DELETE /roles/:id: 422 sobre el rol INMUTABLE 'Administrador' ----------
@@ -402,7 +402,7 @@ describeIf('Roles (e2e)', () => {
   });
 
   // ---------- profile: permissions ----------
-  it('GET /auth/profile (owner) incluye permissions con las 18 keys', async () => {
+  it('GET /auth/profile (owner) incluye permissions con las 22 keys', async () => {
     const res = await request(httpServer)
       .get('/api/v1/auth/profile')
       .set('Authorization', `Bearer ${tokenA}`);
@@ -410,7 +410,7 @@ describeIf('Roles (e2e)', () => {
     expect(res.status).toBe(HttpStatus.OK);
     const perms = (res.body as SuccessEnvelope<{ user_profile: { permissions: string[] } }>).payload
       .user_profile.permissions;
-    expect(perms).toHaveLength(18);
+    expect(perms).toHaveLength(22);
     expect(perms).toContain('canAccessSettings');
   });
 

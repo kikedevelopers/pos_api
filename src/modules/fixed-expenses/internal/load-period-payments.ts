@@ -1,11 +1,9 @@
 import { In, type Repository } from 'typeorm';
 
-import { Expense } from '@/modules/expenses/entities/expense.entity';
+import type { Expense } from '@/modules/expenses/entities/expense.entity';
 
-import {
-  FixedExpensePaymentDto,
-  toFixedExpensePaymentDto,
-} from '../dto/fixed-expense-period-response.dto';
+import type { FixedExpensePaymentDto } from '../dto/fixed-expense-period-response.dto';
+import { toFixedExpensePaymentDto } from '../dto/fixed-expense-period-response.dto';
 
 /**
  * Carga, en UNA sola consulta, todos los abonos (`expenses` con `is_fixed = true`)

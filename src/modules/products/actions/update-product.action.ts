@@ -98,12 +98,10 @@ export class UpdateProductAction {
         dto.packaging_value &&
         dto.packaging_value > 0
       ) {
-        patch.packaging_id = await resolveAutoPackagingId(
-          manager,
-          dto.packaging_value,
-          companyId,
-          { id: actor.id, fullName: actor.fullName },
-        );
+        patch.packaging_id = await resolveAutoPackagingId(manager, dto.packaging_value, companyId, {
+          id: actor.id,
+          fullName: actor.fullName,
+        });
       }
       if (dto.category_id !== undefined) {
         patch.category_id = dto.category_id ? String(dto.category_id) : null;

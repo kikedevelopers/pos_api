@@ -90,9 +90,7 @@ export class GetProductSalesHistoryAction {
     const totalSalesNum = preciseNumber(totalSales, 2);
     const totalProfitNum = preciseNumber(totalProfit, 2);
     const averageMargin =
-      totalSalesNum > 0
-        ? preciseNumber(toBig(totalProfitNum).div(totalSalesNum).times(100), 2)
-        : 0;
+      totalSalesNum > 0 ? preciseNumber(toBig(totalProfitNum).div(totalSalesNum).times(100), 2) : 0;
 
     return {
       sales: rows.map((r) => ({

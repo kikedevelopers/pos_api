@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { toBig } from '@/common/utils/precision';
 import { parseUtcRange } from '@/modules/reports/internal/range';
+import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
 
 import type { SalesReportQueryDto } from '../dto/sales-report-query.dto';
 import {
@@ -53,10 +54,16 @@ type PaymentTypeCode = 'CASH' | 'TRANSFER' | 'CREDIT' | 'MIXED' | 'UNDEFINED';
 
 function derivePaymentType(methodsCsv: string | null): PaymentTypeCode {
   const methods = (methodsCsv ?? '').split(',').filter(Boolean);
-  if (methods.length === 0) return 'UNDEFINED';
-  if (methods.length > 1) return 'MIXED';
+  if (methods.length === 0) {
+    return 'UNDEFINED';
+  }
+  if (methods.length > 1) {
+    return 'MIXED';
+  }
   const only = methods[0];
-  if (only === 'CASH' || only === 'TRANSFER' || only === 'CREDIT') return only;
+  if (only === 'CASH' || only === 'TRANSFER' || only === 'CREDIT') {
+    return only;
+  }
   return 'UNDEFINED';
 }
 
@@ -93,7 +100,27 @@ export interface SalesReportResult {
  */
 @Injectable()
 export class GetSalesReportAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly resolvePermissions: ResolveEffectivePermissionsAction,
+  ) {}
+
+  /**
+   * Id de usuario al que SCOPEAR las ventas, o `null` si el actor puede verlas
+   * TODAS. Un actor ve todas si sus permisos efectivos incluyen `canViewAllSales`
+   * (owner/superadmin lo tienen siempre; los empleados solo vía su rol — p. ej.
+   * Cajero sí, Vendedor no). Reemplaza el antiguo gate por `type === 'employee'`,
+   * que daba el mismo trato a todos los empleados sin importar su rol.
+   */
+  private async resolveScopeUserId(actor: AuthUser): Promise<string | null> {
+    const effective = await this.resolvePermissions.execute({
+      type: actor.type,
+      account: actor.account,
+      user_id: actor.user_id,
+      company_id: actor.company_id,
+    });
+    return effective.includes('canViewAllSales') ? null : String(actor.user_id);
+  }
 
   async execute(
     companyId: number,
@@ -112,11 +139,14 @@ export class GetSalesReportAction {
     const dateTo = range.dateEnd;
     const cid = String(companyId);
 
-    const { sql, params } = this.buildInvoiceQuery(cid, filters, dateFrom, dateTo, actor);
+    // Scope de ventas según permiso `canViewAllSales` (null = ve todas).
+    const scopeToUserId = await this.resolveScopeUserId(actor);
+
+    const { sql, params } = this.buildInvoiceQuery(cid, filters, dateFrom, dateTo, scopeToUserId);
     const invoiceRows = await this.dataSource.query<InvoiceRow[]>(sql, params);
 
     const invoiceIds = new Set<number>(invoiceRows.map((r) => Number(r.id)));
-    const noteRows = await this.fetchNoteRows(cid, dateFrom, dateTo, actor);
+    const noteRows = await this.fetchNoteRows(cid, dateFrom, dateTo, scopeToUserId);
     const { byInvoice: notesByInvoice, orphans: orphanNotes } = groupNotes(noteRows, invoiceIds);
 
     const tickets: unknown[] = [];
@@ -244,7 +274,7 @@ export class GetSalesReportAction {
     filters: SalesReportQueryDto,
     dateFrom: Date,
     dateTo: Date,
-    actor: AuthUser,
+    scopeToUserId: string | null,
   ): { sql: string; params: unknown[] } {
     const params: unknown[] = [cid];
     const placeholder = (value: unknown): string => {
@@ -296,10 +326,11 @@ export class GetSalesReportAction {
       );
     }
 
-    // Paridad PlacePos (`POSReportController.buildInvoiceQuery`): el empleado
-    // solo ve sus propias ventas. owner/manager/superadmin ven todas.
-    if (actor.type === 'employee') {
-      conditions.push(`si.created_by_id = ${placeholder(String(actor.user_id))}`);
+    // Scope por `canViewAllSales`: si el actor NO puede ver todas las ventas
+    // (Vendedor, empleado legacy), solo ve las suyas. null = ve todas
+    // (owner/superadmin/Cajero). Paridad PlacePos (`POSReportController`).
+    if (scopeToUserId !== null) {
+      conditions.push(`si.created_by_id = ${placeholder(scopeToUserId)}`);
     }
 
     this.applyNoteFilter(conditions, params, filters, dateFrom, dateTo);
@@ -453,14 +484,14 @@ export class GetSalesReportAction {
     cid: string,
     dateFrom: Date,
     dateTo: Date,
-    actor: AuthUser,
+    scopeToUserId: string | null,
   ): Promise<NoteRow[]> {
     const params: unknown[] = [cid, dateFrom, dateTo];
-    // Paridad PlacePos (`POSReportController.fetchNoteRows`): el empleado solo
-    // ve las notas que él mismo creó.
+    // Scope por `canViewAllSales`: si el actor solo ve sus ventas, también solo
+    // ve las notas que él mismo creó. null = ve todas. Paridad PlacePos.
     let employeeClause = '';
-    if (actor.type === 'employee') {
-      params.push(String(actor.user_id));
+    if (scopeToUserId !== null) {
+      params.push(scopeToUserId);
       employeeClause = `AND cn.created_by_id = $${params.length}`;
     }
 

@@ -77,7 +77,9 @@ describe('UpdateRoleAction (editabilidad)', () => {
       updated_at: new Date(),
     };
     const { action, manager } = makeAction(cajero);
-    const dto = { permissions: ['canAccessPOS', 'canAccessPOS', 'canAccessExpenses'] } as UpdateRoleDto;
+    const dto = {
+      permissions: ['canAccessPOS', 'canAccessPOS', 'canAccessExpenses'],
+    } as UpdateRoleDto;
 
     const result = await action.execute(2, dto, 10);
 

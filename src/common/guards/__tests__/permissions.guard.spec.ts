@@ -50,9 +50,7 @@ describe('PermissionsGuard', () => {
   const buildResolver = (
     perms: PermissionKey[],
   ): { action: ResolveEffectivePermissionsAction; execute: jest.Mock } => {
-    const execute = jest
-      .fn<Promise<PermissionKey[]>, [PermissionActor]>()
-      .mockResolvedValue(perms);
+    const execute = jest.fn<Promise<PermissionKey[]>, [PermissionActor]>().mockResolvedValue(perms);
     return { action: { execute } as unknown as ResolveEffectivePermissionsAction, execute };
   };
 
@@ -68,9 +66,7 @@ describe('PermissionsGuard', () => {
     const { action, execute } = buildResolver([]);
     const guard = new PermissionsGuard(buildReflector('canAccessBanks'), action);
 
-    await expect(
-      guard.canActivate(buildContext(buildUser('owner', 'user'))),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(buildContext(buildUser('owner', 'user')))).resolves.toBe(true);
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -78,9 +74,9 @@ describe('PermissionsGuard', () => {
     const { action, execute } = buildResolver([]);
     const guard = new PermissionsGuard(buildReflector('canAccessBanks'), action);
 
-    await expect(
-      guard.canActivate(buildContext(buildUser('superadmin', 'user'))),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(buildContext(buildUser('superadmin', 'user')))).resolves.toBe(
+      true,
+    );
     expect(execute).not.toHaveBeenCalled();
   });
 

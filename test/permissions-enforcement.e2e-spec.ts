@@ -98,9 +98,7 @@ describeIf('Permissions enforcement (e2e)', () => {
       .send({ name: username, login_enabled: true, username, password, role_id: roleId });
     expect(emp.status).toBe(HttpStatus.CREATED);
 
-    const login = await request(httpServer)
-      .post('/api/v1/auth/user')
-      .send({ username, password });
+    const login = await request(httpServer).post('/api/v1/auth/user').send({ username, password });
     expect(login.status).toBeLessThan(HttpStatus.BAD_REQUEST);
     const token = (login.body as SuccessEnvelope<{ access_token: string }>).payload.access_token;
     expect(typeof token).toBe('string');

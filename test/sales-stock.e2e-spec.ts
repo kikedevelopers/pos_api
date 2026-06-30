@@ -74,7 +74,9 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('DEDUCT producto base: stock 100 - 5 = 95, registra movimiento OUT con el reason del ctx', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const id = await insertProduct(ds, companyA, { name: 'Base DEDUCT', cost: 1, stock: 100 });
 
     await ds.transaction(async (manager) => {
@@ -98,7 +100,9 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('RETURN producto base: suma al stock y registra movimiento IN', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const id = await insertProduct(ds, companyA, { name: 'Base RETURN', cost: 1, stock: 10 });
 
     await ds.transaction(async (manager) => {
@@ -120,9 +124,15 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('DEDUCT de presentación (hijo con packaging value W): baja W del PADRE; movimiento sobre el padre', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const W = 12;
-    const parentId = await insertProduct(ds, companyA, { name: 'Padre Stock', cost: 1, stock: 100 });
+    const parentId = await insertProduct(ds, companyA, {
+      name: 'Padre Stock',
+      cost: 1,
+      stock: 100,
+    });
     const pkgChild = await insertPackaging(ds, companyA, 'Caja x12', W);
     // Hijo: stock vive en el padre; el packaging del hijo convierte la unidad.
     const childId = await insertProduct(ds, companyA, {
@@ -160,7 +170,9 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('cross-tenant: ajustar stock de un producto de A desde la company B lanza "no existe en la company"', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const idA = await insertProduct(ds, companyA, { name: 'Solo A Stock', cost: 1, stock: 50 });
 
     // [[AISLAMIENTO-CROSS-TENANT — COMPARTIR CAMBIARÁ ESTO]]
@@ -186,7 +198,9 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('control estricto ON: DEDUCT que dejaría stock negativo lanza InsufficientStock (422)', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     // Activar strict_inventory_control para la company.
     await ds.query(
       `INSERT INTO app_settings (company_id, key, value) VALUES ($1, $2, 'true')
@@ -210,7 +224,7 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
 
     // Rollback: stock intacto, sin movimiento.
     expect(await stockOf(ds, companyA, id)).toBe(2);
-    expect((await movementsOf(ds, companyA, id))).toHaveLength(0);
+    expect(await movementsOf(ds, companyA, id)).toHaveLength(0);
 
     // Limpiar el setting para no afectar otros tests.
     await ds.query(`DELETE FROM app_settings WHERE company_id = $1 AND key = $2`, [
@@ -220,7 +234,9 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('control estricto OFF (default): DEDUCT deja pasar aunque el stock quede negativo', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     // Documenta el comportamiento real: sin strict_inventory_control, el helper
     // NO bloquea ventas que dejen stock negativo (la mayoría de comercios
     // prefieren no bloquear nunca la venta).
@@ -243,7 +259,9 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
   });
 
   it('cleanup deja ambas companies sin rastro', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     await cleanupCompany(ds, companyA);
     await cleanupCompany(ds, companyB);
     for (const table of E2E_TABLES) {

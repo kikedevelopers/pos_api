@@ -184,6 +184,23 @@ export class CreditNoteLine {
   })
   total!: number;
 
+  /**
+   * Snapshot del factor de conversión del empaque (`packagings.value`)
+   * CONGELADO al momento en que las unidades se comprometieron / devolvieron.
+   * El motor de inventario (`adjustInventory`) lo usa como override al aplicar
+   * el `RETURN` (NC) o `DEDUCT` (ND); si es `null` (líneas legacy) cae al
+   * packaging vigente del producto. Garantiza simetría con el factor con que se
+   * descontó el stock — no corrompe inventario si el `value` del empaque cambia.
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 4,
+    nullable: true,
+    transformer: NumericTransformer,
+  })
+  packaging_value!: number | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 }

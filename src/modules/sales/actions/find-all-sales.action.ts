@@ -5,6 +5,7 @@ import { In, type Repository } from 'typeorm';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { CreditNote, NoteType } from '@/modules/credit-notes/entities/credit-note.entity';
 import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
+import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
 
 import type { ListSalesQueryDto } from '../dto/list-sales-query.dto';
 import { SaleListItemDto } from '../dto/sale-list-item.dto';
@@ -20,8 +21,9 @@ import { SaleInvoice } from '../entities/sale-invoice.entity';
  *
  *   - Filtro por fecha: por default, solo ventas creadas HOY. Si la query
  *     trae `date_from`/`date_to`, se respeta esa ventana (extensión cloud).
- *   - Filtro por employee: si el actor es `type === 'employee'`, solo ve
- *     las ventas creadas por él (`created_by_id = actor.user_id`).
+ *   - Filtro por scope: si el actor NO tiene el permiso `canViewAllSales`
+ *     (Vendedor, empleado legacy), solo ve las ventas creadas por él
+ *     (`created_by_id = actor.user_id`); owner/superadmin/Cajero ven todas.
  *   - Filtro por archivo: `is_deleted = false` salvo que llegue `show_deleted=true`.
  *   - Totales: consolidados (V + Σ ND − Σ NC) — paridad con `computeAdjustments`
  *     del local.
@@ -38,6 +40,7 @@ export class FindAllSalesAction {
     private readonly salesRepo: Repository<SaleInvoice>,
     @InjectRepository(CreditNote)
     private readonly notesRepo: Repository<CreditNote>,
+    private readonly resolvePermissions: ResolveEffectivePermissionsAction,
   ) {}
 
   async execute(
@@ -74,9 +77,16 @@ export class FindAllSalesAction {
       );
     }
 
-    // Filtro por employee — paridad estricta con `getTickets` local: los
-    // employees solo ven sus propias ventas, owner/manager/superadmin ven todas.
-    if (actor.type === 'employee') {
+    // Scope por `canViewAllSales` — paridad con `getTickets` local: un actor sin
+    // ese permiso (Vendedor, empleado legacy) solo ve sus propias ventas;
+    // owner/superadmin/Cajero ven todas.
+    const effective = await this.resolvePermissions.execute({
+      type: actor.type,
+      account: actor.account,
+      user_id: actor.user_id,
+      company_id: actor.company_id,
+    });
+    if (!effective.includes('canViewAllSales')) {
       qb.andWhere('s.created_by_id = :actorId', { actorId: String(actor.user_id) });
     }
 

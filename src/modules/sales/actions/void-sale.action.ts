@@ -33,9 +33,9 @@ import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-set
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
 import type { SaleCorrectionSourceDto } from '../dto/update-sale.dto';
-import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
+import { getConsolidatedInvoice } from '../internal/consolidate-invoice.helper';
 import { recomputeSalePoints } from '../internal/customer-points.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
 
@@ -171,10 +171,20 @@ export class VoidSaleAction {
       });
     }
 
-    const lines = await manager.find(SaleInvoiceLine, {
-      where: { sale_invoice_id: sale.id, company_id: String(companyId) },
-      order: { id: 'ASC' },
-    });
+    // La anulación TOTAL opera sobre el estado CONSOLIDADO (original + Σ ND −
+    // Σ NC previas) — que es EXACTAMENTE lo que sigue descontado del inventario
+    // y "vivo" contablemente. Usar las líneas originales sub-devolvería las
+    // unidades añadidas por una ND previa y sobre-devolvería las ya removidas
+    // por una NC parcial. El consolidado ya arrastra el `packaging_value`
+    // congelado de cada línea (de la sale line original y de la credit_note_line
+    // de las ND), así que el RETURN mantiene la simetría del FIX #2. Misma TX y
+    // lock que el resto del método.
+    const consolidated = await getConsolidatedInvoice(manager, companyId, Number(sale.id));
+    if (!consolidated) {
+      // Defensivo: la venta está lockeada arriba, así que esto no debería ocurrir.
+      throw new NotFoundException('Venta no encontrada');
+    }
+    const consolidatedLines = consolidated.lines;
 
     // I-7: TODOS los pagos de la venta deben generar reversa, no solo CASH.
     //  - CASH  → CashRegisterLog(CREDIT_NOTE_FULL_VOID, OUT) en la caja del
@@ -217,6 +227,11 @@ export class VoidSaleAction {
       TicketSettingType.CREDIT_NOTE,
     );
 
+    // El total/subtotal de la NC FULL_VOID = total CONSOLIDADO (no el original).
+    // Así el consolidado neto de la venta queda en 0 tras anular (total − total)
+    // y los puntos del cliente cuadran. tax_total = 0 (paridad con las NC de
+    // edición, que no llevan IVA). Cuando todo ya se devolvió por NCs parciales
+    // el consolidado no tiene líneas → total = 0.
     const creditNote = manager.create(CreditNote, {
       company_id: String(companyId),
       sale_invoice_id: sale.id,
@@ -224,9 +239,9 @@ export class VoidSaleAction {
       note_number: cnTicket.formatted,
       note_type: NoteType.CREDIT,
       operation_type: OperationType.FULL_VOID,
-      subtotal: sale.subtotal,
-      tax_total: sale.tax_total,
-      total: sale.total,
+      subtotal: consolidated.total,
+      tax_total: 0,
+      total: consolidated.total,
       reason: reason?.trim() || 'Anulación total de venta',
       created_by: actor.fullName,
       created_by_id: String(actor.id),
@@ -234,48 +249,57 @@ export class VoidSaleAction {
     });
     const savedNote = await manager.save(CreditNote, creditNote);
 
-    if (lines.length > 0) {
-      const noteLines = lines.map((l) => ({
+    // Una credit_note_line por línea CONSOLIDADA (no por línea original). El
+    // consolidado no mapea 1:1 a una sola sale line → original_line_id = null.
+    // Guard de vacío: insertar un array vacío revienta y adjustInventory no debe
+    // llamarse; igual marcamos is_deleted y reversamos pagos más abajo.
+    if (consolidatedLines.length > 0) {
+      const noteLines = consolidatedLines.map((l) => ({
         company_id: String(companyId),
         credit_note_id: savedNote.id,
-        original_line_id: l.id,
-        product_id: l.product_id,
-        packaging_id: l.packaging_id,
-        description: l.description,
+        original_line_id: null as string | null,
+        product_id: String(l.item_id),
+        packaging_id: null as string | null,
+        description: l.name,
         quantity: l.quantity,
-        unit_price: l.unit_price,
-        unit_cost: l.unit_cost,
-        subtotal: l.subtotal,
-        iva_percentage: l.iva_percentage,
-        iva_amount: l.iva_amount,
+        unit_price: l.price,
+        unit_cost: l.cost,
+        subtotal: l.total,
+        iva_percentage: 0,
+        iva_amount: 0,
         total: l.total,
+        // FIX #2: el RETURN devuelve stock con el MISMO factor congelado de la
+        // línea consolidada (snapshot de la sale line original o de la ND).
+        packaging_value: l.packaging_value ?? null,
       }));
       await manager.insert(CreditNoteLine, noteLines);
-    }
 
-    await adjustInventory(
-      manager,
-      companyId,
-      lines.map((l) => ({
-        item_id: Number(l.product_id),
-        quantity: Number(l.quantity),
-      })),
-      'RETURN',
-      {
-        reason: 'SALE_VOID',
-        referenceType: 'credit_note',
-        referenceId: Number(savedNote.id),
-        referenceCode: savedNote.note_number,
-        description: `Anulación total de venta — ${savedNote.note_number}`,
-        actorName: actor.fullName,
-        actorUserId: actor.id,
-        // La venta pudo incluir productos COMPARTIDOS del principal (company_id
-        // distinto de la sucursal): la devolución de stock debe resolver por el
-        // set accesible y reponer en el dueño REAL. Sin esto, anular una venta
-        // con productos compartidos no repone el stock del principal.
-        crossCompanyAccess: true,
-      },
-    );
+      await adjustInventory(
+        manager,
+        companyId,
+        consolidatedLines.map((l) => ({
+          item_id: l.item_id,
+          quantity: l.quantity,
+          // FIX #2: factor congelado de la línea consolidada (simetría DEDUCT↔RETURN).
+          packaging_value: l.packaging_value ?? null,
+        })),
+        'RETURN',
+        {
+          reason: 'SALE_VOID',
+          referenceType: 'credit_note',
+          referenceId: Number(savedNote.id),
+          referenceCode: savedNote.note_number,
+          description: `Anulación total de venta — ${savedNote.note_number}`,
+          actorName: actor.fullName,
+          actorUserId: actor.id,
+          // La venta pudo incluir productos COMPARTIDOS del principal (company_id
+          // distinto de la sucursal): la devolución de stock debe resolver por el
+          // set accesible y reponer en el dueño REAL. Sin esto, anular una venta
+          // con productos compartidos no repone el stock del principal.
+          crossCompanyAccess: true,
+        },
+      );
+    }
 
     await manager.update(
       SaleInvoice,

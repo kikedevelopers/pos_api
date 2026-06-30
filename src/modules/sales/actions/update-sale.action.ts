@@ -28,6 +28,7 @@ import {
 } from '@/modules/financial-movements/entities/financial-movement.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
+import { resolvePackagingValues } from '@/modules/products/internal/resolve-packaging-value.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
@@ -75,6 +76,14 @@ interface PlacePosLineDifference {
   price: number;
   quantity: number;
   total: number;
+  /**
+   * FIX #2: factor de empaque CONGELADO que se pasa al motor y se persiste en
+   * la `credit_note_line`. El valor que va al ajuste DEBE ser el mismo que se
+   * guarda (simetría). `removed`/`reduced` lo copian de la línea consolidada
+   * (el factor con que se descontó); `added`/`increased` lo resuelven del
+   * producto vigente (helper) en el emisor de la ND.
+   */
+  packaging_value: number | null;
 }
 
 /**
@@ -189,7 +198,24 @@ export class UpdateSaleAction {
       company_id: String(companyId),
     });
 
-    const lineRows = dto.items.map((item) => mapPayloadLineToRow(item, sale.id, companyId));
+    // FIX #2: re-snapshot del factor de empaque al reemplazar las líneas del
+    // ORDER (el pedido aún no toca inventario, pero al cobrarse el DEDUCT leerá
+    // este `packaging_value`). Mismo resolve+store que en la creación, en modo
+    // cross-company (el DEDUCT al cobrar usa `crossCompanyAccess:true`).
+    const packagingValueByItem = await resolvePackagingValues(
+      manager,
+      companyId,
+      dto.items.map((item) => Number(item.item_id)),
+      true,
+    );
+    const lineRows = dto.items.map((item) =>
+      mapPayloadLineToRow(
+        item,
+        sale.id,
+        companyId,
+        packagingValueByItem.get(Number(item.item_id)) ?? null,
+      ),
+    );
     await manager.insert(SaleInvoiceLine, lineRows);
 
     try {
@@ -348,6 +374,21 @@ export class UpdateSaleAction {
     }
 
     if (addedOrIncreased.length > 0) {
+      // FIX #2: las líneas añadidas/incrementadas son una NUEVA deducción de
+      // stock; resolvemos el factor de empaque del producto VIGENTE (helper) y
+      // lo fijamos en el diff. El mismo valor se pasa al motor (DEDUCT) y se
+      // persiste en la credit_note_line de la ND (simetría con su futuro RETURN).
+      // Modo cross-company: el DEDUCT de la ND usa `crossCompanyAccess:true`, así
+      // que un producto compartido también queda con su factor congelado.
+      const debitPackaging = await resolvePackagingValues(
+        manager,
+        companyId,
+        addedOrIncreased.map((l) => l.item_id),
+        true,
+      );
+      for (const diff of addedOrIncreased) {
+        diff.packaging_value = debitPackaging.get(diff.item_id) ?? null;
+      }
       const debit = await this.emitDebitNote(manager, {
         companyId,
         sale,
@@ -592,13 +633,20 @@ export class UpdateSaleAction {
       iva_percentage: 0,
       iva_amount: 0,
       total: l.total,
+      // FIX #2: factor congelado (copiado de la línea consolidada removida/
+      // reducida) — el mismo que se pasa al RETURN.
+      packaging_value: l.packaging_value,
     }));
     await manager.insert(CreditNoteLine, cnLines);
 
     await adjustInventory(
       manager,
       params.companyId,
-      params.lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
+      params.lines.map((l) => ({
+        item_id: l.item_id,
+        quantity: l.quantity,
+        packaging_value: l.packaging_value,
+      })),
       'RETURN',
       {
         reason: 'SALE_EDIT_CREDIT',
@@ -695,13 +743,20 @@ export class UpdateSaleAction {
       iva_percentage: 0,
       iva_amount: 0,
       total: l.total,
+      // FIX #2: factor resuelto del producto vigente — el mismo que se pasa al
+      // DEDUCT (simetría con el RETURN si luego se anula/edita esta ND).
+      packaging_value: l.packaging_value,
     }));
     await manager.insert(CreditNoteLine, dnLines);
 
     await adjustInventory(
       manager,
       params.companyId,
-      params.lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
+      params.lines.map((l) => ({
+        item_id: l.item_id,
+        quantity: l.quantity,
+        packaging_value: l.packaging_value,
+      })),
       'DEDUCT',
       {
         reason: 'SALE_EDIT_DEBIT',
@@ -910,6 +965,8 @@ function calculatePlacePosLineDifferences(
         price: Number(currentLine.price),
         quantity: Number(currentLine.quantity),
         total: Number(currentLine.total),
+        // FIX #2: factor con que se descontó esta línea viva (null = legacy).
+        packaging_value: currentLine.packaging_value ?? null,
       });
       continue;
     }
@@ -924,6 +981,8 @@ function calculatePlacePosLineDifferences(
         price: Number(currentLine.price),
         quantity: preciseNumber(diffQty, 4),
         total: preciseNumber(toBig(currentLine.price).times(diffQty), 2),
+        // FIX #2: factor con que se descontó esta línea viva (null = legacy).
+        packaging_value: currentLine.packaging_value ?? null,
       });
     }
   }
@@ -939,6 +998,9 @@ function calculatePlacePosLineDifferences(
         price: newEntry.line.price,
         quantity: preciseNumber(newEntry.quantity, 4),
         total: preciseNumber(newEntry.total, 2),
+        // FIX #2: se resuelve del producto vigente en `editSaleFlow` (helper)
+        // antes de emitir la ND. Placeholder null aquí.
+        packaging_value: null,
       });
       continue;
     }
@@ -953,6 +1015,9 @@ function calculatePlacePosLineDifferences(
         price: newEntry.line.price,
         quantity: preciseNumber(diffQty, 4),
         total: preciseNumber(toBig(newEntry.line.price).times(diffQty), 2),
+        // FIX #2: se resuelve del producto vigente en `editSaleFlow` (helper)
+        // antes de emitir la ND. Placeholder null aquí.
+        packaging_value: null,
       });
     }
   }
@@ -981,6 +1046,7 @@ interface SaleInvoiceLineInsertRow {
   total: number;
   profit: number;
   margin: number;
+  packaging_value: number | null;
 }
 
 /**
@@ -993,6 +1059,7 @@ function mapPayloadLineToRow(
   line: UpdateSaleLineDto,
   saleInvoiceId: string,
   companyId: number,
+  packagingValue: number | null,
 ): SaleInvoiceLineInsertRow {
   return {
     company_id: String(companyId),
@@ -1011,5 +1078,8 @@ function mapPayloadLineToRow(
     total: line.total,
     profit: line.profit,
     margin: line.margin,
+    // FIX #2: snapshot del factor de empaque vigente (null si el producto no se
+    // resolvió en la company — el motor cae a su fallback al cobrar).
+    packaging_value: packagingValue,
   };
 }

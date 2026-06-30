@@ -98,9 +98,7 @@ export class SalesReportQueryDto {
         : Array.isArray(value)
           ? (value as unknown[])
           : [];
-    const ids = raw
-      .map((v) => Number(v))
-      .filter((n) => Number.isInteger(n) && n > 0);
+    const ids = raw.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0);
     return ids.length > 0 ? ids : undefined;
   })
   @IsArray()

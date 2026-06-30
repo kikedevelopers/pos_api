@@ -44,7 +44,9 @@ export class AdminSignatureGuard implements CanActivate {
   }
 
   private static loadPublicKey(base64Spki: string): KeyObject | null {
-    if (!base64Spki) return null;
+    if (!base64Spki) {
+      return null;
+    }
     try {
       return createPublicKey({
         key: Buffer.from(base64Spki, 'base64'),
@@ -85,7 +87,12 @@ export class AdminSignatureGuard implements CanActivate {
 
     let valid = false;
     try {
-      valid = verify(null, Buffer.from(message, 'utf8'), this.publicKey, Buffer.from(signature, 'base64'));
+      valid = verify(
+        null,
+        Buffer.from(message, 'utf8'),
+        this.publicKey,
+        Buffer.from(signature, 'base64'),
+      );
     } catch (e) {
       this.logger.warn(`Error verificando firma admin: ${(e as Error).message}`);
       valid = false;

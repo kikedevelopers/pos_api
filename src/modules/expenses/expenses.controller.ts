@@ -139,7 +139,10 @@ export class ExpensesController {
   @ApiBody({ type: CreateExpenseDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: ExpenseResponseDto })
   @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
-  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Empleado con fuente distinta de caja' })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Empleado con fuente distinta de caja',
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Cuenta origen no encontrada' })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,

@@ -213,9 +213,7 @@ export class BulkProcessProductsAction {
 
     // description: misma semántica que category — undefined/'' → PRESERVAR la
     // actual; con valor → reemplazar (trim).
-    const itemHasDescription = !(
-      item.description === undefined || item.description.trim() === ''
-    );
+    const itemHasDescription = !(item.description === undefined || item.description.trim() === '');
     const resolvedDescription = itemHasDescription
       ? item.description!.trim()
       : existing.description;

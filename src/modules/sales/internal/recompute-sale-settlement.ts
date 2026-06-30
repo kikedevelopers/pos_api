@@ -128,7 +128,7 @@ export async function recomputeSaleSettlement(
   const isPending = balance > 0;
 
   // 2. Persistir en SaleCredit.
-  let creditId: number | null = existingCredit ? Number(existingCredit.id) : null;
+  const creditId: number | null = existingCredit ? Number(existingCredit.id) : null;
 
   if (existingCredit) {
     await manager.update(

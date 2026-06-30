@@ -6,15 +6,14 @@ import { seedSystemRolesForCompany } from '../internal/system-roles';
 /**
  * Tests unitarios de `seedSystemRolesForCompany`.
  *
- * FASE 5: ahora son SOLO 2 roles de fábrica (Administrador, Cajero); se eliminó
- * 'Inventarista'. Verifican:
- *   - Crea EXACTAMENTE los 2 roles de fábrica con sus permisos, ícono, color,
+ * Ahora son 3 roles de fábrica (Administrador, Cajero, Vendedor). Verifican:
+ *   - Crea EXACTAMENTE los 3 roles de fábrica con sus permisos, ícono, color,
  *     `is_system = true` e `is_editable` esperados (Administrador inmutable,
- *     Cajero editable).
+ *     Cajero y Vendedor editables).
  *   - El array de permisos de cada rol es EXACTO (catálogo completo para
- *     Administrador; subconjunto literal para Cajero).
+ *     Administrador; subconjunto literal para Cajero y Vendedor).
  *   - NO siembra 'Inventarista'.
- *   - IDEMPOTENTE: correrlo dos veces NO duplica (sigue habiendo 2 roles).
+ *   - IDEMPOTENTE: correrlo dos veces NO duplica (sigue habiendo 3 roles).
  *   - Aislamiento multi-tenant: sembrar otra company no toca la primera.
  *
  * El `EntityManager` se mockea con un store en memoria que interpreta el SELECT
@@ -82,38 +81,54 @@ function permsOf(store: RoleRow[], companyId: string, name: string): string[] {
 describe('seedSystemRolesForCompany', () => {
   const COMPANY = '42';
 
-  it('crea exactamente 2 roles de fábrica con metadata, permisos y editabilidad exactos', async () => {
+  it('crea exactamente 3 roles de fábrica con metadata, permisos y editabilidad exactos', async () => {
     const store: RoleRow[] = [];
     const { manager } = createManagerMock(store);
 
     await seedSystemRolesForCompany(manager, COMPANY);
 
     const roles = rolesFor(store, COMPANY);
-    expect(roles).toHaveLength(2);
+    expect(roles).toHaveLength(3);
     expect(roles.every((r) => r.is_system === true)).toBe(true);
-    expect(new Set(roles.map((r) => r.name))).toEqual(new Set(['Administrador', 'Cajero']));
+    expect(new Set(roles.map((r) => r.name))).toEqual(
+      new Set(['Administrador', 'Cajero', 'Vendedor']),
+    );
     // 'Inventarista' fue eliminado en FASE 5.
     expect(roles.find((r) => r.name === 'Inventarista')).toBeUndefined();
 
-    // Administrador → metadata + TODAS las 18 keys del catálogo + INMUTABLE.
+    // Administrador → metadata + TODAS las 22 keys del catálogo + INMUTABLE.
     const admin = roles.find((r) => r.name === 'Administrador');
     expect(admin?.icon).toBe('ShieldCheck');
     expect(admin?.color).toBe('#6366f1');
     expect(admin?.is_editable).toBe(false);
     expect(permsOf(store, COMPANY, 'Administrador')).toEqual([...PERMISSION_KEYS]);
 
-    // Cajero → metadata + subconjunto literal exacto + EDITABLE.
+    // Cajero → metadata + subconjunto literal exacto (12 keys) + EDITABLE.
     const cajero = roles.find((r) => r.name === 'Cajero');
     expect(cajero?.icon).toBe('Receipt');
     expect(cajero?.color).toBe('#10b981');
     expect(cajero?.is_editable).toBe(true);
     expect(permsOf(store, COMPANY, 'Cajero')).toEqual([
       'canAccessPOS',
+      'canAccessInventory',
+      'canAccessPackaging',
+      'canAccessCategories',
+      'canAccessCustomers',
+      'canAccessPurchase',
       'canAccessSalesReport',
+      'canAccessCreditsReport',
+      'canAccessDailyClosureReport',
       'canAccessClientsReport',
       'canAccessExpenses',
-      'canAccessCustomers',
+      'canViewAllSales',
     ]);
+
+    // Vendedor → SOLO POS + informe de Ventas (2 keys) + EDITABLE.
+    const vendedor = roles.find((r) => r.name === 'Vendedor');
+    expect(vendedor?.icon).toBe('BadgeDollarSign');
+    expect(vendedor?.color).toBe('#f59e0b');
+    expect(vendedor?.is_editable).toBe(true);
+    expect(permsOf(store, COMPANY, 'Vendedor')).toEqual(['canAccessPOS', 'canAccessSalesReport']);
   });
 
   it('es idempotente: correrlo dos veces no duplica roles', async () => {
@@ -124,16 +139,16 @@ describe('seedSystemRolesForCompany', () => {
     const insertsAfterFirst = query.mock.calls.filter(([sql]) =>
       /^\s*INSERT/i.test(sql as string),
     ).length;
-    expect(insertsAfterFirst).toBe(2);
+    expect(insertsAfterFirst).toBe(3);
 
     await seedSystemRolesForCompany(manager, COMPANY);
 
-    // Sigue habiendo 2 roles: la segunda corrida no insertó nada nuevo.
-    expect(rolesFor(store, COMPANY)).toHaveLength(2);
+    // Sigue habiendo 3 roles: la segunda corrida no insertó nada nuevo.
+    expect(rolesFor(store, COMPANY)).toHaveLength(3);
     const totalInserts = query.mock.calls.filter(([sql]) =>
       /^\s*INSERT/i.test(sql as string),
     ).length;
-    expect(totalInserts).toBe(2);
+    expect(totalInserts).toBe(3);
   });
 
   it('respeta nombres preexistentes case/trim-insensitive (no duplica)', async () => {
@@ -153,10 +168,10 @@ describe('seedSystemRolesForCompany', () => {
 
     await seedSystemRolesForCompany(manager, COMPANY);
 
-    // Administrador NO se re-inserta (ya existe normalizado); sólo se agrega
-    // Cajero → 1 preexistente + 1 nuevo = 2.
+    // Administrador NO se re-inserta (ya existe normalizado); sólo se agregan
+    // Cajero y Vendedor → 1 preexistente + 2 nuevos = 3.
     const roles = rolesFor(store, COMPANY);
-    expect(roles).toHaveLength(2);
+    expect(roles).toHaveLength(3);
     expect(roles.filter((r) => r.name.trim().toLowerCase() === 'administrador')).toHaveLength(1);
   });
 
@@ -167,8 +182,8 @@ describe('seedSystemRolesForCompany', () => {
     await seedSystemRolesForCompany(manager, COMPANY);
     await seedSystemRolesForCompany(manager, '99');
 
-    expect(rolesFor(store, COMPANY)).toHaveLength(2);
-    expect(rolesFor(store, '99')).toHaveLength(2);
-    expect(store).toHaveLength(4);
+    expect(rolesFor(store, COMPANY)).toHaveLength(3);
+    expect(rolesFor(store, '99')).toHaveLength(3);
+    expect(store).toHaveLength(6);
   });
 });

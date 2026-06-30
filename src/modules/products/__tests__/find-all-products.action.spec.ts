@@ -1,7 +1,10 @@
-import { DataSource } from 'typeorm';
+import type { DataSource } from 'typeorm';
 
 import { toProductResponseDto } from '../dto/product-response.dto';
-import { FindAllProductsAction, sortParentsThenChildren } from '../actions/find-all-products.action';
+import {
+  FindAllProductsAction,
+  sortParentsThenChildren,
+} from '../actions/find-all-products.action';
 import type { Product } from '../entities/product.entity';
 import { ProductType } from '../entities/product.entity';
 

@@ -2,10 +2,7 @@ import { Logger, UnprocessableEntityException } from '@nestjs/common';
 import Big from 'big.js';
 import { In, type EntityManager } from 'typeorm';
 
-import {
-  APP_SETTING_KEYS,
-  AppSetting,
-} from '@/modules/app-settings/entities/app-setting.entity';
+import { APP_SETTING_KEYS, AppSetting } from '@/modules/app-settings/entities/app-setting.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 
 import {
@@ -402,12 +399,7 @@ export async function adjustInventory(
     const change = rounded.times(sign);
     const stockAfter = stockBefore.plus(change).round(4, Big.roundHalfUp);
 
-    if (
-      strict &&
-      direction === 'DEDUCT' &&
-      !ctx.overrideStock &&
-      stockAfter.lt(0)
-    ) {
+    if (strict && direction === 'DEDUCT' && !ctx.overrideStock && stockAfter.lt(0)) {
       throw new InsufficientStockError(target.name, stockBefore.toString(), rounded.toString());
     }
 

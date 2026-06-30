@@ -30,7 +30,9 @@ describe('Migración de datos FinalizeFactoryRoles (e2e, pos_db) — FASE 5', ()
   });
 
   afterAll(async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     for (const id of createdCompanies) {
       // `cleanupCompany` no borra empleados; este suite inserta uno → limpiarlo
       // antes (la company tiene FK RESTRICT desde employees).

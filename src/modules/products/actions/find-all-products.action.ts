@@ -181,7 +181,8 @@ interface RawPriceJson {
  *     igual que el `NumericTransformer` hacía.
  */
 function mapRawToProduct(r: RawProductRow, activeCompanyId: number): Product {
-  const ownerCompanyId = r.company_id !== undefined && r.company_id !== null ? Number(r.company_id) : activeCompanyId;
+  const ownerCompanyId =
+    r.company_id !== undefined && r.company_id !== null ? Number(r.company_id) : activeCompanyId;
   const product = {
     id: r.id,
     company_id: r.company_id,

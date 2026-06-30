@@ -1,11 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  IsBoolean,
-  IsObject,
-  IsString,
-  Matches,
-  MaxLength,
-} from 'class-validator';
+import { IsBoolean, IsObject, IsString, Matches, MaxLength } from 'class-validator';
 
 /**
  * Payload de `PUT /alert-configs/:type`.

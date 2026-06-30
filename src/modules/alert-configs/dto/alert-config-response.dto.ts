@@ -59,7 +59,7 @@ export class AlertConfigResponseDto {
 const DEFAULT_CHECK_TIME = '07:00:00';
 
 export function toAlertConfigResponseDto(config: AlertConfig): AlertConfigResponseDto {
-  const rawConfig = (config.config ?? {}) as Record<string, unknown>;
+  const rawConfig = config.config ?? {};
   const checkTimeValue = rawConfig.check_time;
   const checkTime =
     typeof checkTimeValue === 'string' && checkTimeValue.length > 0

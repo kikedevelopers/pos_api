@@ -60,6 +60,11 @@ import { ProductsService } from './products.service';
     FindSupplierHistoryAction,
     CompareProductPricesAction,
   ],
-  exports: [ProductsService, TypeOrmModule, CloneProductsToBranchAction, ShareProductsToBranchAction],
+  exports: [
+    ProductsService,
+    TypeOrmModule,
+    CloneProductsToBranchAction,
+    ShareProductsToBranchAction,
+  ],
 })
 export class ProductsModule {}

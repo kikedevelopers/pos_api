@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import {
   type ConsolidatedInvoice,
   getConsolidatedInvoice,
+  stripConsolidatedInternalFields,
 } from '../internal/consolidate-invoice.helper';
 
 /**
@@ -14,7 +15,9 @@ import {
 export class GetConsolidatedInvoiceAction {
   constructor(private readonly dataSource: DataSource) {}
 
-  execute(saleId: number, companyId: number): Promise<ConsolidatedInvoice | null> {
-    return getConsolidatedInvoice(this.dataSource.manager, companyId, saleId);
+  async execute(saleId: number, companyId: number): Promise<ConsolidatedInvoice | null> {
+    const invoice = await getConsolidatedInvoice(this.dataSource.manager, companyId, saleId);
+    // FIX #2: el snapshot interno de empaque NUNCA viaja al cliente.
+    return invoice ? stripConsolidatedInternalFields(invoice) : null;
   }
 }

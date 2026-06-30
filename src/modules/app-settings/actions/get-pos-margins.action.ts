@@ -37,11 +37,17 @@ export class GetPosMarginsAction {
 }
 
 function parseMargins(raw: string | undefined): number[] {
-  if (!raw) return [];
+  if (!raw) {
+    return [];
+  }
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    if (!parsed.every((n) => typeof n === 'number')) return [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    if (!parsed.every((n) => typeof n === 'number')) {
+      return [];
+    }
     return parsed;
   } catch {
     return [];

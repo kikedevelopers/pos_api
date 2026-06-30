@@ -90,10 +90,7 @@ function endOfMonth(date: Date): Date {
  * Inicio del período ACTUAL (start[0]) que contiene a `reference`, según
  * granularity. Idéntico al cálculo de `curStart` de v1 (espejo offline).
  */
-export function computeCurrentStart(
-  reference: string,
-  granularity: ComparativeGranularity,
-): Date {
+export function computeCurrentStart(reference: string, granularity: ComparativeGranularity): Date {
   const ref = parseDateOnlyUtc(reference);
   const year = ref.getUTCFullYear();
   const month = ref.getUTCMonth(); // 0-indexado
@@ -126,10 +123,7 @@ export function computeCurrentStart(
  * Idéntico al cálculo de `prevStart` de v1 (espejo offline). Se itera para
  * navegar N períodos hacia atrás.
  */
-export function computePreviousStart(
-  start: Date,
-  granularity: ComparativeGranularity,
-): Date {
+export function computePreviousStart(start: Date, granularity: ComparativeGranularity): Date {
   const year = start.getUTCFullYear();
   const month = start.getUTCMonth();
   const dom = start.getUTCDate();
@@ -178,10 +172,7 @@ export function computePreviousStart(
  *   día del mes; monthly: último día del mes; quarterly: último día del
  *   trimestre; semiannual: último día del semestre; annual: 31-dic del año.
  */
-export function naturalPeriodEnd(
-  start: Date,
-  granularity: ComparativeGranularity,
-): Date {
+export function naturalPeriodEnd(start: Date, granularity: ComparativeGranularity): Date {
   const year = start.getUTCFullYear();
   const month = start.getUTCMonth();
   const dom = start.getUTCDate();
@@ -308,10 +299,7 @@ const MONTH_ABBR_ES = [
  *   biweekly:   "<1ª|2ª> quincena <Mes> <año>"  (1ª si day==1, 2ª si 16)
  *   weekly:     "Sem. <dd> <mmm>"  (dd = día de inicio 2 dígitos; mmm abrev mes)
  */
-export function concretePeriodLabel(
-  granularity: ComparativeGranularity,
-  start: Date,
-): string {
+export function concretePeriodLabel(granularity: ComparativeGranularity, start: Date): string {
   const year = start.getUTCFullYear();
   const month = start.getUTCMonth();
   const dom = start.getUTCDate();

@@ -391,6 +391,9 @@ export class ProcessPaymentAction {
       const inventoryLines = lines.map((l) => ({
         item_id: Number(l.product_id),
         quantity: Number(l.quantity),
+        // FIX #2: factor de empaque CONGELADO al crear la línea. Si es null
+        // (legacy) el motor cae al packaging vigente del producto.
+        packaging_value: l.packaging_value,
       }));
       // Paridad PlacePos: el override_stock solo lo concede el rol del actor.
       // Si un employee/manager envía la flag, se ignora silenciosamente — el

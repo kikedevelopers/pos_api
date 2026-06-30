@@ -32,6 +32,5 @@ export const REQUIRE_PERMISSION_KEY = 'require_permission';
  *   @RequirePermission('canAccessBanks')
  *   create() { ... }
  */
-export const RequirePermission = (
-  permission: PermissionKey,
-): MethodDecorator & ClassDecorator => SetMetadata(REQUIRE_PERMISSION_KEY, permission);
+export const RequirePermission = (permission: PermissionKey): MethodDecorator & ClassDecorator =>
+  SetMetadata(REQUIRE_PERMISSION_KEY, permission);

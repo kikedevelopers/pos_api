@@ -2,6 +2,8 @@ import { BadRequestException } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 
 import type { AuthUser } from '@/common/types/jwt-payload.type';
+import type { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
+import type { PermissionKey } from '@/modules/roles/internal/permission-catalog';
 
 import { GetSalesReportAction } from '../actions/get-sales-report.action';
 
@@ -33,11 +35,25 @@ const EMPLOYEE: AuthUser = {
 describe('GetSalesReportAction', () => {
   let action: GetSalesReportAction;
   let querySpy: jest.Mock;
+  // Permisos efectivos que devuelve el resolver para un EMPLEADO. owner/superadmin
+  // siempre reciben `canViewAllSales` (acceso total). Configurable por test para
+  // cubrir Vendedor (sin la key → solo sus ventas) y Cajero (con la key → todas).
+  let employeeEffective: PermissionKey[];
 
   beforeEach(() => {
     querySpy = jest.fn(() => Promise.resolve([]));
+    employeeEffective = [];
     const dataSourceMock = { query: querySpy } as unknown as DataSource;
-    action = new GetSalesReportAction(dataSourceMock);
+    const resolvePermissionsMock = {
+      execute: jest.fn((actor: { type: string }) =>
+        Promise.resolve(
+          actor.type === 'owner' || actor.type === 'superadmin'
+            ? (['canViewAllSales'] as PermissionKey[])
+            : employeeEffective,
+        ),
+      ),
+    } as unknown as ResolveEffectivePermissionsAction;
+    action = new GetSalesReportAction(dataSourceMock, resolvePermissionsMock);
   });
 
   function allCalls(): Array<{ sql: string; params: unknown[] }> {
@@ -131,7 +147,9 @@ describe('GetSalesReportAction', () => {
     // Semi-join: EXISTS contra las líneas + producto, sin duplicar filas.
     expect(invoiceCall.sql).toMatch(/EXISTS\s*\(/);
     expect(invoiceCall.sql).toMatch(/FROM sale_invoice_lines sil/);
-    expect(invoiceCall.sql).toMatch(/JOIN products p ON p\.id = sil\.product_id AND p\.company_id = \$1/);
+    expect(invoiceCall.sql).toMatch(
+      /JOIN products p ON p\.id = sil\.product_id AND p\.company_id = \$1/,
+    );
     expect(invoiceCall.sql).toMatch(/sil\.company_id\s*=\s*\$1/);
     expect(invoiceCall.sql).toMatch(/p\.category_id IN \(\$\d+,\$\d+\)/);
     // Los ids de categoría se enlazan como parámetros (no interpolados).
@@ -152,7 +170,8 @@ describe('GetSalesReportAction', () => {
     }
   });
 
-  it('employee: filtra invoices y notas por created_by_id = user_id (paridad PlacePos)', async () => {
+  it('empleado SIN canViewAllSales (Vendedor/legacy): filtra invoices y notas por created_by_id', async () => {
+    employeeEffective = ['canAccessPOS', 'canAccessSalesReport']; // Vendedor: sin canViewAllSales.
     await action.execute(42, { dateFrom: '2026-05-01', dateTo: '2026-05-31' }, EMPLOYEE);
     const [invoiceCall, notesCall] = allCalls();
     // Ambas queries restringen al creador; el id va como string (columna texto).
@@ -160,5 +179,13 @@ describe('GetSalesReportAction', () => {
     expect(invoiceCall.params).toContain(String(EMPLOYEE.user_id));
     expect(notesCall.sql).toMatch(/cn\.created_by_id\s*=\s*\$\d+/);
     expect(notesCall.params).toContain(String(EMPLOYEE.user_id));
+  });
+
+  it('empleado CON canViewAllSales (Cajero): NO filtra por created_by_id (ve todas las ventas)', async () => {
+    employeeEffective = ['canAccessSalesReport', 'canViewAllSales']; // Cajero: ve todo.
+    await action.execute(42, { dateFrom: '2026-05-01', dateTo: '2026-05-31' }, EMPLOYEE);
+    for (const c of allCalls()) {
+      expect(c.sql).not.toMatch(/created_by_id/);
+    }
   });
 });

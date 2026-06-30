@@ -29,6 +29,16 @@ export interface ConsolidatedLine {
   margin: number;
   price_mode: 'fixed' | 'manual';
   price_position: number | null;
+  /**
+   * FIX #2 (INTERNO — NUNCA se serializa al cliente). Factor de empaque
+   * CONGELADO de la línea viva: para una línea original viene de
+   * `sale_invoice_line.packaging_value`; para una creada por una ND viene de
+   * `credit_note_line.packaging_value`. El flujo de edición lo usa para que la
+   * NC (RETURN) por líneas removidas/reducidas devuelva stock con el MISMO
+   * factor con que se descontó. Los endpoints HTTP lo eliminan vía
+   * `stripConsolidatedInternalFields` (contrato de respuesta inalterado).
+   */
+  packaging_value?: number | null;
 }
 
 /**
@@ -49,6 +59,21 @@ export interface ConsolidatedInvoice {
 }
 
 /**
+ * FIX #2 — Elimina los campos INTERNOS de `ConsolidatedInvoice` antes de
+ * devolverlo por HTTP. Hoy solo `lines[].packaging_value` (snapshot de empaque
+ * que el flujo de edición consume internamente pero NUNCA forma parte del
+ * contrato de respuesta de `GET /sales/:id/consolidated[-upto]`). El consumidor
+ * interno (`update-sale.action`) llama a `getConsolidatedInvoice` directo y SÍ
+ * recibe el campo; las acciones HTTP pasan por este saneador.
+ */
+export function stripConsolidatedInternalFields(invoice: ConsolidatedInvoice): ConsolidatedInvoice {
+  return {
+    ...invoice,
+    lines: invoice.lines.map(({ packaging_value: _packagingValue, ...rest }) => rest),
+  };
+}
+
+/**
  * Snapshot mínimo de una NC/ND para consolidar líneas.
  */
 interface NoteSnapshot {
@@ -61,6 +86,8 @@ interface NoteSnapshot {
     price: number;
     quantity: number;
     total: number;
+    /** FIX #2: snapshot del factor de empaque de la línea de la nota. */
+    packaging_value: number | null;
   }>;
 }
 
@@ -135,6 +162,8 @@ function applyDebitAdjustment(
     margin,
     price_mode: 'fixed',
     price_position: null,
+    // FIX #2: la línea consolidada nace de una ND → hereda su factor de empaque.
+    packaging_value: noteLine.packaging_value,
   });
 }
 
@@ -148,7 +177,29 @@ function buildConsolidatedLines(
 ): ConsolidatedLine[] {
   const linesMap = new Map<number, ConsolidatedLine>();
   for (const line of originalLines) {
-    linesMap.set(line.item_id, { ...line });
+    const existing = linesMap.get(line.item_id);
+    if (!existing) {
+      linesMap.set(line.item_id, { ...line });
+      continue;
+    }
+    // REGRESIÓN-FIX: una venta puede tener 2+ líneas del MISMO product_id. Antes
+    // la 2ª pisaba a la 1ª (set sobrescribe) → al enrutar el void/edición por el
+    // consolidado se sub-retornaba inventario y la NC quedaba con total menor. Se
+    // CONSOLIDAN sumando cantidad y total con Big.js (el motor de inventario ya
+    // agregaba por target; aquí lo igualamos a nivel línea). profit recalculado;
+    // packaging_value: se conserva el ya fijado (snapshot congelado), o se toma el
+    // de la nueva línea si el acumulado aún no tenía uno.
+    const mergedQty = new Big(existing.quantity).plus(line.quantity);
+    const mergedTotal = new Big(existing.total).plus(line.total);
+    existing.quantity = mergedQty.toNumber();
+    existing.total = preciseNumber(mergedTotal, 2);
+    existing.profit = preciseNumber(
+      new Big(existing.price).minus(existing.cost).times(mergedQty),
+      2,
+    );
+    if (existing.packaging_value === null || existing.packaging_value === undefined) {
+      existing.packaging_value = line.packaging_value;
+    }
   }
   for (const note of notes) {
     for (const nl of note.lines) {
@@ -189,6 +240,8 @@ function mapInvoiceLine(l: SaleInvoiceLine): ConsolidatedLine {
     // permiten al renderer hidratar el cart sin lógica condicional extra.
     price_mode: 'fixed',
     price_position: null,
+    // FIX #2 (interno): factor congelado de la línea original (null = legacy).
+    packaging_value: l.packaging_value,
   };
 }
 
@@ -203,6 +256,8 @@ function mapNoteSnapshot(cn: CreditNote, lines: CreditNoteLine[]): NoteSnapshot 
       price: Number(l.unit_price),
       quantity: Number(l.quantity),
       total: Number(l.total),
+      // FIX #2: factor congelado de la línea de la nota (null = legacy).
+      packaging_value: l.packaging_value,
     })),
   };
 }

@@ -44,6 +44,6 @@ export class ListRolesAction {
        GROUP BY r.id
        ORDER BY r.is_system DESC, lower(btrim(r.name)) ASC`,
       [String(companyId)],
-    ) as Promise<RoleListRow[]>;
+    );
   }
 }

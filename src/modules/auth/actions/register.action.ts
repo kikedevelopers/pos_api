@@ -155,9 +155,7 @@ export class RegisterAction {
         companyId,
         ownerUserId: Number(saved.id),
         startedAt: new Date(),
-        durationDays: fromOfflineMigration
-          ? SUBSCRIPTION_MIGRATION_DAYS
-          : SUBSCRIPTION_TRIAL_DAYS,
+        durationDays: fromOfflineMigration ? SUBSCRIPTION_MIGRATION_DAYS : SUBSCRIPTION_TRIAL_DAYS,
       });
 
       return saved;

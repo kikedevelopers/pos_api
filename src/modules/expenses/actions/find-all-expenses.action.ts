@@ -76,10 +76,7 @@ export class FindAllExpensesAction {
     // dayjs/America/Bogota. Un gasto de la tarde-noche de ayer (Colombia) NO
     // debe caer en el "hoy" de hoy. Espejo del día colombiano de PlacePos.
     if (query.date_from && query.date_to) {
-      where.expense_date = Between(
-        dayStartBogota(query.date_from),
-        dayEndBogota(query.date_to),
-      );
+      where.expense_date = Between(dayStartBogota(query.date_from), dayEndBogota(query.date_to));
     } else if (query.date_from) {
       where.expense_date = MoreThanOrEqual(dayStartBogota(query.date_from));
     } else if (query.date_to) {

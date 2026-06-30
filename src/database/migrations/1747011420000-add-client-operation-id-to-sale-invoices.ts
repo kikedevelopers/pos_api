@@ -43,8 +43,6 @@ export class AddClientOperationIdToSaleInvoices1747011420000 implements Migratio
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS uq_sale_invoices_client_operation`);
-    await queryRunner.query(
-      `ALTER TABLE sale_invoices DROP COLUMN IF EXISTS client_operation_id`,
-    );
+    await queryRunner.query(`ALTER TABLE sale_invoices DROP COLUMN IF EXISTS client_operation_id`);
   }
 }

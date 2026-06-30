@@ -116,12 +116,7 @@ export class ShareProductsToBranchAction {
        ON CONFLICT (source_company_id, target_company_id, product_id) WHERE product_id IS NOT NULL
        DO NOTHING
        RETURNING id`,
-      [
-        String(sourceCompanyId),
-        String(branchCompanyId),
-        String(userId),
-        owned.map((r) => r.id),
-      ],
+      [String(sourceCompanyId), String(branchCompanyId), String(userId), owned.map((r) => r.id)],
     );
     return inserted.length;
   }
@@ -146,7 +141,10 @@ export class ShareProductsToBranchAction {
     return rows.map((r) => ({
       id: Number(r.id),
       product_id: r.product_id !== null ? Number(r.product_id) : null,
-      created_at: (r.created_at instanceof Date ? r.created_at : new Date(r.created_at)).toISOString(),
+      created_at: (r.created_at instanceof Date
+        ? r.created_at
+        : new Date(r.created_at)
+      ).toISOString(),
     }));
   }
 

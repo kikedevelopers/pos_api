@@ -43,7 +43,9 @@ export class ListBranchesAction {
     return companies
       .map((c) => companyToCompanyProfileItemDto(c, this.logger, activeById.get(c.id) ?? true))
       .sort((a, b) => {
-        if (a.is_branch !== b.is_branch) return a.is_branch ? 1 : -1;
+        if (a.is_branch !== b.is_branch) {
+          return a.is_branch ? 1 : -1;
+        }
         return a.id - b.id;
       });
   }

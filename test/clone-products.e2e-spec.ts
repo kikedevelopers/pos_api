@@ -99,7 +99,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   }
 
   it('clona TODO el catálogo → la sucursal recibe copias independientes', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const pA = await insertProduct(ds, principalId, {
       name: 'Clon Total A',
       cost: 2,
@@ -140,7 +142,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   });
 
   it('INDEPENDENCIA: vender en la sucursal baja SU stock y NO el del principal (y al revés)', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const principalProd = await insertProduct(ds, principalId, {
       name: 'Independiente',
       cost: 1,
@@ -183,7 +187,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   });
 
   it('clona una FAMILIA (base + presentaciones) recableando parent_id; precios con profit/margin', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const pkgParent = await insertPackaging(ds, principalId, 'Caja Fam 1000', 1000);
     const pkgChild = await insertPackaging(ds, principalId, 'Media Fam 500', 500);
     const base = await insertProduct(ds, principalId, {
@@ -228,7 +234,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   });
 
   it('clona un COMBO (product_type=COMBO con hijos) recableando parent_id', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const combo = await insertProduct(ds, principalId, {
       name: 'Combo Padre',
       cost: 0,
@@ -255,7 +263,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   });
 
   it('COLISIÓN por name/sku/barcode → omite y reporta el motivo; lo existente queda intacto', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     // name collision: la sucursal YA tiene "Colision Nombre".
     const branchExisting = await insertProduct(ds, branchId, {
       name: 'Colision Nombre',
@@ -313,7 +323,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   });
 
   it('categoría y empaque se crean en la sucursal por nombre/valor (no se reusa el id del origen)', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const catSource = await insertCategory(ds, principalId, 'Lacteos');
     const pkgSource = await insertPackaging(ds, principalId, 'Bolsa 250', 250);
     const prod = await insertProduct(ds, principalId, {
@@ -343,32 +355,39 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
     // Empaque: nuevo en la sucursal, mismo value, distinto id que el origen.
     expect(cloned.packaging_id).not.toBeNull();
     expect(cloned.packaging_id).not.toBe(pkgSource);
-    const pkg = await ds.query(`SELECT company_id, value::float AS value FROM packagings WHERE id = $1`, [
-      cloned.packaging_id,
-    ]);
+    const pkg = await ds.query(
+      `SELECT company_id, value::float AS value FROM packagings WHERE id = $1`,
+      [cloned.packaging_id],
+    );
     expect(pkg[0].company_id).toBe(String(branchId));
     expect(pkg[0].value).toBe(250);
   });
 
   it('PERMISOS: origen que NO es el principal → BadRequest', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     // El "origen" es la sucursal (is_branch=true) → no permitido como origen.
-    await expect(
-      action.execute(branchId, principalId, undefined, ACTOR),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(action.execute(branchId, principalId, undefined, ACTOR)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('PERMISOS: destino que NO es sucursal del owner (sin membresía) → Forbidden', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const otherId = await createDisposableBranch(ds, OTHER); // sucursal, pero SIN membresía del actor
-    await expect(
-      action.execute(principalId, otherId, undefined, ACTOR),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(action.execute(principalId, otherId, undefined, ACTOR)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
     await cleanupCompany(ds, otherId);
   });
 
   it('PERMISOS: destino que es miembro pero NO es sucursal (is_branch=false) → BadRequest', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     const principalAsDest = await createDisposableCompany(ds, OTHER); // is_branch=false
     await insertCompanyMember(ds, ACTOR.id, principalAsDest);
     await expect(
@@ -378,7 +397,9 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
   });
 
   it('cleanup deja principal y sucursal sin rastro', async () => {
-    if (!ds) return;
+    if (!ds) {
+      return;
+    }
     await cleanupCompany(ds, principalId);
     await cleanupCompany(ds, branchId);
     for (const table of E2E_TABLES) {

@@ -137,279 +137,279 @@ export class CreatePurchaseAction {
 
     try {
       return await this.dataSource.transaction<PurchaseAggregate>(async (manager) => {
-      // 1. Supplier de la company y activo.
-      const supplier = await manager.findOne(Supplier, {
-        where: {
-          id: String(dto.supplier_id),
-          company_id: String(companyId),
-          is_archived: false,
-        },
-      });
-      if (!supplier) {
-        throw new UnprocessableEntityException('Proveedor no encontrado o archivado');
-      }
-
-      // 1.b Carrier (si llega). Validar mismo tenant y no archivado.
-      //     Snapshot del nombre se persiste en `purchase.carrier_name` para
-      //     que un rename / archive futuro del carrier no afecte historia.
-      let carrierSnapshotName: string | null = null;
-      if (carrierId) {
-        const carrier = await manager.findOne(Carrier, {
+        // 1. Supplier de la company y activo.
+        const supplier = await manager.findOne(Supplier, {
           where: {
-            id: String(carrierId),
+            id: String(dto.supplier_id),
             company_id: String(companyId),
             is_archived: false,
           },
         });
-        if (!carrier) {
-          throw new UnprocessableEntityException('Transportista no encontrado o archivado');
+        if (!supplier) {
+          throw new UnprocessableEntityException('Proveedor no encontrado o archivado');
         }
-        carrierSnapshotName = carrier.name;
-      }
 
-      // 2. Productos: cargar todos los referenciados en una sola query
-      //    (filtrada por company_id — sin esto, fuga cross-tenant).
-      const productIds = Array.from(new Set(dto.lines.map((l) => String(l.product_id))));
-      const products = await manager.find(Product, {
-        where: { id: In(productIds), company_id: String(companyId) },
-      });
-      if (products.length !== productIds.length) {
-        // Algún product_id no existe en la company → mensaje literal PlacePos.
-        throw new BadRequestException('Uno o más productos no existen');
-      }
-      const invalidProduct = products.find(
-        (p) => p.product_type !== ProductType.SIMPLE || p.is_archived,
-      );
-      if (invalidProduct) {
-        throw new BadRequestException(
-          `El producto "${invalidProduct.name}" no es un producto simple disponible`,
-        );
-      }
-      const productById = new Map(products.map((p) => [Number(p.id), p]));
+        // 1.b Carrier (si llega). Validar mismo tenant y no archivado.
+        //     Snapshot del nombre se persiste en `purchase.carrier_name` para
+        //     que un rename / archive futuro del carrier no afecte historia.
+        let carrierSnapshotName: string | null = null;
+        if (carrierId) {
+          const carrier = await manager.findOne(Carrier, {
+            where: {
+              id: String(carrierId),
+              company_id: String(companyId),
+              is_archived: false,
+            },
+          });
+          if (!carrier) {
+            throw new UnprocessableEntityException('Transportista no encontrado o archivado');
+          }
+          carrierSnapshotName = carrier.name;
+        }
 
-      // 3. Packagings: solo los que la línea declara explícitamente.
-      const packagingIds = Array.from(
-        new Set(
-          dto.lines
-            .map((l) => l.packaging_id)
-            .filter((id): id is number => typeof id === 'number' && id > 0)
-            .map((id) => String(id)),
-        ),
-      );
-      const packagingById = new Map<number, Packaging>();
-      if (packagingIds.length > 0) {
-        const packagings = await manager.find(Packaging, {
-          where: {
-            id: In(packagingIds),
-            company_id: String(companyId),
-            is_archived: false,
-          },
+        // 2. Productos: cargar todos los referenciados en una sola query
+        //    (filtrada por company_id — sin esto, fuga cross-tenant).
+        const productIds = Array.from(new Set(dto.lines.map((l) => String(l.product_id))));
+        const products = await manager.find(Product, {
+          where: { id: In(productIds), company_id: String(companyId) },
         });
-        if (packagings.length !== packagingIds.length) {
-          throw new BadRequestException('Uno o más empaques no existen o están archivados');
-        }
-        for (const p of packagings) {
-          packagingById.set(Number(p.id), p);
-        }
-      }
-
-      // 4. Folio per-company atómico.
-      const purchaseNumber = await nextPurchaseNumber(manager, companyId);
-
-      // 5. Cálculo de totales con Big.js.
-      let totalSubtotal: Big = toBig(0);
-      let totalIva: Big = toBig(0);
-      let totalGrand: Big = toBig(0);
-
-      const linesData = dto.lines.map((line: CreatePurchaseLineDto) => {
-        const product = productById.get(line.product_id);
-        if (!product) {
-          // Defensa: ya validamos arriba, pero el get retorna `undefined`
-          // si el id no estaba en el set. Lanzar BadRequest mantiene paridad.
+        if (products.length !== productIds.length) {
+          // Algún product_id no existe en la company → mensaje literal PlacePos.
           throw new BadRequestException('Uno o más productos no existen');
         }
-
-        const packagingQty = toBig(line.packaging_qty ?? 0);
-        const packagingPrice = toBig(line.packaging_price ?? 0);
-        const ivaRate = toBig(line.iva_rate ?? 0);
-
-        const subtotal = packagingQty.times(packagingPrice);
-        const ivaAmount = subtotal.times(ivaRate).div(100);
-        const lineTotal = subtotal.plus(ivaAmount);
-
-        if (subtotal.lte(0)) {
-          throw new UnprocessableEntityException(
-            `La línea "${product.name}" tiene un subtotal en cero. Verifica cantidad y precio.`,
+        const invalidProduct = products.find(
+          (p) => p.product_type !== ProductType.SIMPLE || p.is_archived,
+        );
+        if (invalidProduct) {
+          throw new BadRequestException(
+            `El producto "${invalidProduct.name}" no es un producto simple disponible`,
           );
         }
+        const productById = new Map(products.map((p) => [Number(p.id), p]));
 
-        totalSubtotal = totalSubtotal.plus(subtotal);
-        totalIva = totalIva.plus(ivaAmount);
-        totalGrand = totalGrand.plus(lineTotal);
-
-        // Resolver packaging si la línea lo trae.
-        let packagingId: string | null = null;
-        let packagingName: string | null = line.packaging_name ?? null;
-        let packagingValue: number | null =
-          line.packaging_value === null || line.packaging_value === undefined
-            ? null
-            : preciseNumber(toBig(line.packaging_value), 4);
-
-        if (typeof line.packaging_id === 'number' && line.packaging_id > 0) {
-          const packaging = packagingById.get(line.packaging_id);
-          if (!packaging) {
+        // 3. Packagings: solo los que la línea declara explícitamente.
+        const packagingIds = Array.from(
+          new Set(
+            dto.lines
+              .map((l) => l.packaging_id)
+              .filter((id): id is number => typeof id === 'number' && id > 0)
+              .map((id) => String(id)),
+          ),
+        );
+        const packagingById = new Map<number, Packaging>();
+        if (packagingIds.length > 0) {
+          const packagings = await manager.find(Packaging, {
+            where: {
+              id: In(packagingIds),
+              company_id: String(companyId),
+              is_archived: false,
+            },
+          });
+          if (packagings.length !== packagingIds.length) {
             throw new BadRequestException('Uno o más empaques no existen o están archivados');
           }
-          packagingId = String(packaging.id);
-          packagingName = packagingName ?? packaging.name;
-          if (packagingValue === null) {
-            packagingValue = preciseNumber(toBig(packaging.value), 4);
+          for (const p of packagings) {
+            packagingById.set(Number(p.id), p);
           }
-        } else if (product.packaging_id !== null && product.packaging_id !== undefined) {
-          // Fallback PlacePos: si la línea no declara packaging, hereda del producto.
-          packagingId = product.packaging_id;
         }
 
-        return {
-          company_id: String(companyId),
-          product_id: String(product.id),
-          supplier_id: String(dto.supplier_id),
-          name: line.name?.trim() || product.name,
-          packaging_id: packagingId,
-          packaging_name: packagingName,
-          packaging_value: packagingValue,
-          packaging_qty: preciseNumber(packagingQty, 4),
-          unit_qty: preciseNumber(toBig(line.unit_qty ?? 0), 4),
-          unit_price: preciseNumber(toBig(line.unit_price ?? 0), 4),
-          packaging_price: preciseNumber(packagingPrice, 2),
-          iva_rate: preciseNumber(ivaRate, 2),
-          subtotal: preciseNumber(subtotal, 2),
-          iva_amount: preciseNumber(ivaAmount, 2),
-          total: preciseNumber(lineTotal, 2),
-        };
-      });
+        // 4. Folio per-company atómico.
+        const purchaseNumber = await nextPurchaseNumber(manager, companyId);
 
-      if (totalGrand.lte(0)) {
-        throw new UnprocessableEntityException('El total de la compra debe ser mayor a cero');
-      }
+        // 5. Cálculo de totales con Big.js.
+        let totalSubtotal: Big = toBig(0);
+        let totalIva: Big = toBig(0);
+        let totalGrand: Big = toBig(0);
 
-      const totalRounded = preciseNumber(totalGrand, 2);
+        const linesData = dto.lines.map((line: CreatePurchaseLineDto) => {
+          const product = productById.get(line.product_id);
+          if (!product) {
+            // Defensa: ya validamos arriba, pero el get retorna `undefined`
+            // si el id no estaba en el set. Lanzar BadRequest mantiene paridad.
+            throw new BadRequestException('Uno o más productos no existen');
+          }
 
-      // 6. INSERT Purchase.
-      const transportCostRounded = preciseNumber(transportCostBig, 2);
-      const totalKilosRounded = totalKilosBig === null ? null : preciseNumber(totalKilosBig, 4);
-      // Factura física del proveedor: paridad placepos. NULL si el cliente
-      // registra la compra como remisión sin factura formal.
-      const invoiceDate =
-        dto.invoice_date !== undefined && dto.invoice_date !== null
-          ? new Date(dto.invoice_date)
-          : null;
-      const invoiceNumber = dto.invoice_number?.trim() || null;
+          const packagingQty = toBig(line.packaging_qty ?? 0);
+          const packagingPrice = toBig(line.packaging_price ?? 0);
+          const ivaRate = toBig(line.iva_rate ?? 0);
 
-      const purchase = manager.create(Purchase, {
-        company_id: String(companyId),
-        purchase_number: purchaseNumber,
-        supplier_id: String(dto.supplier_id),
-        supplier_name: supplier.legal_name,
-        subtotal: preciseNumber(totalSubtotal, 2),
-        iva_total: preciseNumber(totalIva, 2),
-        total: totalRounded,
-        notes: dto.notes?.trim() || null,
-        status: PurchaseStatus.PENDING,
-        carrier_id: carrierId === null ? null : String(carrierId),
-        carrier_name: carrierSnapshotName,
-        transport_cost: transportCostRounded,
-        total_kilos: totalKilosRounded,
-        invoice_date: invoiceDate,
-        invoice_number: invoiceNumber,
-        client_operation_id: operationId,
-        received_by: null,
-        received_at: null,
-        created_by: createdBy.fullName,
-        created_by_id: String(createdBy.id),
-        is_deleted: false,
-      });
+          const subtotal = packagingQty.times(packagingPrice);
+          const ivaAmount = subtotal.times(ivaRate).div(100);
+          const lineTotal = subtotal.plus(ivaAmount);
 
-      let savedPurchase: Purchase;
-      try {
-        savedPurchase = await manager.save(Purchase, purchase);
-      } catch (error) {
-        translatePurchaseConstraintError(error);
-        throw error;
-      }
+          if (subtotal.lte(0)) {
+            throw new UnprocessableEntityException(
+              `La línea "${product.name}" tiene un subtotal en cero. Verifica cantidad y precio.`,
+            );
+          }
 
-      // 7. INSERT batch de líneas con el `purchase_id` ya conocido.
-      const lineRows = linesData.map((l) => ({
-        ...l,
-        purchase_id: savedPurchase.id,
-      }));
-      await manager.insert(PurchaseLine, lineRows);
+          totalSubtotal = totalSubtotal.plus(subtotal);
+          totalIva = totalIva.plus(ivaAmount);
+          totalGrand = totalGrand.plus(lineTotal);
 
-      // 8. INSERT PurchaseCredit.
-      const credit = manager.create(PurchaseCredit, {
-        company_id: String(companyId),
-        purchase_id: savedPurchase.id,
-        supplier_id: String(dto.supplier_id),
-        total_amount: totalRounded,
-        paid_amount: 0,
-        balance: totalRounded,
-        status: PurchaseCreditStatus.PENDING,
-      });
-      try {
-        await manager.save(PurchaseCredit, credit);
-      } catch (error) {
-        translatePurchaseConstraintError(error);
-        throw error;
-      }
+          // Resolver packaging si la línea lo trae.
+          let packagingId: string | null = null;
+          let packagingName: string | null = line.packaging_name ?? null;
+          let packagingValue: number | null =
+            line.packaging_value === null || line.packaging_value === undefined
+              ? null
+              : preciseNumber(toBig(line.packaging_value), 4);
 
-      // 9. Incrementar deuda acumulada del proveedor. Espejo PlacePos.
-      await manager.increment(
-        Supplier,
-        { id: String(dto.supplier_id), company_id: String(companyId) },
-        'accumulated_debt',
-        totalRounded,
-      );
+          if (typeof line.packaging_id === 'number' && line.packaging_id > 0) {
+            const packaging = packagingById.get(line.packaging_id);
+            if (!packaging) {
+              throw new BadRequestException('Uno o más empaques no existen o están archivados');
+            }
+            packagingId = String(packaging.id);
+            packagingName = packagingName ?? packaging.name;
+            if (packagingValue === null) {
+              packagingValue = preciseNumber(toBig(packaging.value), 4);
+            }
+          } else if (product.packaging_id !== null && product.packaging_id !== undefined) {
+            // Fallback PlacePos: si la línea no declara packaging, hereda del producto.
+            packagingId = product.packaging_id;
+          }
 
-      // 10. CarrierCredit: si la compra trae transportista con flete > 0,
-      //     creamos su deuda al transportista en la misma transacción.
-      //     balance == total y status PENDING; los abonos se registran
-      //     después vía POST /carrier-payments. Paridad PlacePos.
-      if (carrierId && transportCostBig.gt(0)) {
-        const carrierCredit = manager.create(CarrierCredit, {
-          company_id: String(companyId),
-          carrier_id: String(carrierId),
-          purchase_id: savedPurchase.id,
-          total: transportCostRounded,
-          paid_amount: 0,
-          balance: transportCostRounded,
-          status: CarrierCreditStatus.PENDING,
+          return {
+            company_id: String(companyId),
+            product_id: String(product.id),
+            supplier_id: String(dto.supplier_id),
+            name: line.name?.trim() || product.name,
+            packaging_id: packagingId,
+            packaging_name: packagingName,
+            packaging_value: packagingValue,
+            packaging_qty: preciseNumber(packagingQty, 4),
+            unit_qty: preciseNumber(toBig(line.unit_qty ?? 0), 4),
+            unit_price: preciseNumber(toBig(line.unit_price ?? 0), 4),
+            packaging_price: preciseNumber(packagingPrice, 2),
+            iva_rate: preciseNumber(ivaRate, 2),
+            subtotal: preciseNumber(subtotal, 2),
+            iva_amount: preciseNumber(ivaAmount, 2),
+            total: preciseNumber(lineTotal, 2),
+          };
         });
+
+        if (totalGrand.lte(0)) {
+          throw new UnprocessableEntityException('El total de la compra debe ser mayor a cero');
+        }
+
+        const totalRounded = preciseNumber(totalGrand, 2);
+
+        // 6. INSERT Purchase.
+        const transportCostRounded = preciseNumber(transportCostBig, 2);
+        const totalKilosRounded = totalKilosBig === null ? null : preciseNumber(totalKilosBig, 4);
+        // Factura física del proveedor: paridad placepos. NULL si el cliente
+        // registra la compra como remisión sin factura formal.
+        const invoiceDate =
+          dto.invoice_date !== undefined && dto.invoice_date !== null
+            ? new Date(dto.invoice_date)
+            : null;
+        const invoiceNumber = dto.invoice_number?.trim() || null;
+
+        const purchase = manager.create(Purchase, {
+          company_id: String(companyId),
+          purchase_number: purchaseNumber,
+          supplier_id: String(dto.supplier_id),
+          supplier_name: supplier.legal_name,
+          subtotal: preciseNumber(totalSubtotal, 2),
+          iva_total: preciseNumber(totalIva, 2),
+          total: totalRounded,
+          notes: dto.notes?.trim() || null,
+          status: PurchaseStatus.PENDING,
+          carrier_id: carrierId === null ? null : String(carrierId),
+          carrier_name: carrierSnapshotName,
+          transport_cost: transportCostRounded,
+          total_kilos: totalKilosRounded,
+          invoice_date: invoiceDate,
+          invoice_number: invoiceNumber,
+          client_operation_id: operationId,
+          received_by: null,
+          received_at: null,
+          created_by: createdBy.fullName,
+          created_by_id: String(createdBy.id),
+          is_deleted: false,
+        });
+
+        let savedPurchase: Purchase;
         try {
-          await manager.save(CarrierCredit, carrierCredit);
+          savedPurchase = await manager.save(Purchase, purchase);
         } catch (error) {
           translatePurchaseConstraintError(error);
           throw error;
         }
-      }
 
-      this.logger.log({
-        event: 'purchase.created',
-        companyId,
-        purchaseId: Number(savedPurchase.id),
-        purchaseNumber,
-        supplierId: dto.supplier_id,
-        carrierId,
-        transportCost: transportCostRounded,
-        total: totalRounded,
-        actorId: createdBy.id,
-      });
+        // 7. INSERT batch de líneas con el `purchase_id` ya conocido.
+        const lineRows = linesData.map((l) => ({
+          ...l,
+          purchase_id: savedPurchase.id,
+        }));
+        await manager.insert(PurchaseLine, lineRows);
 
-      // Cargamos el aggregate completo para devolverlo al controller.
-      const lines = await findPurchaseLines(manager, Number(savedPurchase.id), companyId);
-      const creditOut = await findPurchaseCredit(manager, Number(savedPurchase.id), companyId);
-      const payments = await findPurchasePayments(manager, Number(savedPurchase.id), companyId);
+        // 8. INSERT PurchaseCredit.
+        const credit = manager.create(PurchaseCredit, {
+          company_id: String(companyId),
+          purchase_id: savedPurchase.id,
+          supplier_id: String(dto.supplier_id),
+          total_amount: totalRounded,
+          paid_amount: 0,
+          balance: totalRounded,
+          status: PurchaseCreditStatus.PENDING,
+        });
+        try {
+          await manager.save(PurchaseCredit, credit);
+        } catch (error) {
+          translatePurchaseConstraintError(error);
+          throw error;
+        }
 
-      return { purchase: savedPurchase, lines, credit: creditOut, payments };
+        // 9. Incrementar deuda acumulada del proveedor. Espejo PlacePos.
+        await manager.increment(
+          Supplier,
+          { id: String(dto.supplier_id), company_id: String(companyId) },
+          'accumulated_debt',
+          totalRounded,
+        );
+
+        // 10. CarrierCredit: si la compra trae transportista con flete > 0,
+        //     creamos su deuda al transportista en la misma transacción.
+        //     balance == total y status PENDING; los abonos se registran
+        //     después vía POST /carrier-payments. Paridad PlacePos.
+        if (carrierId && transportCostBig.gt(0)) {
+          const carrierCredit = manager.create(CarrierCredit, {
+            company_id: String(companyId),
+            carrier_id: String(carrierId),
+            purchase_id: savedPurchase.id,
+            total: transportCostRounded,
+            paid_amount: 0,
+            balance: transportCostRounded,
+            status: CarrierCreditStatus.PENDING,
+          });
+          try {
+            await manager.save(CarrierCredit, carrierCredit);
+          } catch (error) {
+            translatePurchaseConstraintError(error);
+            throw error;
+          }
+        }
+
+        this.logger.log({
+          event: 'purchase.created',
+          companyId,
+          purchaseId: Number(savedPurchase.id),
+          purchaseNumber,
+          supplierId: dto.supplier_id,
+          carrierId,
+          transportCost: transportCostRounded,
+          total: totalRounded,
+          actorId: createdBy.id,
+        });
+
+        // Cargamos el aggregate completo para devolverlo al controller.
+        const lines = await findPurchaseLines(manager, Number(savedPurchase.id), companyId);
+        const creditOut = await findPurchaseCredit(manager, Number(savedPurchase.id), companyId);
+        const payments = await findPurchasePayments(manager, Number(savedPurchase.id), companyId);
+
+        return { purchase: savedPurchase, lines, credit: creditOut, payments };
       });
     } catch (error) {
       // Carrera real: dos requests con la MISMA llave llegaron casi a la vez; el

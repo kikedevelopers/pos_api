@@ -9,16 +9,16 @@ import {
 /**
  * Tests unitarios del catálogo canónico de permisos.
  *
- * Blindan la PARIDAD con placepos (mismas 18 keys, mismo orden, mismas
+ * Blindan la PARIDAD con placepos (mismas 22 keys, mismo orden, mismas
  * secciones/labels) y los invariantes de los que depende todo el sistema de
  * roles:
- *   - exactamente 18 keys, sin duplicados.
+ *   - exactamente 22 keys, sin duplicados.
  *   - toda key aparece en EXACTAMENTE una sección (cobertura total, sin huérfanas).
  *   - las secciones no inventan keys fuera del catálogo.
  *   - `isValidPermissionKey` acepta sólo keys del catálogo.
  */
 describe('permission-catalog', () => {
-  // Snapshot literal de las 18 keys EXACTAS, en orden. Si alguien reordena o
+  // Snapshot literal de las 22 keys EXACTAS, en orden. Si alguien reordena o
   // renombra una key sin querer, este test lo caza (y recuerda replicar en
   // placepos).
   const EXPECTED_KEYS: PermissionKey[] = [
@@ -35,15 +35,19 @@ describe('permission-catalog', () => {
     'canAccessSuppliers',
     'canAccessPurchase',
     'canAccessSalesReport',
+    'canAccessCreditsReport',
+    'canAccessComparativeReport',
     'canAccessDailyClosureReport',
     'canAccessCashierReport',
     'canAccessClientsReport',
+    'canViewAllSales',
     'canAccessExpenses',
+    'canAccessFixedExpenses',
     'canAccessSettings',
   ];
 
-  it('expone exactamente 18 keys en el orden canónico', () => {
-    expect(PERMISSION_KEYS).toHaveLength(18);
+  it('expone exactamente 22 keys en el orden canónico', () => {
+    expect(PERMISSION_KEYS).toHaveLength(22);
     expect([...PERMISSION_KEYS]).toEqual(EXPECTED_KEYS);
   });
 
@@ -57,7 +61,7 @@ describe('permission-catalog', () => {
       section.items.map((item) => item.key),
     );
 
-    // Cobertura total: las 18 keys están repartidas.
+    // Cobertura total: las 22 keys están repartidas.
     expect(keysInSections).toHaveLength(PERMISSION_KEYS.length);
     expect(new Set(keysInSections)).toEqual(new Set(PERMISSION_KEYS));
 
@@ -106,8 +110,11 @@ describe('permission-catalog', () => {
         'canAccessCustomers',
         'canAccessCarriers',
         'canAccessSalesReport',
+        'canAccessCreditsReport',
+        'canAccessComparativeReport',
         'canAccessClientsReport',
         'canAccessExpenses',
+        'canAccessFixedExpenses',
       ]);
     });
 

@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, QueryFailedError } from 'typeorm';
 
 import { APP_SETTING_KEYS, AppSetting } from '../entities/app-setting.entity';
-import type { StrictInventoryConfigDto, UpdateStrictInventoryDto } from '../dto/strict-inventory.dto';
+import type {
+  StrictInventoryConfigDto,
+  UpdateStrictInventoryDto,
+} from '../dto/strict-inventory.dto';
 import { PG_UNIQUE_VIOLATION } from '../internal/constraint-errors';
 
 /**

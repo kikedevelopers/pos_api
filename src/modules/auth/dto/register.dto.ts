@@ -81,8 +81,7 @@ export class RegisterDto {
    */
   @ApiPropertyOptional({
     example: false,
-    description:
-      'true si la cuenta se crea desde la migración de un POS offline (trial de 1 día).',
+    description: 'true si la cuenta se crea desde la migración de un POS offline (trial de 1 día).',
   })
   @IsOptional()
   @IsBoolean()

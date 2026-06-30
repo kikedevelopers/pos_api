@@ -39,7 +39,9 @@ export async function resolveAutoPackagingId(
       value,
     },
   });
-  if (existing) return existing.id;
+  if (existing) {
+    return existing.id;
+  }
 
   const created = await repo.save(
     repo.create({

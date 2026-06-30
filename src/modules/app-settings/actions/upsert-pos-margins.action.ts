@@ -23,15 +23,11 @@ export class UpsertPosMarginsAction {
 
   async execute(dto: UpdatePosMarginsDto, companyId: number): Promise<PosMarginsConfigDto> {
     if (dto.enabled && dto.margins.length < 1) {
-      throw new BadRequestException(
-        'Debe definirse al menos 1 margen cuando está habilitado',
-      );
+      throw new BadRequestException('Debe definirse al menos 1 margen cuando está habilitado');
     }
     for (let i = 1; i < dto.margins.length; i++) {
       if (dto.margins[i] <= dto.margins[i - 1]) {
-        throw new BadRequestException(
-          'Los márgenes deben ir en orden ascendente estricto',
-        );
+        throw new BadRequestException('Los márgenes deben ir en orden ascendente estricto');
       }
     }
 
@@ -57,11 +53,7 @@ async function upsertKey(
     where: { company_id: String(companyId), key },
   });
   if (existing) {
-    await manager.update(
-      AppSetting,
-      { id: existing.id, company_id: String(companyId) },
-      { value },
-    );
+    await manager.update(AppSetting, { id: existing.id, company_id: String(companyId) }, { value });
     return;
   }
   try {
