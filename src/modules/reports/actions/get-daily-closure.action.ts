@@ -426,7 +426,7 @@ export class GetDailyClosureAction {
         cn.operation_type::text AS operation_type,
         cn.total::float AS total,
         si.ticket_number AS original_invoice_number,
-        TO_CHAR(si.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS original_invoice_date,
+        TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS original_invoice_date,
         COALESCE(si.customer_name, 'CONSUMIDOR FINAL') AS customer_name
       FROM credit_notes cn
       INNER JOIN sale_invoices si
@@ -435,7 +435,7 @@ export class GetDailyClosureAction {
       WHERE cn.company_id = $1
         AND cn.is_deleted = false
         AND cn.created_at BETWEEN $2 AND $3
-        AND DATE(si.created_at AT TIME ZONE 'UTC') != DATE(cn.created_at AT TIME ZONE 'UTC')
+        AND DATE(si.created_at AT TIME ZONE 'America/Bogota') != DATE(cn.created_at AT TIME ZONE 'America/Bogota')
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
           WHERE sc.sale_invoice_id = si.id

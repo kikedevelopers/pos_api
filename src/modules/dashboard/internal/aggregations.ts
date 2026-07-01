@@ -310,6 +310,18 @@ export async function fetchCreditsGeneratedByDay(
  *   - true  → solo abonos a invoices a crédito (Activos del día).
  *   - false → solo pagos a invoices no-crédito (recaudo directo).
  *
+ * SIEMPRE se filtra por `sp.created_at` (la fecha en que ENTRÓ el dinero), NO
+ * por `si.created_at` (fecha de creación de la venta). Así el recaudo mide
+ * "dinero recibido en el rango" en AMBAS ramas: un PEDIDO creado en un día
+ * anterior y cobrado hoy suma en el recaudo de HOY. Para una venta de contado
+ * normal (creada y pagada el mismo día) `sp.created_at ≈ si.created_at`, así que
+ * el resultado NO cambia.
+ *
+ * NOTA (fuera de alcance de esta fase): la GANANCIA (`fetchProfitTotal`) sigue
+ * agrupando por `si.created_at`. Para un pedido cobrado en día distinto al de su
+ * creación, "Total Recaudado" (por pago) y "Ganancia del día" (por venta) pueden
+ * quedar en días distintos — es intencional y está documentado.
+ *
  * Filtro multi-tenant: `sp.company_id = $1` Y `si.company_id = $1`.
  */
 export async function fetchPaymentsTotal(
@@ -331,7 +343,8 @@ export async function fetchPaymentsTotal(
         WHERE sc.sale_invoice_id = sp.sale_invoice_id
           AND sc.company_id = $1
       )`;
-  const dateColumn = onlyCredits ? 'sp.created_at' : 'si.created_at';
+  // Recaudo = dinero recibido en el rango → SIEMPRE por la fecha del PAGO.
+  const dateColumn = 'sp.created_at';
 
   const rows = await dataSource.query<AmountRow[]>(
     `

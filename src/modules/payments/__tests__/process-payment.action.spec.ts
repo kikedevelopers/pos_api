@@ -88,6 +88,10 @@ describe('ProcessPaymentAction (split tender)', () => {
         },
       ),
       find: jest.fn().mockResolvedValue([]), // sin líneas → no toca inventario
+      // HISTORIAL DE ESTADOS: `recordSaleStatus` inserta un evento
+      // (COLLECTED / CREDIT_OPENED) vía `manager.insert`. No afecta el resto de
+      // aserciones; solo debe existir como no-op resoluble.
+      insert: jest.fn().mockResolvedValue({ raw: [], identifiers: [], generatedMaps: [] }),
       create: jest.fn((_entity: unknown, input: Record<string, unknown>) => input),
       save: jest.fn((entity: { name?: string } | string, payload: Record<string, unknown>) => {
         const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');

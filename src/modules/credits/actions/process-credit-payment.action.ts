@@ -18,7 +18,9 @@ import {
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { SaleCredit, SaleCreditStatus } from '@/modules/sales/entities/sale-credit.entity';
 import { SaleInvoice } from '@/modules/sales/entities/sale-invoice.entity';
+import { SaleStatusEventType } from '@/modules/sales/entities/sale-status-history.entity';
 import { SalePayment, SalePaymentMethod } from '@/modules/sales/entities/sale-payment.entity';
+import { recordSaleStatus } from '@/modules/sales/internal/record-sale-status.helper';
 
 import type { ProcessCreditPaymentDto } from '../dto/process-credit-payment.dto';
 
@@ -322,6 +324,25 @@ export class ProcessCreditPaymentAction {
             status: newStatus,
           },
         );
+
+        // HISTORIAL: abono al crédito (INSTALLMENT). Si con este abono el crédito
+        // quedó saldado, además el hito PAID. Ambos en la MISMA TX; el orden de
+        // inserción (INSTALLMENT antes que PAID) lo preserva el `id` en el detalle.
+        await recordSaleStatus(manager, {
+          companyId,
+          saleInvoiceId: saleInvoiceId,
+          eventType: SaleStatusEventType.INSTALLMENT,
+          amount,
+          createdBy: actor.fullName,
+        });
+        if (newStatus === SaleCreditStatus.PAID) {
+          await recordSaleStatus(manager, {
+            companyId,
+            saleInvoiceId: saleInvoiceId,
+            eventType: SaleStatusEventType.PAID,
+            createdBy: actor.fullName,
+          });
+        }
 
         const statusLabel =
           newStatus === SaleCreditStatus.PAID ? 'Crédito pagado completamente' : 'Abono registrado';

@@ -17,6 +17,8 @@ import { FinancialMovementsService } from '@/modules/financial-movements/financi
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 import { recomputeSalePoints } from '@/modules/sales/internal/customer-points.helper';
 import { assertMarginAboveMinimum } from '@/modules/sales/internal/margin-guard.helper';
+import { recordSaleStatus } from '@/modules/sales/internal/record-sale-status.helper';
+import { SaleStatusEventType } from '@/modules/sales/entities/sale-status-history.entity';
 import { SaleCredit, SaleCreditStatus } from '@/modules/sales/entities/sale-credit.entity';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '@/modules/sales/entities/sale-invoice.entity';
@@ -376,6 +378,16 @@ export class ProcessPaymentAction {
       },
     );
 
+    // HISTORIAL: el pedido se cobró y se convirtió en venta (ORDER→SALE). El
+    // monto del evento es el NETO cobrado por tenders (0 en venta 100% a crédito).
+    await recordSaleStatus(manager, {
+      companyId,
+      saleInvoiceId: Number(sale.id),
+      eventType: SaleStatusEventType.COLLECTED,
+      amount: preciseNumber(tenderNetBig, 2),
+      createdBy: actor.fullName,
+    });
+
     // 8. Ajuste de inventario sobre líneas. Decrementa Product.stock y
     //    persiste una fila en inventory_movements por cada producto afectado
     //    (reason=SALE, reference_type=sale_invoice). El helper aborta con
@@ -450,6 +462,14 @@ export class ProcessPaymentAction {
     let creditId: number | null = null;
     if (dto.is_credit && creditAmountBig.gt(0)) {
       creditId = await this.insertCredit(manager, dto, sale, companyId);
+      // HISTORIAL: se abrió un crédito por el remanente a fiar.
+      await recordSaleStatus(manager, {
+        companyId,
+        saleInvoiceId: Number(sale.id),
+        eventType: SaleStatusEventType.CREDIT_OPENED,
+        amount: preciseNumber(creditAmountBig, 2),
+        createdBy: actor.fullName,
+      });
     }
 
     // 11. PUNTOS de cliente (solo CONTADO). La venta acaba de constituirse

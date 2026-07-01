@@ -34,6 +34,7 @@ import { SaleCredit } from './entities/sale-credit.entity';
 import { SaleInvoiceLine } from './entities/sale-invoice-line.entity';
 import { SaleInvoice } from './entities/sale-invoice.entity';
 import { SalePayment } from './entities/sale-payment.entity';
+import { SaleStatusHistory } from './entities/sale-status-history.entity';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 
@@ -59,6 +60,7 @@ import { SalesService } from './sales.service';
       SaleInvoiceLine,
       SalePayment,
       SaleCredit,
+      SaleStatusHistory,
       CreditNote,
       CreditNoteLine,
       Customer,

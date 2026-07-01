@@ -10,6 +10,7 @@ import { SaleCredit } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice } from '../entities/sale-invoice.entity';
 import { SalePayment } from '../entities/sale-payment.entity';
+import { SaleStatusHistory } from '../entities/sale-status-history.entity';
 import {
   findSaleCredit,
   findSaleInCompany,
@@ -41,6 +42,13 @@ export interface SaleAggregate {
    * deshabilitados — no tiene sentido leer el saldo si no se va a mostrar.
    */
   customerPoints: number | null;
+  /**
+   * Línea de tiempo de las transiciones de estado de la venta, ordenada
+   * cronológicamente (created_at ASC, id ASC). Alimenta el bloque
+   * `statusHistory` del detalle del ticket. Vacío en ventas legadas sin
+   * historial (aunque el backfill de la migración las cubre).
+   */
+  statusHistory: SaleStatusHistory[];
 }
 
 /**
@@ -80,6 +88,15 @@ export class FindSaleAction {
     const payments = await findSalePayments(manager, saleId, companyId);
     const credit = await findSaleCredit(manager, saleId, companyId);
 
+    // HISTORIAL de estados, ordenado cronológicamente. El desempate por `id`
+    // ASC estabiliza el orden cuando dos eventos comparten `created_at` (p.ej.
+    // COLLECTED + CREDIT_OPENED emitidos en la misma TX de cobro). Query
+    // dedicada con índice `(sale_invoice_id, created_at)` — sin sort en memoria.
+    const statusHistory = await manager.find(SaleStatusHistory, {
+      where: { sale_invoice_id: sale.id, company_id: String(companyId) },
+      order: { created_at: 'ASC', id: 'ASC' },
+    });
+
     // Carga eager de NC/ND + sus líneas + correction_source. Es N+1 a 3
     // niveles, pero TypeORM lo resuelve en 1 query con JOIN.
     const creditNotes = await manager.find(CreditNote, {
@@ -106,6 +123,15 @@ export class FindSaleAction {
       customerPoints = customer ? customer.points : null;
     }
 
-    return { sale, lines, payments, credit, creditNotes, pointsEnabled, customerPoints };
+    return {
+      sale,
+      lines,
+      payments,
+      credit,
+      creditNotes,
+      pointsEnabled,
+      customerPoints,
+      statusHistory,
+    };
   }
 }

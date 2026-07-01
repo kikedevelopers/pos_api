@@ -12,6 +12,10 @@ import { SaleCreditStatus, type SaleCredit } from '../entities/sale-credit.entit
 import { type SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { TicketType, type SaleInvoice } from '../entities/sale-invoice.entity';
 import { SalePaymentMethod, type SalePayment } from '../entities/sale-payment.entity';
+import {
+  SaleStatusEventType,
+  type SaleStatusHistory,
+} from '../entities/sale-status-history.entity';
 
 /**
  * Shape de respuesta de `GET /sales/:id` — espejo byte-por-byte del
@@ -122,6 +126,37 @@ export class TicketCreditResponseDto {
   status!: 'PENDING' | 'PARTIAL' | 'PAID';
 
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
+  createdAt!: string;
+}
+
+export class SaleStatusHistoryResponseDto {
+  @ApiProperty({
+    enum: SaleStatusEventType,
+    example: SaleStatusEventType.COLLECTED,
+    description:
+      'Tipo de transición: CREATED | COLLECTED | CREDIT_OPENED | INSTALLMENT | PAID | VOIDED.',
+  })
+  eventType!: SaleStatusEventType;
+
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 100,
+    description:
+      'Monto asociado al evento (cobro/abono/total del crédito). null en hitos ' +
+      'sin monto (CREATED, PAID, VOIDED).',
+  })
+  amount!: number | null;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: 'Juan Pérez',
+    description: 'Snapshot del nombre del actor. null si el evento no tiene actor conocido.',
+  })
+  createdBy!: string | null;
+
+  @ApiProperty({ example: '2026-05-12T14:30:00.000Z', description: 'Fecha exacta del evento.' })
   createdAt!: string;
 }
 
@@ -282,6 +317,16 @@ export class SaleResponseDto {
   documents!: InvoiceDocumentResponseDto[];
 
   @ApiProperty({
+    type: [SaleStatusHistoryResponseDto],
+    description:
+      'Línea de tiempo de las transiciones de estado de la venta, ordenada por ' +
+      'created_at ASC. Shape: { eventType, amount, createdBy, createdAt }. ' +
+      'Alimenta la línea de tiempo del TicketViewer (pedido creado → cobrado → ' +
+      'crédito abierto → abono → pagado → anulado). Paridad placepos.',
+  })
+  statusHistory!: SaleStatusHistoryResponseDto[];
+
+  @ApiProperty({
     example: true,
     description:
       'Config per-company del sistema de PUNTOS. El recibo muestra los puntos ' +
@@ -382,6 +427,15 @@ function toTicketCredit(c: SaleCredit): TicketCreditResponseDto {
   };
 }
 
+function toStatusHistory(e: SaleStatusHistory): SaleStatusHistoryResponseDto {
+  return {
+    eventType: e.event_type,
+    amount: e.amount === null || e.amount === undefined ? null : Number(e.amount),
+    createdBy: e.created_by ?? null,
+    createdAt: e.created_at.toISOString(),
+  };
+}
+
 function toVoidCreditNote(cn: CreditNote): VoidCreditNoteSummaryDto {
   return {
     id: Number(cn.id),
@@ -453,6 +507,7 @@ export function toSaleResponseDto(
   creditNotes: CreditNote[] = [],
   pointsEnabled = false,
   customerPoints: number | null = null,
+  statusHistory: SaleStatusHistory[] = [],
 ): SaleResponseDto {
   const sortedNotes = [...creditNotes].sort(
     (a, b) => a.created_at.getTime() - b.created_at.getTime(),
@@ -494,6 +549,9 @@ export function toSaleResponseDto(
     documents: buildInvoiceDocuments(sale, lines, sortedNotes),
     pointsEnabled,
     customerPoints,
+    // Ya llega ordenado por created_at ASC, id ASC desde la action; el `.map`
+    // preserva ese orden para la línea de tiempo del TicketViewer.
+    statusHistory: statusHistory.map(toStatusHistory),
   };
 }
 

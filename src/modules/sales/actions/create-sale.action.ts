@@ -25,7 +25,9 @@ import type {
 import { SaleCredit, SaleCreditStatus } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
+import { SaleStatusEventType } from '../entities/sale-status-history.entity';
 import { applySalePayment, type SalePaymentActor } from '../internal/apply-sale-payment';
+import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
 import { findSaleCredit, findSaleLines, findSalePayments } from '../internal/sale-lookups';
 import type { SaleAggregate } from './find-sale.action';
@@ -193,6 +195,14 @@ export class CreateSaleAction {
           translateSaleConstraintError(error);
           throw error;
         }
+
+        // HISTORIAL: primer evento de la línea de tiempo — pedido/venta creado.
+        await recordSaleStatus(manager, {
+          companyId,
+          saleInvoiceId: Number(savedSale.id),
+          eventType: SaleStatusEventType.CREATED,
+          createdBy: createdBy.fullName,
+        });
 
         // 5. Mapear y persistir las líneas. Los campos cloud-only sin equivalente
         // en el payload local quedan en su default neutro: `subtotal = total`,
@@ -380,6 +390,15 @@ export class CreateSaleAction {
       throw error;
     }
 
+    // HISTORIAL: se abrió un crédito por el saldo pendiente de la venta.
+    await recordSaleStatus(manager, {
+      companyId,
+      saleInvoiceId: Number(sale.id),
+      eventType: SaleStatusEventType.CREDIT_OPENED,
+      amount: total,
+      createdBy: sale.created_by,
+    });
+
     await manager.decrement(
       Customer,
       { id: customer.id, company_id: String(companyId) },
@@ -419,6 +438,9 @@ export class CreateSaleAction {
       creditNotes: [],
       pointsEnabled: false,
       customerPoints: null,
+      // La respuesta de creación (`toCreateSaleResponseDto`) no serializa el
+      // historial; el detalle (`GET /sales/:id`) lo recarga desde BD. Neutro aquí.
+      statusHistory: [],
     };
   }
 }

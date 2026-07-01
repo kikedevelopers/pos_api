@@ -35,8 +35,10 @@ import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import type { SaleCorrectionSourceDto } from '../dto/update-sale.dto';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
+import { SaleStatusEventType } from '../entities/sale-status-history.entity';
 import { getConsolidatedInvoice } from '../internal/consolidate-invoice.helper';
 import { recomputeSalePoints } from '../internal/customer-points.helper';
+import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
 
 /**
@@ -129,6 +131,13 @@ export class VoidSaleAction {
       { id: sale.id, company_id: String(companyId) },
       { is_deleted: true },
     );
+    // HISTORIAL: pedido anulado.
+    await recordSaleStatus(manager, {
+      companyId,
+      saleInvoiceId: Number(sale.id),
+      eventType: SaleStatusEventType.VOIDED,
+      createdBy: actor.fullName,
+    });
     this.logger.log({
       event: 'sale.voided.order',
       companyId,
@@ -306,6 +315,16 @@ export class VoidSaleAction {
       { id: sale.id, company_id: String(companyId) },
       { is_deleted: true },
     );
+
+    // HISTORIAL: venta anulada (con NC FULL_VOID). VOIDED es un HITO, sin monto:
+    // paridad con el backfill y con placepos (el detalle de la anulación vive en
+    // la NC, no en el evento).
+    await recordSaleStatus(manager, {
+      companyId,
+      saleInvoiceId: Number(sale.id),
+      eventType: SaleStatusEventType.VOIDED,
+      createdBy: actor.fullName,
+    });
 
     // PUNTOS: tras emitir la NC FULL_VOID, el total consolidado queda en 0
     // (total − total). El recompute idempotente lleva los puntos otorgados a 0

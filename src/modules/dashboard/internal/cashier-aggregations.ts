@@ -68,6 +68,13 @@ interface CashierSalesCountRow {
 /**
  * Pagos a ventas regulares (no a invoices con crédito) agrupados por cajero y
  * método. `LEAST(sp.amount, si.total)` evita inflar con el vuelto.
+ *
+ * Recaudo = dinero recibido en el rango → se filtra por `sp.created_at` (fecha
+ * del PAGO), igual que `fetchPaymentsTotal(onlyCredits=false)` de `/dashboard/
+ * today`. Así el "Total Recaudado" por cajero cuadra con el consolidado. La
+ * ATRIBUCIÓN sigue siendo `si.created_by_id` (el vendedor de la factura), no el
+ * cajero que tomó el pago — mismo criterio previo. La GANANCIA por cajero
+ * (`fetchSalesProfitByCashier`) permanece por `si.created_at` (fuera de alcance).
  */
 export async function fetchSalesByCashier(
   dataSource: DataSource,
@@ -95,7 +102,7 @@ export async function fetchSalesByCashier(
       AND sp.is_voided = false
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
-      AND si.created_at BETWEEN $2 AND $3
+      AND sp.created_at BETWEEN $2 AND $3
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id

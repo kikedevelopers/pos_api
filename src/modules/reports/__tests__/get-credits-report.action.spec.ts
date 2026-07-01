@@ -54,10 +54,12 @@ describe('GetCreditsReportAction', () => {
     const { sql, params } = lastCall();
     expect(sql).toMatch(/si\.created_at >= \$\d+/);
     expect(sql).toMatch(/si\.created_at <= \$\d+/);
-    // Tras MED-1 auditoría Fase 11, las fechas se pasan como Date (parseUtcRange)
-    // en UTC: [00:00:00.000Z, 23:59:59.999Z]. Antes iban como string.
-    expect(params).toContainEqual(new Date('2026-05-01T00:00:00.000Z'));
-    expect(params).toContainEqual(new Date('2026-05-31T23:59:59.999Z'));
+    // Las fechas se pasan como Date (parseUtcRange). Tras unificar la zona a
+    // America/Bogota (UTC-5), los límites del día colombiano son:
+    //   from 00:00 Col = 05:00Z del mismo día
+    //   to 23:59:59.999 Col = 04:59:59.999Z del día siguiente
+    expect(params).toContainEqual(new Date('2026-05-01T05:00:00.000Z'));
+    expect(params).toContainEqual(new Date('2026-06-01T04:59:59.999Z'));
   });
 
   it("status='ALL' NO añade filtro de status", async () => {

@@ -207,8 +207,16 @@ export class SalesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
   ): Promise<SaleResponseDto> {
-    const { sale, lines, payments, credit, creditNotes, pointsEnabled, customerPoints } =
-      await this.salesService.findOne(id, companyId);
+    const {
+      sale,
+      lines,
+      payments,
+      credit,
+      creditNotes,
+      pointsEnabled,
+      customerPoints,
+      statusHistory,
+    } = await this.salesService.findOne(id, companyId);
     return toSaleResponseDto(
       sale,
       lines,
@@ -217,6 +225,7 @@ export class SalesController {
       creditNotes,
       pointsEnabled,
       customerPoints,
+      statusHistory,
     );
   }
 

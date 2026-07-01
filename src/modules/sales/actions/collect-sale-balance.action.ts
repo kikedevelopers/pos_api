@@ -16,7 +16,9 @@ import type { CollectSaleBalanceDto, CollectSaleTenderDto } from '../dto/collect
 import { SaleCredit, SaleCreditStatus } from '../entities/sale-credit.entity';
 import { TicketType } from '../entities/sale-invoice.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
+import { SaleStatusEventType } from '../entities/sale-status-history.entity';
 import { applySalePayment, type SalePaymentActor } from '../internal/apply-sale-payment';
+import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import {
   loadSaleForSettlement,
   recomputeSaleSettlement,
@@ -184,6 +186,38 @@ export class CollectSaleBalanceAction {
 
         // 5. Recompute settlement.
         const settlement = await recomputeSaleSettlement(manager, sale, companyId, credit);
+
+        // HISTORIAL: re-cobro del saldo de una venta ya confirmada.
+        //  - Sin crédito (saldo derivado re-cobrable) → COLLECTED.
+        //  - Con crédito → INSTALLMENT (abono), y PAID si con este cobro se saldó.
+        // Coincide con la semántica del backfill (pago sobre venta con crédito =
+        // abono; sin crédito = cobro). Monto = NETO cobrado por tenders.
+        const collectedNet = preciseNumber(tenderNetBig, 2);
+        if (credit) {
+          await recordSaleStatus(manager, {
+            companyId,
+            saleInvoiceId: Number(sale.id),
+            eventType: SaleStatusEventType.INSTALLMENT,
+            amount: collectedNet,
+            createdBy: actor.fullName,
+          });
+          if (settlement.status === SaleCreditStatus.PAID) {
+            await recordSaleStatus(manager, {
+              companyId,
+              saleInvoiceId: Number(sale.id),
+              eventType: SaleStatusEventType.PAID,
+              createdBy: actor.fullName,
+            });
+          }
+        } else {
+          await recordSaleStatus(manager, {
+            companyId,
+            saleInvoiceId: Number(sale.id),
+            eventType: SaleStatusEventType.COLLECTED,
+            amount: collectedNet,
+            createdBy: actor.fullName,
+          });
+        }
 
         this.logger.log({
           event: 'sale.balance.collected',
