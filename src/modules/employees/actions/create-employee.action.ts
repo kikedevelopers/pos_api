@@ -3,11 +3,16 @@ import * as argon2 from 'argon2';
 import { DataSource } from 'typeorm';
 
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
+import {
+  DEFAULT_SYSTEM_ACCESS_ROLE_NAME,
+  findRoleIdByName,
+} from '@/modules/roles/internal/system-roles';
 
 import type { CreateEmployeeDto } from '../dto/create-employee.dto';
 import { Employee, EmployeeRole } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
 import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
+import { resolveRoleIdOnCreate } from '../internal/role-assignment';
 import { assertRoleBelongsToCompany } from '../internal/role-validation';
 
 /**
@@ -68,11 +73,25 @@ export class CreateEmployeeAction {
         : null;
 
     const saved = await this.dataSource.transaction<Employee>(async (manager) => {
-      // FASE 2 (ROLES): si viene role_id, debe pertenecer a la company del actor
-      // (blindaje multi-tenant). null/ausente → sin rol (permisos legacy).
+      // FASE 2 (ROLES): blindaje multi-tenant. Si viene un role_id, debe
+      // pertenecer a la company del actor — se valida SIEMPRE (un role_id ajeno
+      // o inexistente → 400), aunque luego no se persista por no tener acceso.
       if (dto.role_id !== undefined && dto.role_id !== null) {
         await assertRoleBelongsToCompany(manager, dto.role_id, companyId);
       }
+
+      // Default 'Vendedor': el rol SOLO se persiste con acceso al sistema. Solo
+      // resolvemos el rol por defecto cuando hará falta (login sin rol explícito)
+      // para no gastar una query de más. La decisión vive en `resolveRoleIdOnCreate`.
+      const defaultRoleId =
+        dto.login_enabled === true && dto.role_id == null
+          ? await findRoleIdByName(manager, companyId, DEFAULT_SYSTEM_ACCESS_ROLE_NAME)
+          : null;
+      const resolvedRoleId = resolveRoleIdOnCreate(
+        dto.login_enabled === true,
+        dto.role_id != null ? String(dto.role_id) : null,
+        defaultRoleId,
+      );
 
       const employee = manager.create(Employee, {
         company_id: String(companyId),
@@ -80,8 +99,8 @@ export class CreateEmployeeAction {
         phone: dto.phone ?? null,
         email: dto.email ?? null,
         address: dto.address ?? null,
-        // FASE 2 (ROLES): rol personalizado opcional (FK validada arriba).
-        role_id: dto.role_id != null ? String(dto.role_id) : null,
+        // Rol RBAC: 'Vendedor' por defecto al conceder acceso; null sin acceso.
+        role_id: resolvedRoleId,
         // Default `employee` cuando el cliente no envía role (paridad PlacePos
         // — su formulario no expone el campo). El owner puede promoverlo
         // a `manager` después vía PUT.

@@ -8,12 +8,14 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -35,6 +37,7 @@ import {
   toEmployeeResponseDto,
   toEmployeeResponseDtoFromEntity,
 } from './dto/employee-response.dto';
+import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { SetCashBaseDto } from './dto/set-cash-base.dto';
 import { ToggleLoginDto } from './dto/toggle-login.dto';
 import { UpdateCredentialsDto } from './dto/update-credentials.dto';
@@ -56,23 +59,40 @@ import { EmployeesService } from './employees.service';
 @ApiBearerAuth('bearer')
 @Controller('employees')
 @Roles('owner')
-// FASE 4: por consistencia con el catálogo de permisos. No afecta al owner
-// (que pasa siempre); el gating real ya lo hace `@Roles('owner')`.
-@RequirePermission('canAccessEmployees')
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 
+  // LECTURAS: `@RequirePermission('canAccessEmployees')` solo en los GET para que
+  // un empleado con rol que conceda el módulo (p.ej. "Administrador") pueda VER
+  // el listado/detalle (el RolesGuard delega al PermissionsGuard). Las MUTACIONES
+  // (crear, credenciales, toggle-login, ajuste de caja) NO llevan la key y quedan
+  // owner-only por el `@Roles('owner')` de clase — gestión sensible de personal.
   @Get()
-  @ApiOperation({ summary: 'Listar employees activos de la company autenticada' })
+  @RequirePermission('canAccessEmployees')
+  @ApiOperation({
+    summary: 'Listar employees de la company autenticada',
+    description:
+      'Por defecto devuelve solo empleados activos. Con `?includeArchived=true` incluye también los archivados.',
+  })
+  @ApiQuery({
+    name: 'includeArchived',
+    required: false,
+    type: Boolean,
+    description: 'Si es `true`, incluye empleados archivados. Por defecto solo activos.',
+  })
   @ApiResponse({ status: HttpStatus.OK, type: [EmployeeResponseDto] })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
   @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
-  async findAll(@CurrentCompany() companyId: number): Promise<EmployeeResponseDto[]> {
-    const employees = await this.employeesService.findAll(companyId);
+  async findAll(
+    @CurrentCompany() companyId: number,
+    @Query() query: ListEmployeesQueryDto,
+  ): Promise<EmployeeResponseDto[]> {
+    const employees = await this.employeesService.findAll(companyId, query.includeArchived);
     return employees.map(toEmployeeResponseDto);
   }
 
   @Get(':id')
+  @RequirePermission('canAccessEmployees')
   @ApiOperation({
     summary: 'Detalle de un employee + datos de su caja registradora',
     description:
@@ -279,5 +299,51 @@ export class EmployeesController {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
+  }
+
+  // ARCHIVAR / RESTAURAR: baja lógica del empleado. Owner-only SIN
+  // `@RequirePermission` (como el ajuste de caja) — gestión sensible de
+  // personal que ni siquiera un rol con el módulo employees puede ejecutar; el
+  // RolesGuard NO delega a permisos y solo el owner pasa.
+  @Put(':id/archive')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Archivar (dar de baja lógica) un employee',
+    description:
+      'Setea `is_archived = true` y REVOCA el acceso (`login_enabled = false`) — un empleado archivado no puede iniciar sesión. NO borra su historia ni su usuario espejo. Idempotente: archivar un empleado ya archivado responde 200 sin error.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.OK, type: EmployeeResponseDto })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  async archive(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<EmployeeResponseDto> {
+    const employee = await this.employeesService.archive(id, companyId, currentUser.user_id);
+    return toEmployeeResponseDtoFromEntity(employee);
+  }
+
+  @Put(':id/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Restaurar (revertir baja lógica) un employee',
+    description:
+      'Setea `is_archived = false`. NO re-habilita el login: el owner debe concederlo aparte con `PUT /employees/:id/toggle-login`. Idempotente: restaurar un empleado no archivado responde 200 sin error.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.OK, type: EmployeeResponseDto })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  async restore(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<EmployeeResponseDto> {
+    const employee = await this.employeesService.restore(id, companyId, currentUser.user_id);
+    return toEmployeeResponseDtoFromEntity(employee);
   }
 }

@@ -10,6 +10,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -40,6 +41,7 @@ export class CarrierPaymentsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCarriers')
   @ApiOperation({ summary: 'Registrar abono a transportista' })
   @ApiBody({ type: CreateCarrierPaymentDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: CarrierPaymentResponseDto })

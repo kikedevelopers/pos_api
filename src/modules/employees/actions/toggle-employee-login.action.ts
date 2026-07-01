@@ -1,10 +1,16 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import {
+  DEFAULT_SYSTEM_ACCESS_ROLE_NAME,
+  findRoleIdByName,
+} from '@/modules/roles/internal/system-roles';
+
 import { Employee } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
 import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
 import { findEmployeeInCompany } from '../internal/employee-lookups';
+import { resolveRoleIdOnGrantAccess } from '../internal/role-assignment';
 
 /**
  * Habilita o deshabilita el acceso del employee a `POST /auth/user`.
@@ -65,6 +71,28 @@ export class ToggleEmployeeLoginAction {
       }
 
       const refreshed = await findEmployeeInCompany(manager, id, companyId);
+
+      // Conceder acceso ⇒ garantizar rol. Si el employee no tenía rol asignado,
+      // al habilitar el login le damos el rol por defecto 'Vendedor' (el más
+      // restringido). NUNCA pisamos un rol ya asignado, y al deshabilitar NO
+      // borramos el rol (re-habilitar lo conserva). Simetría con la creación:
+      // el rol solo existe cuando hay acceso al sistema. La decisión vive en
+      // `resolveRoleIdOnGrantAccess` (undefined = no tocar).
+      if (enabled === true && refreshed.role_id === null) {
+        const roleIdToAssign = resolveRoleIdOnGrantAccess(
+          enabled,
+          refreshed.role_id,
+          await findRoleIdByName(manager, companyId, DEFAULT_SYSTEM_ACCESS_ROLE_NAME),
+        );
+        if (roleIdToAssign !== undefined) {
+          await manager.update(
+            Employee,
+            { id: String(id), company_id: String(companyId) },
+            { role_id: roleIdToAssign },
+          );
+          refreshed.role_id = roleIdToAssign;
+        }
+      }
 
       // Side-effect del flujo OFF→ON: si el employee aún no tiene User
       // espejo, lo materializamos AQUÍ (no esperamos al primer login). Esto

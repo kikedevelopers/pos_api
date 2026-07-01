@@ -20,6 +20,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -72,6 +73,7 @@ export class PackagingsController {
 
   @Post()
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessPackaging')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Crear empaque' })
   @ApiBody({ type: CreatePackagingDto })
@@ -97,6 +99,7 @@ export class PackagingsController {
 
   @Put(':id')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessPackaging')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Actualizar empaque' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
@@ -121,6 +124,7 @@ export class PackagingsController {
 
   @Put(':id/archive')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessPackaging')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Archivar empaque (soft-delete)' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })

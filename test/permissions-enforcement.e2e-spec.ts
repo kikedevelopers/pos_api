@@ -22,7 +22,9 @@ import { tryInitDataSource } from './helpers/e2e-db';
  *   - El `PermissionsGuard` GATEA de verdad a un empleado en los endpoints
  *     donde su `@Roles` ya admite `employee` y añadimos `@RequirePermission`:
  *       · GET /purchases (canAccessPurchase): un rol custom "Inventario" (con la
- *         key) pasa; Cajero (sin la key) → 403.
+ *         key) pasa; Vendedor (sin la key) → 403. NOTA: en el catálogo nuevo el
+ *         Cajero SÍ tiene canAccessPurchase, así que el rol que niega el acceso
+ *         es el Vendedor (POS + informe de Ventas, sin compras).
  *       · GET /pos-reports/sales (canAccessSalesReport): Cajero (con la key)
  *         pasa; el rol "Inventario" (sin la key) → 403.
  *
@@ -79,6 +81,7 @@ describeIf('Permissions enforcement (e2e)', () => {
 
   // Tokens de empleados con roles de sistema.
   let cajeroToken = '';
+  let vendedorToken = '';
   let inventaristaToken = '';
 
   const register = async (): Promise<string> => {
@@ -136,11 +139,37 @@ describeIf('Permissions enforcement (e2e)', () => {
     const roles = (rolesRes.body as SuccessEnvelope<RolePayload[]>).payload;
     const cajero = roles.find((r) => r.name === 'Cajero');
     expect(cajero).toBeDefined();
+    const vendedor = roles.find((r) => r.name === 'Vendedor');
+    expect(vendedor).toBeDefined();
 
-    // Sanity del seed: las keys que sustentan el cruce de tests.
+    // Sanity del seed (CATÁLOGO NUEVO): el Cajero concede exactamente 12 keys,
+    // incluida canAccessPurchase (antes NO la tenía); NO tiene canAccessBanks.
+    const CAJERO_KEYS = [
+      'canAccessPOS',
+      'canAccessInventory',
+      'canAccessPackaging',
+      'canAccessCategories',
+      'canAccessCustomers',
+      'canAccessPurchase',
+      'canAccessSalesReport',
+      'canAccessCreditsReport',
+      'canAccessDailyClosureReport',
+      'canAccessClientsReport',
+      'canAccessExpenses',
+      'canViewAllSales',
+    ];
+    expect([...cajero!.permissions].sort()).toEqual([...CAJERO_KEYS].sort());
     expect(cajero!.permissions).toContain('canAccessSalesReport');
-    expect(cajero!.permissions).not.toContain('canAccessPurchase');
+    expect(cajero!.permissions).toContain('canAccessPurchase');
     expect(cajero!.permissions).not.toContain('canAccessBanks');
+
+    // Sanity del Vendedor (CATÁLOGO NUEVO): SOLO POS + informe de Ventas. Es el
+    // rol de fábrica que NO tiene canAccessPurchase, así que lo usamos para el
+    // caso negativo (403) de GET /purchases.
+    expect([...vendedor!.permissions].sort()).toEqual(
+      ['canAccessPOS', 'canAccessSalesReport'].sort(),
+    );
+    expect(vendedor!.permissions).not.toContain('canAccessPurchase');
 
     // FASE 5: 'Inventarista' YA NO es rol de fábrica. Creamos un rol custom
     // equivalente (acceso a catálogo + compras/proveedores) para los cruces de
@@ -167,6 +196,11 @@ describeIf('Permissions enforcement (e2e)', () => {
       `cajero-${uniqueSuffix()}`,
       'CajeroPass1!',
       cajero!.id,
+    );
+    vendedorToken = await createEmployeeWithRole(
+      `vendedor-${uniqueSuffix()}`,
+      'VendedorPass1!',
+      vendedor!.id,
     );
     inventaristaToken = await createEmployeeWithRole(
       `invent-${uniqueSuffix()}`,
@@ -197,8 +231,8 @@ describeIf('Permissions enforcement (e2e)', () => {
       expect(res.status).toBe(HttpStatus.OK);
     });
 
-    it('Cajero (SIN la key) → 403', async () => {
-      const res = await get('/api/v1/purchases', cajeroToken);
+    it('Vendedor (SIN la key) → 403', async () => {
+      const res = await get('/api/v1/purchases', vendedorToken);
       expect(res.status).toBe(HttpStatus.FORBIDDEN);
     });
 

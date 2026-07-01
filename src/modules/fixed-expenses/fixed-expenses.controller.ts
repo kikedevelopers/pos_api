@@ -20,6 +20,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -103,6 +104,7 @@ export class FixedExpensesController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessFixedExpenses')
   @ApiOperation({ summary: 'Crear un nuevo gasto fijo.' })
   @ApiBody({ type: CreateFixedExpenseDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: FixedExpenseResponseDto })
@@ -126,6 +128,7 @@ export class FixedExpensesController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessFixedExpenses')
   @ApiOperation({ summary: 'Actualizar un gasto fijo activo.' })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiBody({ type: UpdateFixedExpenseDto })
@@ -148,6 +151,7 @@ export class FixedExpensesController {
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessFixedExpenses')
   @ApiOperation({ summary: 'Archivar (soft-delete) un gasto fijo.' })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiResponse({ status: HttpStatus.OK, description: '`{ archived: true }`' })
@@ -185,6 +189,7 @@ export class FixedExpensesController {
   @Post(':id/periods/pay')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessFixedExpenses')
   @ApiOperation({
     summary: 'Pagar cortes (parcial/total, multi-corte, asignación del más antiguo al más nuevo).',
     description:
@@ -230,6 +235,7 @@ export class FixedExpensesController {
   @Put(':id/periods/:periodId/pay')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessFixedExpenses')
   @ApiOperation({
     summary: 'Marcar un corte como PAGADO + materializar Expense + FinancialMovement.',
     description:

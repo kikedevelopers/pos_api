@@ -24,12 +24,15 @@ import {
  * Endpoints `/dashboard` — Fase 11. Espejo byte-por-byte de
  * `placepos/src/main/server/routes/dashboard.routes.ts`.
  *
- * Roles: `owner` y `manager`. Los `employee` no tienen acceso al dashboard
- * agregado (paridad con PlacePos donde el menú admin no se les expone).
+ * Roles: `owner`/`manager` pasan por tipo. Un empleado entra si su rol concede
+ * `canAccessDashboard` (el RolesGuard delega al PermissionsGuard) — así un
+ * empleado con rol "Administrador" ve el inicio. `today-by-cashier` mantiene su
+ * propio `@RequirePermission('canAccessCashierReport')` (override por método).
  */
 @ApiTags('dashboard')
 @ApiBearerAuth('bearer')
 @Controller('dashboard')
+@RequirePermission('canAccessDashboard')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 

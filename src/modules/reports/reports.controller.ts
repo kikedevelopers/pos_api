@@ -74,9 +74,9 @@ export class ReportsController {
 
   @Get('credits')
   @Roles('owner', 'manager')
-  @RequirePermission('canAccessSalesReport')
+  @RequirePermission('canAccessCreditsReport')
   @ApiOperation({
-    summary: 'Listado de créditos con filtros (rango fechas, search, status) + summary.',
+    summary: 'Listado de créditos (cartera) con filtros (rango fechas, search, status) + summary.',
   })
   @ApiResponse({ status: HttpStatus.OK })
   creditsReport(

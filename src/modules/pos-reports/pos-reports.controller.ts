@@ -56,6 +56,10 @@ export class PosReportsController {
 
   @Get('dashboard-sales')
   @Roles('owner', 'manager')
+  // Alimenta el HOME (dashboard de ventas), por eso la key es canAccessDashboard
+  // y no canAccessSalesReport: un rol con acceso al Inicio pero no al informe de
+  // Ventas debe poder cargar su dashboard. Lo consume la pantalla de Inicio.
+  @RequirePermission('canAccessDashboard')
   @ApiOperation({
     summary:
       'Listado de tickets con totales consolidados inline (NC resta, ND suma) + summary del dashboard de ventas.',
@@ -70,7 +74,7 @@ export class PosReportsController {
 
   @Get('comparative')
   @Roles('owner', 'manager')
-  @RequirePermission('canAccessSalesReport')
+  @RequirePermission('canAccessComparativeReport')
   @ApiOperation({
     summary:
       'Informe Comparativo "a la fecha": período actual vs anterior de igual duración (ventas/costo/ganancia/margen) + breakdown por sub-buckets. Misma matemática que /dashboard/performance.',
@@ -85,7 +89,7 @@ export class PosReportsController {
 
   @Get('comparative/by-day')
   @Roles('owner', 'manager')
-  @RequirePermission('canAccessSalesReport')
+  @RequirePermission('canAccessComparativeReport')
   @ApiOperation({
     summary:
       'Comparativa por día: el MISMO día del mes (ej. 26) entre el mes de referencia y los anteriores (ventas/costo/ganancia/margen) con crecimiento encadenado. Misma matemática que /pos-reports/comparative.',

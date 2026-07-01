@@ -427,7 +427,8 @@ describeIf('Roles (e2e)', () => {
     expect(res.status).toBe(HttpStatus.OK);
     const perms = (res.body as SuccessEnvelope<{ user_profile: { permissions: string[] } }>).payload
       .user_profile.permissions;
-    // El empleado quedó sin rol tras el DELETE → permisos legacy (9 keys).
+    // El empleado quedó sin rol tras el DELETE → permisos legacy (12 keys,
+    // debe coincidir con LEGACY_EMPLOYEE_PERMISSIONS del catálogo).
     expect(perms).toEqual([
       'canAccessPOS',
       'canAccessInventory',
@@ -436,8 +437,11 @@ describeIf('Roles (e2e)', () => {
       'canAccessCustomers',
       'canAccessCarriers',
       'canAccessSalesReport',
+      'canAccessCreditsReport',
+      'canAccessComparativeReport',
       'canAccessClientsReport',
       'canAccessExpenses',
+      'canAccessFixedExpenses',
     ]);
   });
 
@@ -463,8 +467,294 @@ describeIf('Roles (e2e)', () => {
     expect(perms).toEqual(['canAccessDashboard']);
   });
 
+  // ---------- Default 'Vendedor' al conceder acceso al sistema ----------
+  //
+  // Regla de negocio: un rol SOLO tiene sentido con acceso al sistema. Al crear
+  // un empleado CON login y SIN rol explícito, se le asigna 'Vendedor' (el más
+  // restringido). Sin acceso, role_id queda null aunque venga un rol. Habilitar
+  // el login después (toggle-login OFF→ON) también asigna 'Vendedor' si no tenía
+  // rol, pero NUNCA pisa uno ya asignado.
+  const findVendedorRoleId = async (): Promise<number> => {
+    const list = await request(httpServer)
+      .get('/api/v1/roles')
+      .set('Authorization', `Bearer ${tokenA}`);
+    const vendedor = (list.body as SuccessEnvelope<RolePayload[]>).payload.find(
+      (r) => r.name === 'Vendedor',
+    );
+    expect(vendedor).toBeDefined();
+    return vendedor!.id;
+  };
+
+  it('POST /employees con login_enabled=true SIN role_id → asigna "Vendedor" por defecto', async () => {
+    const vendedorId = await findVendedorRoleId();
+    const res = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({
+        name: 'Empleado Default Vendedor',
+        login_enabled: true,
+        username: `def-vend-${uniqueSuffix()}`,
+        password: 'EmpPassSegura1!',
+      });
+    expect(res.status).toBe(HttpStatus.CREATED);
+    expect((res.body as SuccessEnvelope<{ role_id: number | null }>).payload.role_id).toBe(
+      vendedorId,
+    );
+  });
+
+  it('POST /employees con login_enabled=false SIN role_id → role_id null (sin acceso, sin rol)', async () => {
+    const res = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ name: 'Empleado Sin Acceso', login_enabled: false });
+    expect(res.status).toBe(HttpStatus.CREATED);
+    expect((res.body as SuccessEnvelope<{ role_id: number | null }>).payload.role_id).toBeNull();
+  });
+
+  it('POST /employees con login_enabled=false y role_id válido → role_id null (rol ignorado sin acceso)', async () => {
+    const vendedorId = await findVendedorRoleId();
+    const res = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ name: 'Empleado Rol Ignorado', login_enabled: false, role_id: vendedorId });
+    expect(res.status).toBe(HttpStatus.CREATED);
+    expect((res.body as SuccessEnvelope<{ role_id: number | null }>).payload.role_id).toBeNull();
+  });
+
+  it('POST /employees con login_enabled=true y role_id explícito → respeta ese rol (no default)', async () => {
+    // customRoleId existe (['canAccessDashboard']). Debe respetarse tal cual, sin
+    // caer al default 'Vendedor'.
+    const res = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({
+        name: 'Empleado Rol Explícito',
+        login_enabled: true,
+        username: `expl-role-${uniqueSuffix()}`,
+        password: 'EmpPassSegura1!',
+        role_id: customRoleId,
+      });
+    expect(res.status).toBe(HttpStatus.CREATED);
+    expect((res.body as SuccessEnvelope<{ role_id: number | null }>).payload.role_id).toBe(
+      customRoleId,
+    );
+  });
+
+  it('PUT /employees/:id/toggle-login OFF→ON en empleado sin rol → asigna "Vendedor"', async () => {
+    const vendedorId = await findVendedorRoleId();
+    // 1) Crear sin acceso (sin rol).
+    const username = `toggle-vend-${uniqueSuffix()}`;
+    const created = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ name: 'Empleado Toggle', login_enabled: false });
+    const createdBody = created.body as SuccessEnvelope<{ id: number; role_id: number | null }>;
+    const id = createdBody.payload.id;
+    expect(createdBody.payload.role_id).toBeNull();
+
+    // 2) Asignar credenciales (requisito para habilitar login).
+    const creds = await request(httpServer)
+      .put(`/api/v1/employees/${id}/credentials`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ username, password: 'EmpPassSegura1!' });
+    expect(creds.status).toBe(HttpStatus.OK);
+
+    // 3) Conceder acceso → debe recibir 'Vendedor' por defecto.
+    const toggled = await request(httpServer)
+      .put(`/api/v1/employees/${id}/toggle-login`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ enabled: true });
+    expect(toggled.status).toBe(HttpStatus.OK);
+
+    const detail = await request(httpServer)
+      .get(`/api/v1/employees/${id}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect((detail.body as SuccessEnvelope<{ role_id: number | null }>).payload.role_id).toBe(
+      vendedorId,
+    );
+  });
+
+  it('PUT /employees/:id/toggle-login NO pisa un rol ya asignado', async () => {
+    // Empleado con login + rol explícito (customRoleId).
+    const username = `toggle-keep-${uniqueSuffix()}`;
+    const created = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({
+        name: 'Empleado Conserva Rol',
+        login_enabled: true,
+        username,
+        password: 'EmpPassSegura1!',
+        role_id: customRoleId,
+      });
+    const id = (created.body as SuccessEnvelope<{ id: number }>).payload.id;
+
+    // OFF y luego ON: el rol debe permanecer intacto (no se re-defaultea).
+    await request(httpServer)
+      .put(`/api/v1/employees/${id}/toggle-login`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ enabled: false });
+    await request(httpServer)
+      .put(`/api/v1/employees/${id}/toggle-login`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ enabled: true });
+
+    const detail = await request(httpServer)
+      .get(`/api/v1/employees/${id}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect((detail.body as SuccessEnvelope<{ role_id: number | null }>).payload.role_id).toBe(
+      customRoleId,
+    );
+  });
+
+  // ---------- ARCHIVAR / RESTAURAR empleado ----------
+  //
+  // Reglas de negocio:
+  //   - Archivar setea is_archived=true Y login_enabled=false (revoca acceso).
+  //   - El empleado archivado desaparece del listado por defecto pero SÍ
+  //     aparece con ?includeArchived=true, y GET /:id sigue devolviéndolo.
+  //   - Restaurar setea is_archived=false (NO re-habilita login).
+  //   - Idempotencia: doble archive → 200.
+  //   - Owner-only: un empleado (no-owner) recibe 403 en archive/restore.
+  interface ArchivablePayload {
+    id: number;
+    is_archived: boolean;
+    login_enabled: boolean;
+  }
+
+  let archivableId = 0;
+  const archivableUsername = `archivable-${uniqueSuffix()}`;
+
+  it('setup: crea un empleado con login para las pruebas de archivado', async () => {
+    const res = await request(httpServer)
+      .post('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({
+        name: 'Empleado Archivable',
+        login_enabled: true,
+        username: archivableUsername,
+        password: 'EmpPassSegura1!',
+      });
+    expect(res.status).toBe(HttpStatus.CREATED);
+    const body = res.body as SuccessEnvelope<ArchivablePayload>;
+    expect(body.payload.is_archived).toBe(false);
+    expect(body.payload.login_enabled).toBe(true);
+    archivableId = body.payload.id;
+  });
+
+  it('PUT /employees/:id/archive (200) → is_archived=true y login_enabled=false', async () => {
+    const res = await request(httpServer)
+      .put(`/api/v1/employees/${archivableId}/archive`)
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(res.status).toBe(HttpStatus.OK);
+    const body = res.body as SuccessEnvelope<ArchivablePayload>;
+    expect(body.payload.is_archived).toBe(true);
+    // Archivar REVOCA el acceso: login_enabled debe apagarse.
+    expect(body.payload.login_enabled).toBe(false);
+  });
+
+  it('GET /employees (default) NO incluye al empleado archivado', async () => {
+    const res = await request(httpServer)
+      .get('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(res.status).toBe(HttpStatus.OK);
+    const list = (res.body as SuccessEnvelope<ArchivablePayload[]>).payload;
+    expect(list.find((e) => e.id === archivableId)).toBeUndefined();
+  });
+
+  it('SEGURIDAD: un empleado archivado NO puede autenticarse (login → 401)', async () => {
+    // Archivar revoca el acceso: aunque conserve username/password, el login por
+    // username filtra is_archived + login_enabled → credenciales inválidas.
+    const res = await request(httpServer)
+      .post('/api/v1/auth/user')
+      .send({ username: archivableUsername, password: 'EmpPassSegura1!' });
+    expect(res.status).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it('GET /employees?includeArchived=true SÍ incluye al empleado archivado', async () => {
+    const res = await request(httpServer)
+      .get('/api/v1/employees?includeArchived=true')
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(res.status).toBe(HttpStatus.OK);
+    const list = (res.body as SuccessEnvelope<ArchivablePayload[]>).payload;
+    const found = list.find((e) => e.id === archivableId);
+    expect(found).toBeDefined();
+    expect(found?.is_archived).toBe(true);
+  });
+
+  it('GET /employees/:id devuelve el empleado aunque esté archivado', async () => {
+    const res = await request(httpServer)
+      .get(`/api/v1/employees/${archivableId}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(res.status).toBe(HttpStatus.OK);
+    const body = res.body as SuccessEnvelope<ArchivablePayload>;
+    expect(body.payload.id).toBe(archivableId);
+    expect(body.payload.is_archived).toBe(true);
+  });
+
+  it('PUT /employees/:id/archive es idempotente (doble archive → 200)', async () => {
+    const res = await request(httpServer)
+      .put(`/api/v1/employees/${archivableId}/archive`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(res.status).toBe(HttpStatus.OK);
+    expect((res.body as SuccessEnvelope<ArchivablePayload>).payload.is_archived).toBe(true);
+  });
+
+  it('PUT /employees/:id/restore (200) → is_archived=false; reaparece en la lista default', async () => {
+    const res = await request(httpServer)
+      .put(`/api/v1/employees/${archivableId}/restore`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(res.status).toBe(HttpStatus.OK);
+    const body = res.body as SuccessEnvelope<ArchivablePayload>;
+    expect(body.payload.is_archived).toBe(false);
+    // Restaurar NO re-habilita el login (sigue apagado tras el archive).
+    expect(body.payload.login_enabled).toBe(false);
+
+    const list = await request(httpServer)
+      .get('/api/v1/employees')
+      .set('Authorization', `Bearer ${tokenA}`);
+    const found = (list.body as SuccessEnvelope<ArchivablePayload[]>).payload.find(
+      (e) => e.id === archivableId,
+    );
+    expect(found).toBeDefined();
+    expect(found?.is_archived).toBe(false);
+  });
+
+  it('PUT /employees/:id/restore es idempotente (doble restore → 200)', async () => {
+    const res = await request(httpServer)
+      .put(`/api/v1/employees/${archivableId}/restore`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect(res.status).toBe(HttpStatus.OK);
+    expect((res.body as SuccessEnvelope<ArchivablePayload>).payload.is_archived).toBe(false);
+  });
+
+  it('archive/restore → 403 para un no-owner (empleado)', async () => {
+    // El empleado `employeeUsername` puede loguearse (tiene rol customRoleId).
+    const login = await request(httpServer)
+      .post('/api/v1/auth/user')
+      .send({ username: employeeUsername, password: employeePassword });
+    const empToken = (login.body as SuccessEnvelope<{ access_token: string }>).payload.access_token;
+
+    const archiveRes = await request(httpServer)
+      .put(`/api/v1/employees/${archivableId}/archive`)
+      .set('Authorization', `Bearer ${empToken}`);
+    expect(archiveRes.status).toBe(HttpStatus.FORBIDDEN);
+
+    const restoreRes = await request(httpServer)
+      .put(`/api/v1/employees/${archivableId}/restore`)
+      .set('Authorization', `Bearer ${empToken}`);
+    expect(restoreRes.status).toBe(HttpStatus.FORBIDDEN);
+
+    // El estado del empleado no cambió (sigue restaurado).
+    const detail = await request(httpServer)
+      .get(`/api/v1/employees/${archivableId}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+    expect((detail.body as SuccessEnvelope<ArchivablePayload>).payload.is_archived).toBe(false);
+  });
+
   // ---------- Seed de roles en una sucursal nueva ----------
-  it('POST /branches → la sucursal nace con los 2 roles de sistema', async () => {
+  it('POST /branches → la sucursal nace con los 3 roles de sistema', async () => {
     if (!ds) {
       console.warn('pos_db no disponible — verificación de seed en sucursal omitida');
       return;
@@ -487,7 +777,7 @@ describeIf('Roles (e2e)', () => {
       `SELECT name, is_system FROM roles WHERE company_id = $1 AND is_system = true ORDER BY name`,
       [String(branch.id)],
     );
-    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero']);
+    expect(roles.map((r) => r.name)).toEqual(['Administrador', 'Cajero', 'Vendedor']);
   });
 
   // Sanity: companyAId capturado (depende de pos_db).

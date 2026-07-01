@@ -21,6 +21,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -92,6 +93,7 @@ export class DeliveryCompaniesController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessExpenses')
   @ApiOperation({ summary: 'Crear un domiciliario.' })
   @ApiBody({ type: CreateDeliveryCompanyDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: DeliveryCompanyResponseDto })
@@ -115,6 +117,7 @@ export class DeliveryCompaniesController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessExpenses')
   @ApiOperation({ summary: 'Editar un domiciliario (reemplaza name, address, phones).' })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiBody({ type: UpdateDeliveryCompanyDto })
@@ -136,6 +139,7 @@ export class DeliveryCompaniesController {
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessExpenses')
   @ApiOperation({ summary: 'Archivar un domiciliario (soft-delete).' })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Payload `{ archived: true }`.' })
@@ -155,6 +159,7 @@ export class DeliveryCompaniesController {
   @Put(':id/unarchive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessExpenses')
   @ApiOperation({ summary: 'Reactivar un domiciliario archivado.' })
   @ApiParam({ name: 'id', type: 'integer' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Payload `{ archived: false }`.' })

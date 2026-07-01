@@ -21,6 +21,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -175,6 +176,7 @@ export class DeliveriesController {
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessExpenses')
   @ApiOperation({
     summary:
       'Anular (archivar) un domicilio. Si fue pagado de caja, revierte el egreso (ingreso a la caja original).',

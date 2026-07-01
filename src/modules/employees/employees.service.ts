@@ -5,6 +5,7 @@ import {
   type AdjustEmployeeCashActor,
   type AdjustEmployeeCashResult,
 } from './actions/adjust-employee-cash.action';
+import { ArchiveEmployeeAction } from './actions/archive-employee.action';
 import { CreateEmployeeAction, type EmployeeCreator } from './actions/create-employee.action';
 import {
   FindAllEmployeesAction,
@@ -15,6 +16,7 @@ import {
   type EmployeeWithCashRegister,
 } from './actions/find-employee-by-id.action';
 import { FindEmployeeByUsernameAction } from './actions/find-employee-by-username.action';
+import { RestoreEmployeeAction } from './actions/restore-employee.action';
 import {
   SetEmployeeCashBaseAction,
   type SetEmployeeCashBaseResult,
@@ -56,10 +58,12 @@ export class EmployeesService {
     private readonly toggleEmployeeLoginAction: ToggleEmployeeLoginAction,
     private readonly setEmployeeCashBaseAction: SetEmployeeCashBaseAction,
     private readonly adjustEmployeeCashAction: AdjustEmployeeCashAction,
+    private readonly archiveEmployeeAction: ArchiveEmployeeAction,
+    private readonly restoreEmployeeAction: RestoreEmployeeAction,
   ) {}
 
-  findAll(companyId: number): Promise<EmployeeWithCashSummary[]> {
-    return this.findAllEmployeesAction.execute(companyId);
+  findAll(companyId: number, includeArchived = false): Promise<EmployeeWithCashSummary[]> {
+    return this.findAllEmployeesAction.execute(companyId, includeArchived);
   }
 
   findOne(id: number, companyId: number): Promise<EmployeeWithCashRegister> {
@@ -107,5 +111,13 @@ export class EmployeesService {
     actor: AdjustEmployeeCashActor,
   ): Promise<AdjustEmployeeCashResult> {
     return this.adjustEmployeeCashAction.execute(id, companyId, targetBalance, reason, actor);
+  }
+
+  archive(id: number, companyId: number, actorId: number): Promise<Employee> {
+    return this.archiveEmployeeAction.execute(id, companyId, actorId);
+  }
+
+  restore(id: number, companyId: number, actorId: number): Promise<Employee> {
+    return this.restoreEmployeeAction.execute(id, companyId, actorId);
   }
 }

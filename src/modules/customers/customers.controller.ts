@@ -23,6 +23,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -219,6 +220,7 @@ export class CustomersController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCustomers')
   @ApiOperation({ summary: 'Actualizar customer' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: UpdateCustomerDto })
@@ -239,6 +241,7 @@ export class CustomersController {
   @Patch(':id/archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCustomers')
   @ApiOperation({
     summary: 'Archivar / desarchivar customer',
     description:
@@ -263,6 +266,7 @@ export class CustomersController {
   @Post(':id/advances')
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCustomers')
   @ApiOperation({
     summary: 'Registrar anticipo de cliente',
     description:

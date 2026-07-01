@@ -27,8 +27,13 @@ export interface EmployeeWithCashSummary {
 }
 
 /**
- * Lista employees ACTIVOS (`is_archived = false`) de una company, ordenados
- * por `created_at DESC`. Endpoint `GET /employees`.
+ * Lista employees de una company, ordenados por `created_at DESC`. Endpoint
+ * `GET /employees`.
+ *
+ * Por defecto (`includeArchived = false`) filtra a ACTIVOS
+ * (`is_archived = false`) — comportamiento histórico y paridad PlacePos. Con
+ * `includeArchived = true` incluye también los archivados (para la vista de
+ * gestión que muestra el personal dado de baja).
  *
  * --------------------------------------------------------------------------
  * Paridad PlacePos: cash_balance / base_amount por employee
@@ -51,9 +56,14 @@ export class FindAllEmployeesAction {
     private readonly cashRegisterRepo: Repository<CashRegister>,
   ) {}
 
-  async execute(companyId: number): Promise<EmployeeWithCashSummary[]> {
+  async execute(companyId: number, includeArchived = false): Promise<EmployeeWithCashSummary[]> {
+    // Sin `includeArchived`: solo activos (default). Con él: todos. El filtro
+    // `is_archived` se omite por completo cuando se piden los archivados.
+    const where = includeArchived
+      ? { company_id: String(companyId) }
+      : { company_id: String(companyId), is_archived: false };
     const employees = await this.repo.find({
-      where: { company_id: String(companyId), is_archived: false },
+      where,
       order: { created_at: 'DESC' },
     });
 

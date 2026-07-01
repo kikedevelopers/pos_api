@@ -20,6 +20,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -94,6 +95,7 @@ export class CarriersController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCarriers')
   @ApiOperation({ summary: 'Crear carrier' })
   @ApiBody({ type: CreateCarrierDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: CarrierResponseDto })
@@ -115,6 +117,7 @@ export class CarriersController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCarriers')
   @ApiOperation({ summary: 'Actualizar carrier' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: UpdateCarrierDto })
@@ -140,6 +143,7 @@ export class CarriersController {
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCarriers')
   @ApiOperation({
     summary: 'Archivar carrier',
     description: '422 si el carrier tiene deuda pendiente (balance > 0).',

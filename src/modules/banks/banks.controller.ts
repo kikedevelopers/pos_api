@@ -143,7 +143,11 @@ export class BanksController {
   @Post(':id/adjustments')
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'superadmin')
-  @RequirePermission('canAccessBanks')
+  // NO lleva @RequirePermission a propósito: el ajuste manual de saldo es
+  // solo-admin (owner/superadmin). Sin la key, el RolesGuard NO delega al
+  // PermissionsGuard, así que un empleado con `canAccessBanks` (que sí gestiona
+  // bancos) NO puede corregir saldos. Decisión de producto (ajustes de saldo
+  // solo-admin); ver también wallets.
   @ApiOperation({
     summary: 'Aplicar corrección manual de saldo (solo owner/superadmin).',
     description:

@@ -5,10 +5,12 @@ import { CashRegisterModule } from '@/modules/cash-register/cash-register.module
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 
 import { AdjustEmployeeCashAction } from './actions/adjust-employee-cash.action';
+import { ArchiveEmployeeAction } from './actions/archive-employee.action';
 import { CreateEmployeeAction } from './actions/create-employee.action';
 import { FindAllEmployeesAction } from './actions/find-all-employees.action';
 import { FindEmployeeByIdAction } from './actions/find-employee-by-id.action';
 import { FindEmployeeByUsernameAction } from './actions/find-employee-by-username.action';
+import { RestoreEmployeeAction } from './actions/restore-employee.action';
 import { SetEmployeeCashBaseAction } from './actions/set-employee-cash-base.action';
 import { ToggleEmployeeLoginAction } from './actions/toggle-employee-login.action';
 import { UpdateEmployeeAction } from './actions/update-employee.action';
@@ -20,7 +22,7 @@ import { Employee } from './entities/employee.entity';
 /**
  * Módulo `employees`.
  *
- * Cablea las 9 actions del dominio + el service facade. El service se exporta
+ * Cablea las 11 actions del dominio + el service facade. El service se exporta
  * para que `AuthService` pueda invocar `findByUsername` en el flujo de login
  * dual user/employee. `TypeOrmModule` también se exporta para que módulos que
  * necesiten leer la entidad (reportes, dashboard) inyecten su repositorio sin
@@ -46,6 +48,8 @@ import { Employee } from './entities/employee.entity';
     ToggleEmployeeLoginAction,
     SetEmployeeCashBaseAction,
     AdjustEmployeeCashAction,
+    ArchiveEmployeeAction,
+    RestoreEmployeeAction,
   ],
   exports: [EmployeesService, TypeOrmModule],
 })

@@ -22,6 +22,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -175,6 +176,7 @@ export class ExpensesController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessExpenses')
   @ApiOperation({
     summary:
       'Editar metadata de un gasto (description, category, notes). NO permite cambiar amount/source/expense_date — usar anulación + nuevo gasto.',

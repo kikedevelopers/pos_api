@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import {
   ProductResponseDto,
@@ -99,6 +100,7 @@ export class CategoriesController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCategories')
   @ApiOperation({ summary: 'Crear categoría' })
   @ApiBody({ type: CreateCategoryDto })
   @ApiResponse({ status: HttpStatus.CREATED, type: CategoryResponseDto })
@@ -116,6 +118,7 @@ export class CategoriesController {
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCategories')
   @ApiOperation({ summary: 'Renombrar categoría' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: UpdateCategoryDto })
@@ -135,6 +138,7 @@ export class CategoriesController {
   @Put(':id/archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessCategories')
   @ApiOperation({ summary: 'Archivar categoría (soft-delete)' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiResponse({ status: HttpStatus.OK, type: ArchiveCategoryResponseDto })

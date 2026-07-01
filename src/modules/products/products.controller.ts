@@ -23,6 +23,7 @@ import {
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -165,6 +166,7 @@ export class ProductsController {
   @Put('archive')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
   @ApiOperation({
     summary: 'Archivar varios productos en lote',
     description: 'Espejo PlacePos. Idempotente; ids ya archivados se ignoran.',
@@ -187,6 +189,7 @@ export class ProductsController {
   @Put('show-in-pos')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
   @ApiOperation({
     summary: 'Activar/desactivar varios productos en POS en lote',
     description: 'Espejo PlacePos.',
@@ -293,6 +296,7 @@ export class ProductsController {
 
   @Post()
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Crear producto' })
   @ApiBody({ type: CreateProductDto })
@@ -320,6 +324,7 @@ export class ProductsController {
 
   @Put(':id')
   @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Actualizar producto + precios' })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })

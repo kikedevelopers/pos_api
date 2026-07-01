@@ -74,9 +74,39 @@ export const SYSTEM_ROLE_SEEDS: readonly SystemRoleSeed[] = [
   },
 ];
 
+/**
+ * Nombre canónico del rol de fábrica que se asigna POR DEFECTO a todo empleado
+ * al que se le concede acceso al sistema (login) sin un rol explícito. Es el
+ * rol más restringido ('Vendedor': SOLO POS + informe de SUS ventas). La regla
+ * de negocio: un rol solo tiene sentido cuando el empleado puede entrar a la
+ * app; sin acceso, `role_id` queda en null.
+ */
+export const DEFAULT_SYSTEM_ACCESS_ROLE_NAME = 'Vendedor';
+
 /** Normaliza un nombre de rol para la comparación de idempotencia. */
 function normalizeRoleName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+/**
+ * Resuelve el `id` de un rol de una company por su nombre normalizado
+ * (`lower(btrim(name))`). Devuelve `null` si la company aún no tiene ese rol
+ * (edge case: seeds no corridos). Se usa para asignar el rol por defecto
+ * ('Vendedor') al conceder acceso al sistema a un empleado.
+ *
+ * SQL crudo a propósito (igual que `seedSystemRolesForCompany`): snapshot-safe
+ * y compatible con el `EntityManager` de una transacción.
+ */
+export async function findRoleIdByName(
+  manager: EntityManager,
+  companyId: number | string,
+  name: string,
+): Promise<string | null> {
+  const rows: Array<{ id: string }> = await manager.query(
+    `SELECT id FROM roles WHERE company_id = $1 AND lower(btrim(name)) = $2 LIMIT 1`,
+    [String(companyId), normalizeRoleName(name)],
+  );
+  return rows.length > 0 ? String(rows[0].id) : null;
 }
 
 /**
