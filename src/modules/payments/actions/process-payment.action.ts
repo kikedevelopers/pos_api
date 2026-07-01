@@ -369,12 +369,18 @@ export class ProcessPaymentAction {
       companyId,
       TicketSettingType.SALE,
     );
+    // Contabilidad de caja: el pedido se convierte en VENTA ahora (entra el
+    // dinero) → `sold_at = now()`. Los reportes de ventas del día (ventas
+    // directas, ganancia/costo, créditos nuevos, notas del día) reconocen la
+    // venta por `sold_at`, así un pedido creado ayer y cobrado hoy cuenta HOY.
+    // Dentro de la MISMA transacción SERIALIZABLE del cobro.
     await manager.update(
       SaleInvoice,
       { id: sale.id, company_id: String(companyId) },
       {
         ticket_type: TicketType.SALE,
         sale_number: folio.formatted,
+        sold_at: new Date(),
       },
     );
 

@@ -215,7 +215,7 @@ export class GetCustomersRfmAction {
         SELECT
           si.id,
           si.customer_id,
-          TO_CHAR(si.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
+          TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
           (si.total + COALESCE(na.debit_total, 0) - COALESCE(na.credit_total, 0))::float AS total,
           (si.cost  + COALESCE(na.debit_cost, 0)  - COALESCE(na.credit_cost, 0))::float  AS cost
         FROM sale_invoices si

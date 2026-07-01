@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import Big from 'big.js';
 import { DataSource } from 'typeorm';
 
+import { APP_TIMEZONE, dayjs } from '@/common/utils/dayjs';
 import { round2 } from '@/modules/dashboard/internal/aggregations';
 
 import type {
@@ -131,8 +132,15 @@ export class GetComparativeReportAction {
       shownIndices.map(async (idx) => {
         const start = starts[idx];
         const end = toDate ? addDaysUtc(start, windowDays) : naturalPeriodEnd(start, granularity);
-        const dateStart = new Date(`${formatDateOnlyUtc(start)}T00:00:00.000Z`);
-        const dateEnd = new Date(`${formatDateOnlyUtc(end)}T23:59:59.999Z`);
+        // Los límites del rango son días CALENDARIO colombianos (America/Bogota):
+        // `fetchDayMetricsMap` agrupa las ventas por `TO_CHAR(... AT TIME ZONE
+        // 'America/Bogota')`, así que si construyéramos el rango en UTC-medianoche
+        // una venta de la tarde-noche (p.ej. 22:00 Col = 03:00Z del día siguiente)
+        // caería fuera del rango pero SÍ dentro de su día colombiano → descuadre.
+        // `dayjs.tz(... , Bogota).toDate()` da el instante UTC de la medianoche
+        // colombiana, alineando las claves de día del dayMap con el rango.
+        const dateStart = dayjs.tz(`${formatDateOnlyUtc(start)} 00:00:00.000`, APP_TIMEZONE).toDate();
+        const dateEnd = dayjs.tz(`${formatDateOnlyUtc(end)} 23:59:59.999`, APP_TIMEZONE).toDate();
         const dayMap = await fetchDayMetricsMap(this.dataSource, companyId, dateStart, dateEnd);
         return { start, end, dayMap };
       }),

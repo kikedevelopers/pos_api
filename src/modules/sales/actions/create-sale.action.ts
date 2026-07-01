@@ -165,9 +165,18 @@ export class CreateSaleAction {
         // los pre-calcula con Big.js; el service los persiste tal cual (paridad
         // con `saleOperations.createOrder`). `subtotal = total` y `tax_total = 0`
         // porque el modo servidor/cliente no maneja IVA en ventas.
+        // Contabilidad de caja: `sold_at` marca el instante en que la factura se
+        // realizó/cobró (cuándo entra el dinero). Aquí SIEMPRE se crea ORDER
+        // (paridad PlacePos: la conversión a SALE ocurre al cobrar vía
+        // `POST /payments`, donde `ProcessPaymentAction` fija `sold_at = now()`).
+        // Si este action creara una venta DIRECTA (ticket_type SALE), `sold_at`
+        // nacería = `created_at`; para un ORDER queda NULL (no entra a los
+        // reportes de ventas, que filtran ticket_type = 'SALE').
+        const ticketType = TicketType.ORDER as TicketType;
         const saleEntity = manager.create(SaleInvoice, {
           company_id: String(companyId),
-          ticket_type: TicketType.ORDER,
+          ticket_type: ticketType,
+          sold_at: ticketType === TicketType.SALE ? new Date() : null,
           ticket_number: ticket.formatted,
           sale_number: null,
           customer_id: customer ? customer.id : null,

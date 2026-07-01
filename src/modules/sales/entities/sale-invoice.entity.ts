@@ -93,6 +93,13 @@ export enum TicketType {
   unique: true,
   where: '"client_operation_id" IS NOT NULL',
 })
+// Reportes de VENTAS por rango (contabilidad de caja): "Ventas del Día",
+// ganancia/costo, créditos nuevos y notas del día se reconocen por `sold_at`
+// (instante en que la factura se realizó/cobró), NO por `created_at`. El índice
+// compuesto `(company_id, sold_at)` cubre el filtro de rango per-company de esas
+// agregaciones (COALESCE(sold_at, created_at) BETWEEN …). Ver migración
+// 1747012000000.
+@Index('idx_sale_invoices_company_sold_at', ['company_id', 'sold_at'])
 export class SaleInvoice {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -226,6 +233,24 @@ export class SaleInvoice {
 
   @Column({ type: 'boolean', default: false })
   is_deleted!: boolean;
+
+  /**
+   * Instante en que la factura se CONVIRTIÓ en venta (se realizó/cobró) — la
+   * fecha en que ENTRA el dinero. Contabilidad de caja: los reportes de ventas
+   * del día (ventas directas, ganancia/costo, créditos nuevos, notas del día)
+   * reconocen la venta por esta columna, NO por `created_at`.
+   *
+   *   - Venta directa (ticket_type SALE al crear) → `sold_at = created_at`.
+   *   - Conversión ORDER → SALE al cobrar (`POST /payments`) → `sold_at = now()`.
+   *   - Pedido que sigue ORDER → `sold_at` NULL (no aparece en los reportes de
+   *     ventas, que filtran `ticket_type = 'SALE'`).
+   *
+   * Las agregaciones usan `COALESCE(sold_at, created_at)` para blindar filas
+   * legadas sin backfill. Backfill inicial en la migración 1747012000000
+   * (MIN del primer pago vivo, o `created_at` como aproximación).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  sold_at!: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

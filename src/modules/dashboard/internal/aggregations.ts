@@ -83,7 +83,7 @@ export async function fetchSalesByDay(
   return dataSource.query<SalesByDayRow[]>(
     `
     SELECT
-      TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
+      TO_CHAR(COALESCE(si.sold_at, si.created_at) AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       COALESCE(SUM(si.total), 0)::float AS sales,
       COALESCE(SUM(si.profit), 0)::float AS profit,
       COALESCE(SUM(si.cost), 0)::float AS cost
@@ -91,7 +91,7 @@ export async function fetchSalesByDay(
     WHERE si.company_id = $1
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id
@@ -131,7 +131,7 @@ export async function fetchNotesByDay(
       GROUP BY cn.id
     )
     SELECT
-      TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
+      TO_CHAR(COALESCE(si.sold_at, si.created_at) AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       nc.note_type::text AS note_type,
       COALESCE(SUM(nc.total), 0)::float AS notes_total,
       COALESCE(SUM(nc.total_cost), 0)::float AS notes_cost
@@ -141,7 +141,7 @@ export async function fetchNotesByDay(
      AND si.company_id = $1
     WHERE si.is_deleted = false
       AND si.ticket_type = 'SALE'
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id
@@ -277,8 +277,11 @@ export async function fetchCreditPaymentsBreakdownByDay(
 }
 
 /**
- * Créditos GENERADOS por día (sale_credits creados a partir de invoices del
- * rango). Filtro multi-tenant: `sc.company_id = $1` Y `si.company_id = $1`.
+ * Créditos GENERADOS por día (sale_credits de invoices REALIZADAS en el rango).
+ * Se agrupa/filtra por `COALESCE(si.sold_at, si.created_at)` — el día en que la
+ * venta se realizó/cobró, no el de su creación (paridad con placepos y con el
+ * resto de agregaciones de ventas del día).
+ * Filtro multi-tenant: `sc.company_id = $1` Y `si.company_id = $1`.
  */
 export async function fetchCreditsGeneratedByDay(
   dataSource: DataSource,
@@ -289,14 +292,14 @@ export async function fetchCreditsGeneratedByDay(
   return dataSource.query<CreditsGeneratedRow[]>(
     `
     SELECT
-      TO_CHAR(si.created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
+      TO_CHAR(COALESCE(si.sold_at, si.created_at) AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
       COALESCE(SUM(sc.total_amount), 0)::float AS credits
     FROM sale_credits sc
     INNER JOIN sale_invoices si
       ON si.id = sc.sale_invoice_id
      AND si.company_id = $1
     WHERE sc.company_id = $1
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND si.is_deleted = false
       AND si.ticket_type = 'SALE'
     GROUP BY 1
@@ -317,10 +320,11 @@ export async function fetchCreditsGeneratedByDay(
  * normal (creada y pagada el mismo día) `sp.created_at ≈ si.created_at`, así que
  * el resultado NO cambia.
  *
- * NOTA (fuera de alcance de esta fase): la GANANCIA (`fetchProfitTotal`) sigue
- * agrupando por `si.created_at`. Para un pedido cobrado en día distinto al de su
- * creación, "Total Recaudado" (por pago) y "Ganancia del día" (por venta) pueden
- * quedar en días distintos — es intencional y está documentado.
+ * Contabilidad de caja: la GANANCIA (`fetchProfitTotal`) y las VENTAS del día
+ * (`fetchSalesByDay`, etc.) ahora se reconocen por `COALESCE(si.sold_at,
+ * si.created_at)` — el día en que la venta se realizó/cobró. Así el recaudo
+ * directo (por `sp.created_at`) y la ganancia/ventas del día CUADRAN para un
+ * pedido creado en un día y cobrado en otro (ambos caen el día del cobro).
  *
  * Filtro multi-tenant: `sp.company_id = $1` Y `si.company_id = $1`.
  */
@@ -395,7 +399,7 @@ export async function fetchSalesNotesAdjustment(
       AND sp.payment_method = $3::payment_method
       AND si.is_deleted = false
       AND si.ticket_type = 'SALE'
-      AND si.created_at BETWEEN $4 AND $5
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $4 AND $5
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id
@@ -425,7 +429,7 @@ export async function fetchProfitTotal(
     WHERE si.company_id = $1
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id
@@ -491,8 +495,9 @@ export async function fetchExpensesTotal(
 }
 
 /**
- * Conteo + total de créditos generados (sale_credits cuya invoice se creó en
- * el rango). Filtro multi-tenant en ambas tablas.
+ * Conteo + total de créditos generados (sale_credits cuya invoice se REALIZÓ
+ * en el rango, por `COALESCE(si.sold_at, si.created_at)`). Filtro multi-tenant
+ * en ambas tablas.
  */
 export async function fetchNewCredits(
   dataSource: DataSource,
@@ -510,7 +515,7 @@ export async function fetchNewCredits(
       ON si.id = sc.sale_invoice_id
      AND si.company_id = $1
     WHERE sc.company_id = $1
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
     `,
@@ -537,7 +542,7 @@ export async function fetchSalesCount(
     WHERE si.company_id = $1
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
     `,
     [String(companyId), dateStart, dateEnd],
   );

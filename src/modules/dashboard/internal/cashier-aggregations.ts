@@ -74,7 +74,9 @@ interface CashierSalesCountRow {
  * today`. Así el "Total Recaudado" por cajero cuadra con el consolidado. La
  * ATRIBUCIÓN sigue siendo `si.created_by_id` (el vendedor de la factura), no el
  * cajero que tomó el pago — mismo criterio previo. La GANANCIA por cajero
- * (`fetchSalesProfitByCashier`) permanece por `si.created_at` (fuera de alcance).
+ * (`fetchSalesProfitByCashier`), las notas, los créditos nuevos y el conteo de
+ * ventas se reconocen por `COALESCE(si.sold_at, si.created_at)` (el día en que
+ * la venta se realizó/cobró), en paridad con las agregaciones de `/dashboard/today`.
  */
 export async function fetchSalesByCashier(
   dataSource: DataSource,
@@ -133,7 +135,7 @@ export async function fetchSalesProfitByCashier(
     WHERE si.company_id = $1
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id
@@ -207,7 +209,7 @@ export async function fetchNotesByCashier(
     LEFT JOIN users u ON u.id = nc.created_by_id
     WHERE si.is_deleted = false
       AND si.ticket_type = 'SALE'
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND NOT EXISTS (
         SELECT 1 FROM sale_credits sc
         WHERE sc.sale_invoice_id = si.id
@@ -357,7 +359,7 @@ export async function fetchNewCreditsByCashier(
      AND si.company_id = $1
     LEFT JOIN users u ON u.id = si.created_by_id
     WHERE sc.company_id = $1
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
     GROUP BY si.created_by_id, user_name
@@ -384,7 +386,7 @@ export async function fetchSalesCountByCashier(
     WHERE si.company_id = $1
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
-      AND si.created_at BETWEEN $2 AND $3
+      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
     GROUP BY si.created_by_id
     `,
     [String(companyId), dateStart, dateEnd],

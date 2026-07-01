@@ -89,7 +89,7 @@ export async function fetchCashSales(
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
         AND sp.payment_method = 'CASH'
-        AND si.created_at BETWEEN $2 AND $3
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
           WHERE sc.sale_invoice_id = si.id
@@ -133,7 +133,7 @@ export async function fetchCashNotes(
         AND sp.is_voided = false
         AND sp.payment_method = 'CASH'
         AND si.is_deleted = false
-        AND si.created_at BETWEEN $3 AND $4
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $3 AND $4
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
           WHERE sc.sale_invoice_id = si.id
@@ -169,7 +169,7 @@ export async function fetchTransferSales(
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
         AND sp.payment_method = 'TRANSFER'
-        AND si.created_at BETWEEN $2 AND $3
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
           WHERE sc.sale_invoice_id = si.id
@@ -193,7 +193,7 @@ export async function fetchTransferSales(
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
         AND sp.payment_method = 'TRANSFER'
-        AND si.created_at BETWEEN $2 AND $3
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
           WHERE sc.sale_invoice_id = si.id
@@ -229,7 +229,7 @@ export async function fetchNewCredits(
         ON si.id = sc.sale_invoice_id
        AND si.company_id = $1
       WHERE sc.company_id = $1
-        AND si.created_at BETWEEN $2 AND $3
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
       `,
