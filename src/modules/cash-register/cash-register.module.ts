@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+
+import { AdjustCashRegisterAction } from './actions/adjust-cash-register.action';
 import { GetCashRegisterBalanceAction } from './actions/get-balance.action';
 import { ListCashRegisterLogsAction } from './actions/list-cash-register-logs.action';
 import { RecordCashRegisterLogAction } from './actions/record-cash-register-log.action';
@@ -26,13 +29,17 @@ import { CashRegister } from './entities/cash-register.entity';
  * requiere inyección DI.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([CashRegister, CashRegisterLog])],
+  imports: [
+    TypeOrmModule.forFeature([CashRegister, CashRegisterLog]),
+    FinancialMovementsModule,
+  ],
   controllers: [CashRegisterController],
   providers: [
     CashRegisterService,
     GetCashRegisterBalanceAction,
     ListCashRegisterLogsAction,
     RecordCashRegisterLogAction,
+    AdjustCashRegisterAction,
   ],
   exports: [CashRegisterService, TypeOrmModule],
 })

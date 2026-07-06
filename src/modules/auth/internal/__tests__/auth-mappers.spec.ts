@@ -86,3 +86,46 @@ describe('auth-mappers · can_view_cash en UserProfileDto (paridad PlacePos)', (
     ).toBe(false);
   });
 });
+
+describe('auth-mappers · subpermisos del configurador (margen/ganancia del producto)', () => {
+  it('owner → ambos subpermisos true siempre', () => {
+    const user = {
+      id: '1',
+      name: 'Kike',
+      lastname: 'Pacheco',
+      email: 'kike@ares.pos',
+      type: 'owner',
+      created_at: new Date('2025-01-01T00:00:00.000Z'),
+      branches_enabled: true,
+      branches_allowed: 2,
+    } as unknown as User;
+
+    const profile = userToUserProfileDto(user, logger, []);
+    expect(profile.can_view_product_margin).toBe(true);
+    expect(profile.can_view_product_profit).toBe(true);
+  });
+
+  it('empleado propaga cada subpermiso de forma independiente', () => {
+    const base = {
+      id: '5',
+      name: 'Ana',
+      email: 'ana@ares.pos',
+      username: 'ana',
+      created_at: new Date('2025-01-01T00:00:00.000Z'),
+      can_view_profit: false,
+      can_view_cash: false,
+    };
+
+    const profile = employeeToUserProfileDto(
+      {
+        ...base,
+        can_view_product_margin: true,
+        can_view_product_profit: false,
+      } as unknown as Employee,
+      logger,
+      [],
+    );
+    expect(profile.can_view_product_margin).toBe(true);
+    expect(profile.can_view_product_profit).toBe(false);
+  });
+});

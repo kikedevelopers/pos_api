@@ -307,14 +307,17 @@ export class EmployeesController {
     });
   }
 
-  // VER MÁRGENES Y GANANCIAS: permiso por-empleado. Owner-only SIN
-  // `@RequirePermission` (como el ajuste de caja) — solo el admin lo cambia.
+  // VER MÁRGENES Y GANANCIAS: permiso por-empleado y sus subpermisos del
+  // configurador de producto. Owner-only SIN `@RequirePermission` (como el
+  // ajuste de caja) — solo el admin lo cambia.
   @Put(':id/profit-visibility')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Conceder/revocar el permiso del empleado para ver márgenes y ganancias',
     description:
-      'Persiste `employees.can_view_profit`. No toca caja ni credenciales. Solo owner.',
+      'Persiste `employees.can_view_profit` y/o sus subpermisos ' +
+      '`can_view_product_margin` / `can_view_product_profit` (patch parcial). ' +
+      'No toca caja ni credenciales. Solo owner.',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: SetProfitVisibilityDto })
@@ -328,11 +331,7 @@ export class EmployeesController {
     @Body() dto: SetProfitVisibilityDto,
     @CurrentCompany() companyId: number,
   ): Promise<EmployeeDetailResponseDto> {
-    const employee = await this.employeesService.setProfitVisibility(
-      id,
-      dto.can_view_profit,
-      companyId,
-    );
+    const employee = await this.employeesService.setProfitVisibility(id, dto, companyId);
     // Re-lectura del detalle para devolver la caja actual (paridad PlacePos,
     // que serializa cash_balance/base_amount en el response de la mutación).
     const detail = await this.employeesService.findOne(Number(employee.id), companyId);

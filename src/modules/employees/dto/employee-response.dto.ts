@@ -83,6 +83,20 @@ export class EmployeeResponseDto {
   })
   can_view_cash!: boolean;
 
+  @ApiProperty({
+    example: false,
+    description:
+      'Subpermiso: ver el margen (%) del producto en el configurador del POS. El toggle principal cascada su valor.',
+  })
+  can_view_product_margin!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Subpermiso: ver la ganancia ($) del producto en el configurador del POS. El toggle principal cascada su valor.',
+  })
+  can_view_product_profit!: boolean;
+
   @ApiPropertyOptional({
     example: 'Kike Pacheco',
     nullable: true,
@@ -150,6 +164,8 @@ function toEmployeeBaseResponse(
     is_archived: employee.is_archived,
     can_view_profit: employee.can_view_profit,
     can_view_cash: employee.can_view_cash,
+    can_view_product_margin: employee.can_view_product_margin,
+    can_view_product_profit: employee.can_view_product_profit,
     created_by: employee.created_by,
     created_at: employee.created_at.toISOString(),
   };

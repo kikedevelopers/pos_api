@@ -58,6 +58,10 @@ describe('ProcessPaymentAction (split tender)', () => {
   >;
   let cashRegisterBalance: number;
   let savedPaymentSeq: number;
+  // ADVANCE: saldo a favor del cliente y su id en la factura (configurables por
+  // test para cubrir suficiente / insuficiente / sin cliente).
+  let customerAdvanceBalance: number;
+  let saleCustomerId: string | null;
 
   // Estado del repo (fuera de TX) para el fast-path idempotente.
   let existingPaymentsByUuid: Map<string, { id: string; sale_invoice_id: string }>;
@@ -73,7 +77,7 @@ describe('ProcessPaymentAction (split tender)', () => {
             return Promise.resolve({
               id: '142',
               company_id: String(where.company_id),
-              customer_id: '55',
+              customer_id: saleCustomerId,
               ticket_type: 'ORDER',
               total: 150,
               cost: 80,
@@ -83,6 +87,14 @@ describe('ProcessPaymentAction (split tender)', () => {
           if (name === 'Bank') {
             const key = `${String(where.id)}|${String(where.company_id)}`;
             return Promise.resolve(banks.get(key) ?? null);
+          }
+          if (name === 'Customer') {
+            // consumeCustomerAdvance bloquea el cliente y lee advance_balance.
+            return Promise.resolve({
+              id: String(where.id),
+              company_id: String(where.company_id),
+              advance_balance: customerAdvanceBalance,
+            });
           }
           return Promise.resolve(null);
         },
@@ -141,6 +153,8 @@ describe('ProcessPaymentAction (split tender)', () => {
     banks = new Map();
     cashRegisterBalance = 1000;
     savedPaymentSeq = 100;
+    customerAdvanceBalance = 500;
+    saleCustomerId = '55';
     existingPaymentsByUuid = new Map();
     paymentsByInvoice = new Map();
 
@@ -490,5 +504,130 @@ describe('ProcessPaymentAction (split tender)', () => {
     const result = await action.execute(dto, 42, actor, null);
     expect(result.success).toBe(false);
     expect(result.code).toBe('INVALID_PAYMENT_ITEM');
+  });
+
+  // --------------------------------------------------------------------------
+  // ADVANCE (anticipo del cliente como medio de pago)
+  // --------------------------------------------------------------------------
+
+  it('cobro total con ADVANCE: descuenta advance_balance, NO mueve caja/banco, SalePayment customer_advance', async () => {
+    customerAdvanceBalance = 500; // suficiente para 150
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 }],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    const result = await action.execute(dto, 42, actor, null);
+    expect(result.success).toBe(true);
+
+    // 1 SalePayment con account_type customer_advance, account_id = customer_id.
+    const paymentSaves = saves.filter((s) => s.entity === 'SalePayment');
+    expect(paymentSaves).toHaveLength(1);
+    expect(paymentSaves[0].payload.payment_method).toBe('ADVANCE');
+    expect(paymentSaves[0].payload.account_type).toBe('customer_advance');
+    expect(paymentSaves[0].payload.account_id).toBe('55');
+    expect(paymentSaves[0].payload.bank_id).toBeNull();
+    expect(paymentSaves[0].payload.change_amount).toBe(0);
+    expect(paymentSaves[0].payload.amount).toBe(150);
+
+    // advance_balance descontado: 500 - 150 = 350.
+    const advanceUpdate = updates.find(
+      (u) => u.entity === 'Customer' && u.patch.advance_balance !== undefined,
+    );
+    expect(advanceUpdate?.patch.advance_balance).toBe(350);
+
+    // NO mueve caja/banco ni emite FinancialMovement/CashRegisterLog.
+    expect(updates.find((u) => u.entity === 'CashRegister')).toBeUndefined();
+    expect(updates.find((u) => u.entity === 'Bank')).toBeUndefined();
+    expect(saves.find((s) => s.entity === 'CashRegisterLog')).toBeUndefined();
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
+  it('ADVANCE insuficiente → 422 ADVANCE_EXCEEDS_BALANCE, ningún pago creado', async () => {
+    customerAdvanceBalance = 100; // < 150 requerido
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 }],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    const result = await action.execute(dto, 42, actor, null);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('ADVANCE_EXCEEDS_BALANCE');
+    expect(saves.filter((s) => s.entity === 'SalePayment')).toHaveLength(0);
+  });
+
+  it('ADVANCE sin cliente en la factura → ADVANCE_REQUIRES_CUSTOMER', async () => {
+    saleCustomerId = null;
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 }],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    const result = await action.execute(dto, 42, actor, null);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('ADVANCE_REQUIRES_CUSTOMER');
+    expect(saves.filter((s) => s.entity === 'SalePayment')).toHaveLength(0);
+    // No se descontó advance_balance.
+    expect(
+      updates.find((u) => u.entity === 'Customer' && u.patch.advance_balance !== undefined),
+    ).toBeUndefined();
+  });
+
+  it('ADVANCE con banco → INVALID_PAYMENT_ITEM (el anticipo no lleva banco)', async () => {
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [
+        { payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, bank_id: 7 },
+      ],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    const result = await action.execute(dto, 42, actor, null);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('INVALID_PAYMENT_ITEM');
+  });
+
+  it('combinación ADVANCE 100 + CASH 50 = 150: descuenta 100 del anticipo, caja +50', async () => {
+    customerAdvanceBalance = 300;
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [
+        { payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 100, change_amount: 0 },
+        { payment_method: ProcessPaymentMethod.CASH, amount_paid: 50, change_amount: 0 },
+      ],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    const result = await action.execute(dto, 42, actor, null);
+    expect(result.success).toBe(true);
+
+    // 2 SalePayment: uno ADVANCE (customer_advance) y uno CASH (cash_register).
+    const paymentSaves = saves.filter((s) => s.entity === 'SalePayment');
+    expect(paymentSaves).toHaveLength(2);
+    expect(paymentSaves.some((p) => p.payload.account_type === 'customer_advance')).toBe(true);
+    expect(paymentSaves.some((p) => p.payload.account_type === 'cash_register')).toBe(true);
+
+    // advance_balance: 300 - 100 = 200.
+    const advanceUpdate = updates.find(
+      (u) => u.entity === 'Customer' && u.patch.advance_balance !== undefined,
+    );
+    expect(advanceUpdate?.patch.advance_balance).toBe(200);
+
+    // Caja sube solo por el tender CASH (50).
+    const cashUpdate = updates.find((u) => u.entity === 'CashRegister');
+    expect(cashUpdate?.patch.balance).toBe(1050); // 1000 + 50
   });
 });

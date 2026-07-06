@@ -121,8 +121,11 @@ export class CreateEmployeeAction {
         created_by_id: String(createdBy.id),
         is_archived: false,
         // El acceso a márgenes/ganancias nace deshabilitado; solo un admin lo
-        // concede después vía PUT /employees/:id/profit-visibility.
+        // concede después vía PUT /employees/:id/profit-visibility. Sus
+        // subpermisos (configurador de producto) también nacen en false.
         can_view_profit: false,
+        can_view_product_margin: false,
+        can_view_product_profit: false,
         can_view_cash: cashDefault,
         user_id: null,
       });

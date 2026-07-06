@@ -21,7 +21,10 @@ import {
   SetEmployeeCashBaseAction,
   type SetEmployeeCashBaseResult,
 } from './actions/set-employee-cash-base.action';
-import { SetEmployeeProfitVisibilityAction } from './actions/set-employee-profit-visibility.action';
+import {
+  ProfitVisibilityPatch,
+  SetEmployeeProfitVisibilityAction,
+} from './actions/set-employee-profit-visibility.action';
 import { SetEmployeeCashVisibilityAction } from './actions/set-employee-cash-visibility.action';
 import { GetEmployeeCashLogsAction } from './actions/get-employee-cash-logs.action';
 import { ToggleEmployeeLoginAction } from './actions/toggle-employee-login.action';
@@ -109,8 +112,12 @@ export class EmployeesService {
     return this.setEmployeeCashBaseAction.execute(id, baseAmount, companyId);
   }
 
-  setProfitVisibility(id: number, canViewProfit: boolean, companyId: number): Promise<Employee> {
-    return this.setEmployeeProfitVisibilityAction.execute(id, canViewProfit, companyId);
+  setProfitVisibility(
+    id: number,
+    patch: ProfitVisibilityPatch,
+    companyId: number,
+  ): Promise<Employee> {
+    return this.setEmployeeProfitVisibilityAction.execute(id, patch, companyId);
   }
 
   setCashVisibility(id: number, canViewCash: boolean, companyId: number): Promise<Employee> {

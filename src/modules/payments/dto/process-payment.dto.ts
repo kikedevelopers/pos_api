@@ -25,11 +25,16 @@ import {
  *   - `CREDIT`   → NO crea `SalePayment`; sólo se registra el `SaleCredit`.
  *     En el nuevo contrato de PAGO DIVIDIDO el crédito ya NO viaja dentro de
  *     `payments[]`: se expresa con `is_credit` + `credit_amount` a nivel raíz.
+ *   - `ADVANCE`  → redime el saldo a favor del cliente (`advance_balance`). NO
+ *     mueve caja/banco (el dinero ya ingresó al crear el anticipo); solo
+ *     descuenta `advance_balance`. No lleva banco ni admite vuelto. Requiere
+ *     `customer_id` en la factura.
  */
 export enum ProcessPaymentMethod {
   CASH = 'CASH',
   TRANSFER = 'TRANSFER',
   CREDIT = 'CREDIT',
+  ADVANCE = 'ADVANCE',
 }
 
 /**
@@ -46,8 +51,12 @@ export enum ProcessPaymentMethod {
  */
 export class ProcessPaymentTenderDto {
   @ApiProperty({
-    description: 'Método de este tender. CREDIT no es válido aquí.',
-    enum: [ProcessPaymentMethod.CASH, ProcessPaymentMethod.TRANSFER],
+    description: 'Método de este tender. CREDIT no es válido aquí. ADVANCE redime `advance_balance`.',
+    enum: [
+      ProcessPaymentMethod.CASH,
+      ProcessPaymentMethod.TRANSFER,
+      ProcessPaymentMethod.ADVANCE,
+    ],
     example: ProcessPaymentMethod.CASH,
   })
   @IsEnum(ProcessPaymentMethod)

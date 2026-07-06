@@ -67,6 +67,8 @@ export class GetProfileAction {
           // superadmin → acceso total, incluidos márgenes/ganancias y caja.
           can_view_profit: true,
           can_view_cash: true,
+          can_view_product_margin: true,
+          can_view_product_profit: true,
           permissions: [...PERMISSION_KEYS],
         },
       };

@@ -73,8 +73,8 @@ export class TicketPaymentResponseDto {
   @ApiProperty({ example: 1 })
   id!: number;
 
-  @ApiProperty({ enum: ['CASH', 'TRANSFER', 'CREDIT'], example: 'CASH' })
-  paymentMethod!: 'CASH' | 'TRANSFER' | 'CREDIT';
+  @ApiProperty({ enum: ['CASH', 'TRANSFER', 'CREDIT', 'ADVANCE'], example: 'CASH' })
+  paymentMethod!: 'CASH' | 'TRANSFER' | 'CREDIT' | 'ADVANCE';
 
   @ApiProperty({ example: 100 })
   amountDue!: number;
@@ -400,8 +400,15 @@ function toTicketPayment(p: SalePayment): TicketPaymentResponseDto {
   // En transferencias change_amount = 0 → amountPaid = amountDue.
   const amount = Number(p.amount);
   const change = Number(p.change_amount);
-  const paymentMethod: 'CASH' | 'TRANSFER' | 'CREDIT' =
-    p.payment_method === SalePaymentMethod.CASH ? 'CASH' : 'TRANSFER';
+  // Anticipo (ADVANCE) se propaga tal cual para que el TicketViewer lo muestre
+  // como "Anticipo" y no lo confunda con una transferencia. Paridad con el
+  // serializador local de placepos (saleOperations: payment_method tal cual).
+  const paymentMethod: 'CASH' | 'TRANSFER' | 'CREDIT' | 'ADVANCE' =
+    p.payment_method === SalePaymentMethod.CASH
+      ? 'CASH'
+      : p.payment_method === SalePaymentMethod.ADVANCE
+        ? 'ADVANCE'
+        : 'TRANSFER';
   return {
     id: Number(p.id),
     paymentMethod,

@@ -17,18 +17,29 @@ import { SaleInvoice } from './sale-invoice.entity';
 /**
  * Método de pago. Reutiliza el enum Postgres `payment_method` definido en
  * la migración `1747008900000-create-purchase-payments-table` (CASH | TRANSFER).
- * Espejo PlacePos.
+ * El valor `ADVANCE` se añade en la migración
+ * `1747012140000-add-advance-payment-method-enum-value` (redención del saldo a
+ * favor del cliente `advance_balance` como medio de pago). Espejo PlacePos.
  */
 export enum SalePaymentMethod {
   CASH = 'CASH',
   TRANSFER = 'TRANSFER',
+  /**
+   * Redención de anticipo del cliente. NO mueve caja/banco (el dinero ya
+   * ingresó al crear el anticipo); solo descuenta `customers.advance_balance`.
+   */
+  ADVANCE = 'ADVANCE',
 }
 
 /**
  * Tipo de cuenta receptora. Espejo del campo libre de PlacePos validado por
  * CHECK constraint en la migración.
+ *
+ *   - `customer_advance`: pago con anticipo. `account_id` = `customers.id`. NO
+ *     hay cuenta de dinero real detrás (el efectivo/banco ya se movió al crear
+ *     el anticipo); el pago solo descuenta `advance_balance` del cliente.
  */
-export type SalePaymentAccountType = 'wallet' | 'bank' | 'cash_register';
+export type SalePaymentAccountType = 'wallet' | 'bank' | 'cash_register' | 'customer_advance';
 
 /**
  * `sale_payments` — Cobro a una venta.
@@ -57,7 +68,7 @@ export type SalePaymentAccountType = 'wallet' | 'bank' | 'cash_register';
 @Check('chk_sale_payments_change_non_negative', 'change_amount >= 0')
 @Check(
   'chk_sale_payments_account_type_values',
-  `account_type IN ('wallet', 'bank', 'cash_register')`,
+  `account_type IN ('wallet', 'bank', 'cash_register', 'customer_advance')`,
 )
 export class SalePayment {
   @PrimaryGeneratedColumn({ type: 'bigint' })

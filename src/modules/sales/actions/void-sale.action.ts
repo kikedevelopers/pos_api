@@ -15,6 +15,7 @@ import {
 } from '@/modules/cash-register/entities/cash-register-log.entity';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import { getOrCreateCashRegisterForUser } from '@/modules/cash-register/internal/get-or-create-cash-register-for-user.helper';
+import { restoreCustomerAdvance } from '@/modules/customers/internal/consume-customer-advance';
 import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
 import {
   CreditNote,
@@ -216,6 +217,12 @@ export class VoidSaleAction {
       (p) => p.payment_method === SalePaymentMethod.TRANSFER,
     );
     const cashPayments = allPayments.filter((p) => p.payment_method === SalePaymentMethod.CASH);
+    // ADVANCE: pagos con anticipo. El neto se devuelve al `advance_balance` del
+    // cliente (NO mueve caja — el anticipo nunca movió caja al consumirse).
+    const advancePayments = allPayments.filter(
+      (p) =>
+        p.payment_method === SalePaymentMethod.ADVANCE || p.account_type === 'customer_advance',
+    );
 
     if (
       transferPayments.length > 0 &&
@@ -383,6 +390,23 @@ export class VoidSaleAction {
       }
     }
 
+    // Reversa ADVANCE: por cada pago con anticipo devolvemos el neto al
+    // `advance_balance` del cliente. NO mueve caja. Un pago ADVANCE siempre tuvo
+    // un cliente asignado (el cobro lo exigió), así que `sale.customer_id` es
+    // no-null; el guard es defensivo. Espejo placepos `voidOperations.ts`.
+    let advanceRestored = new Big(0);
+    if (advancePayments.length > 0 && sale.customer_id) {
+      const customerId = Number(sale.customer_id);
+      for (const advance of advancePayments) {
+        const amt = toBig(advance.amount).minus(toBig(advance.change_amount));
+        if (amt.lte(0)) {
+          continue;
+        }
+        await restoreCustomerAdvance(manager, customerId, companyId, preciseNumber(amt, 2));
+        advanceRestored = advanceRestored.plus(amt);
+      }
+    }
+
     this.logger.log({
       event: 'sale.voided.sale',
       companyId,
@@ -391,6 +415,7 @@ export class VoidSaleAction {
       creditNoteNumber: savedNote.note_number,
       cashRefunded: preciseNumber(cashRefunded, 2),
       transferRefunded: preciseNumber(transferRefunded, 2),
+      advanceRestored: preciseNumber(advanceRestored, 2),
       refundSourceType: refundSource?.type ?? null,
       refundSourceId: refundSource?.id ?? null,
       actorId: actor.id,

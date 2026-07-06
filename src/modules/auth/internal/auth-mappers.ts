@@ -80,6 +80,8 @@ export function userToUserProfileDto(
     // owner/superadmin ven márgenes/ganancias y caja siempre.
     can_view_profit: true,
     can_view_cash: true,
+    can_view_product_margin: true,
+    can_view_product_profit: true,
     permissions,
   };
 }
@@ -110,6 +112,8 @@ export function employeeToUserProfileDto(
     // Según su flag de configuración (POS). Default false.
     can_view_profit: employee.can_view_profit,
     can_view_cash: employee.can_view_cash,
+    can_view_product_margin: employee.can_view_product_margin,
+    can_view_product_profit: employee.can_view_product_profit,
     permissions,
   };
 }

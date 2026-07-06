@@ -36,6 +36,17 @@ export interface SalePaymentActor {
 }
 
 /**
+ * Cuentas de dinero REAL que este helper de venta directa sabe acreditar
+ * (bank / wallet / cash_register). Excluye `'customer_advance'`: el pago con
+ * anticipo NO mueve una cuenta de dinero (el efectivo/banco ya ingresó al
+ * crear el anticipo) y se procesa exclusivamente en
+ * `ProcessPaymentAction.applyAdvance`, nunca por este flujo. La exclusión
+ * garantiza a nivel de tipos que `account_type` sea siempre un
+ * `AccountReference` válido para el `FinancialMovement`.
+ */
+type MoneyAccountType = Exclude<SalePaymentAccountType, 'customer_advance'>;
+
+/**
  * Input para aplicar un cobro a una venta dentro de una transacción.
  */
 export interface ApplySalePaymentInput {
@@ -50,7 +61,7 @@ export interface ApplySalePaymentInput {
    * `chk_financial_movements_source_consistency` (CRIT-1 auditoría Fase 7).
    */
   customerId?: number | null;
-  account_type: SalePaymentAccountType;
+  account_type: MoneyAccountType;
   account_id: number;
   amount: number;
   change_amount?: number;
@@ -256,7 +267,7 @@ export async function applySalePayment(
  */
 async function resolveAccount(
   manager: EntityManager,
-  accountType: SalePaymentAccountType,
+  accountType: MoneyAccountType,
   accountId: number,
   companyId: number,
   actor: SalePaymentActor,
@@ -323,7 +334,7 @@ async function resolveAccount(
  */
 async function creditDestination(
   manager: EntityManager,
-  accountType: SalePaymentAccountType,
+  accountType: MoneyAccountType,
   accountId: number,
   companyId: number,
   amountBig: Big,

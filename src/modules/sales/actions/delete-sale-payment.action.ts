@@ -10,6 +10,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import { restoreCustomerAdvance } from '@/modules/customers/internal/consume-customer-advance';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
@@ -214,6 +215,22 @@ export class DeleteSalePaymentAction {
     netBig: Big,
     ctx: { folio: string; voidUuid: string },
   ): Promise<void> {
+    // customer_advance: devolvemos el neto al `advance_balance` del cliente. NO
+    // mueve caja/banco (el anticipo nunca movió una cuenta de dinero real: el
+    // efectivo/banco ya se movió al CREAR el anticipo). Para estos pagos
+    // `account_id` es el `customers.id` (lo fijó `applyAdvance`), así que la
+    // restauración es self-contained sin releer la venta. Nota: aquí tocamos
+    // `advance_balance`, distinto de `Customer.balance` (cartera de crédito),
+    // que sigue sin tocarse — paridad placepos.
+    if (payment.account_type === 'customer_advance') {
+      await restoreCustomerAdvance(
+        manager,
+        Number(payment.account_id),
+        companyId,
+        preciseNumber(netBig, 2),
+      );
+      return;
+    }
     if (payment.account_type === 'cash_register') {
       await this.reverseCash(manager, companyId, actor, payment, netBig, ctx);
       return;

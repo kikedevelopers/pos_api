@@ -3,6 +3,10 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import {
+  consumeCustomerAdvance,
+  InsufficientAdvanceError,
+} from '@/modules/customers/internal/consume-customer-advance';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
@@ -113,6 +117,10 @@ const ERR = {
   TRANSFER_REQUIRES_BANK: 'TRANSFER_REQUIRES_BANK',
   BANK_NOT_FOUND: 'BANK_NOT_FOUND',
   MARGIN_BELOW_MIN: 'MARGIN_BELOW_MIN',
+  /** El anticipo del cliente no alcanza a cubrir el neto ADVANCE solicitado. */
+  ADVANCE_EXCEEDS_BALANCE: 'ADVANCE_EXCEEDS_BALANCE',
+  /** Hay tenders ADVANCE pero la factura no tiene `customer_id` asignado. */
+  ADVANCE_REQUIRES_CUSTOMER: 'ADVANCE_REQUIRES_CUSTOMER',
 } as const;
 
 /**
@@ -217,6 +225,20 @@ export class ProcessPaymentAction {
         async (manager) => this.run(manager, dto, companyId, actor, idempotencyKey ?? null),
       );
     } catch (error) {
+      // Anticipo insuficiente (o monto no positivo): el lock del cliente en
+      // `consumeCustomerAdvance` lanzó dentro de la TX. El rollback revirtió
+      // cualquier mutación previa; devolvemos el result contractual PlacePos
+      // `{success:false, code:ADVANCE_EXCEEDS_BALANCE}` (422).
+      if (error instanceof InsufficientAdvanceError) {
+        this.logger.warn({
+          event: 'payment.advance_insufficient',
+          code: error.code,
+          message: error.message,
+          companyId,
+          invoiceId: dto.invoice_id,
+        });
+        return this.fail(error.message, error.code);
+      }
       // Reglas de negocio que abortaron la TX después de mutar estado (ej.
       // BANK_NOT_FOUND tras generar folio): el rollback ya rehizo el folio,
       // pero seguimos contractualmente devolviendo `{success:false, code}`.
@@ -316,6 +338,18 @@ export class ProcessPaymentAction {
           ERR.TRANSFER_REQUIRES_BANK,
         );
       }
+      // ADVANCE (anticipo): NO lleva banco ni admite vuelto. Es redención de
+      // saldo a favor del cliente; su disponibilidad real (≤ advance_balance)
+      // se valida dentro de la TX bajo lock del cliente (paso 6.5). Espejo del
+      // `validateTender` de placepos.
+      if (tender.payment_method === ProcessPaymentMethod.ADVANCE) {
+        if (tender.bank_id) {
+          return this.fail('El pago con anticipo no lleva banco', ERR.INVALID_PAYMENT_ITEM);
+        }
+        if (changeBig.gt(0)) {
+          return this.fail('El pago con anticipo no admite vuelto', ERR.INVALID_CHANGE_AMOUNT);
+        }
+      }
     }
 
     // 5. Invariante de cuadre (HOT PATH): el neto de tenders (entregado menos
@@ -361,6 +395,35 @@ export class ProcessPaymentAction {
         return this.fail(this.extractMessage(error), marginCode);
       }
       throw error;
+    }
+
+    // 6.5. ANTICIPO (advance_balance). Si hay tenders ADVANCE se descuenta el
+    //      saldo a favor del cliente ANTES de tocar folio/inventario/tenders.
+    //      Bloquea el cliente y valida saldo suficiente (consumeCustomerAdvance
+    //      lanza InsufficientAdvanceError → 422 ADVANCE_EXCEEDS_BALANCE si no
+    //      alcanza). El excedente que el cliente pague de más entra por los
+    //      otros tenders (efectivo/transferencia); el anticipo NO mueve caja
+    //      (ya ingresó al crearlo). Dentro de la MISMA TX SERIALIZABLE. Espejo
+    //      de placepos `paymentOperations.ts`.
+    const advanceTotalBig = tenders
+      .filter((t) => t.payment_method === ProcessPaymentMethod.ADVANCE)
+      .reduce(
+        (acc, t) => acc.plus(toBig(t.amount_paid).minus(toBig(t.change_amount ?? 0))),
+        toBig(0),
+      );
+    if (advanceTotalBig.gt(0)) {
+      if (!sale.customer_id) {
+        return this.fail(
+          'El pago con anticipo requiere un cliente asignado a la factura',
+          ERR.ADVANCE_REQUIRES_CUSTOMER,
+        );
+      }
+      await consumeCustomerAdvance(
+        manager,
+        Number(sale.customer_id),
+        companyId,
+        preciseNumber(advanceTotalBig, 2),
+      );
     }
 
     // 7. Folio SALE atómico + UPDATE de la venta.
@@ -573,10 +636,62 @@ export class ProcessPaymentAction {
     if (tender.payment_method === ProcessPaymentMethod.TRANSFER) {
       return this.applyTransfer(manager, tender, sale, companyId, actor, saleNumber, tenderUuid);
     }
+    // ADVANCE (anticipo): solo inserta el SalePayment (account_type
+    // 'customer_advance'). El descuento de `advance_balance` ya se hizo UNA vez
+    // en `run()` (paso 6.5); aquí NO se mueve caja/banco ni se emiten logs.
+    if (tender.payment_method === ProcessPaymentMethod.ADVANCE) {
+      return this.applyAdvance(manager, tender, sale, companyId, actor, tenderUuid);
+    }
     // CASH (y cualquier valor inesperado se trata como efectivo, paridad con la
     // rama defensiva previa). El CREDIT como tender ya se descartó en
     // `normalizeTenders` (el crédito vive en `is_credit`/`credit_amount`).
     return this.applyCash(manager, tender, sale, companyId, actor, saleNumber, tenderUuid);
+  }
+
+  /**
+   * ADVANCE (un tender): inserta el SalePayment de la redención de anticipo.
+   *
+   *   - `account_type = 'customer_advance'`, `account_id = customer_id` (no hay
+   *     cuenta de dinero real detrás; el anticipo ya ingresó al crearlo).
+   *   - `bank_id = null`, `change_amount = 0` (el anticipo no admite vuelto).
+   *   - `amount = neto` del tender (= `amount_paid`, ya que `change = 0`).
+   *
+   * NO inserta CashRegisterLog ni FinancialMovement: el descuento de
+   * `advance_balance` se realizó una sola vez en `run()` (paso 6.5). Espejo
+   * placepos (`registerTenderRow` para ADVANCE, sin side-effects de dinero).
+   */
+  private async applyAdvance(
+    manager: EntityManager,
+    tender: ProcessPaymentTenderDto,
+    sale: SaleInvoice,
+    companyId: number,
+    actor: ProcessPaymentActor,
+    tenderUuid: string | null,
+  ): Promise<{ paymentId: number }> {
+    // El anticipo no admite vuelto (ya validado): el neto iguala amount_paid,
+    // pero lo calculamos con Big.js por defensa para no divergir del cuadre.
+    const netBig = toBig(tender.amount_paid).minus(toBig(tender.change_amount ?? 0));
+    const net = preciseNumber(netBig, 2);
+    // `advanceTotalBig.gt(0)` en `run()` garantizó customer_id no-null antes de
+    // llegar aquí (todo tender ADVANCE aporta neto > 0).
+    const customerId = sale.customer_id as string;
+
+    const payment = manager.create(SalePayment, {
+      company_id: String(companyId),
+      sale_invoice_id: sale.id,
+      payment_method: SalePaymentMethod.ADVANCE,
+      amount: net,
+      change_amount: 0,
+      bank_id: null,
+      bank_name: null,
+      account_type: 'customer_advance' satisfies SalePaymentAccountType,
+      account_id: customerId,
+      created_by: actor.fullName,
+      created_by_id: String(actor.id),
+      uuid: tenderUuid,
+    });
+    const savedPayment = await manager.save(SalePayment, payment);
+    return { paymentId: Number(savedPayment.id) };
   }
 
   /**

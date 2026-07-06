@@ -170,6 +170,19 @@ export class Employee {
   can_view_cash!: boolean;
 
   /**
+   * Subpermisos de `can_view_profit`: controlan de forma granular si el empleado
+   * ve el Margen (%) y la Ganancia ($) en el configurador de producto del POS
+   * (ProductConfigurator). Nacen en false; el back-fill de la migración los
+   * iguala a `can_view_profit`. Owner/superadmin siempre ven ambos. El toggle
+   * principal del detalle cascada su valor a ambos. Paridad PlacePos.
+   */
+  @Column({ type: 'boolean', default: false })
+  can_view_product_margin!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  can_view_product_profit!: boolean;
+
+  /**
    * Snapshot del `full_name` del owner que creó al employee. Texto
    * congelado al momento de creación (no se actualiza si el owner cambia
    * su nombre). Evita un join para el listado.

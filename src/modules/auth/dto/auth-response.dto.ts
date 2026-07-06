@@ -141,6 +141,17 @@ export class UserProfileDto {
   can_view_cash!: boolean;
 
   /**
+   * Subpermisos de `can_view_profit`: ver el Margen (%) y la Ganancia ($) en el
+   * configurador de producto del POS. owner/superadmin siempre true; empleado
+   * según sus flags. El cliente los deriva en buildPermissions. Paridad PlacePos.
+   */
+  @ApiProperty({ example: true })
+  can_view_product_margin!: boolean;
+
+  @ApiProperty({ example: true })
+  can_view_product_profit!: boolean;
+
+  /**
    * FASE 2 (ROLES) — Permisos EFECTIVOS de acceso a módulos del usuario.
    *
    *   - owner/superadmin → las 18 keys del catálogo (acceso total).
