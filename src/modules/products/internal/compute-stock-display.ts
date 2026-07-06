@@ -24,6 +24,20 @@ export function computeStockDisplay(stock: number, packagingValue: number | null
 }
 
 /**
+ * Inverso de computeStockDisplay: unidad de empaque (paquetes que digita el
+ * usuario) -> unidad mínima persistida. minimal = paquetes × packaging_value.
+ * Lo usa la importación masiva (UPDATE) para que "lo digitado" (paquetes) sea
+ * coherente con ventas/compras y el stock derivado de las presentaciones.
+ * Espejo de `database/utils/stockDisplay.ts` (`toMinimalStock`) de PlacePos.
+ */
+export function toMinimalStock(packageStock: number, packagingValue: number | null): number {
+  if (packagingValue === null || packagingValue === undefined || packagingValue <= 0) {
+    return Number(packageStock);
+  }
+  return new Big(packageStock).times(packagingValue).round(4, Big.roundHalfUp).toNumber();
+}
+
+/**
  * Variante para presentaciones (hijos): el stock_display deriva del stock del
  * padre y el packaging_value del hijo. Si falta cualquiera de los dos,
  * devuelve el stock crudo del hijo como fallback.

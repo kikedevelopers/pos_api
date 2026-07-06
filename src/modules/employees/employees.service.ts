@@ -21,6 +21,9 @@ import {
   SetEmployeeCashBaseAction,
   type SetEmployeeCashBaseResult,
 } from './actions/set-employee-cash-base.action';
+import { SetEmployeeProfitVisibilityAction } from './actions/set-employee-profit-visibility.action';
+import { SetEmployeeCashVisibilityAction } from './actions/set-employee-cash-visibility.action';
+import { GetEmployeeCashLogsAction } from './actions/get-employee-cash-logs.action';
 import { ToggleEmployeeLoginAction } from './actions/toggle-employee-login.action';
 import { UpdateEmployeeAction } from './actions/update-employee.action';
 import { UpdateEmployeeCredentialsAction } from './actions/update-employee-credentials.action';
@@ -57,6 +60,9 @@ export class EmployeesService {
     private readonly updateEmployeeCredentialsAction: UpdateEmployeeCredentialsAction,
     private readonly toggleEmployeeLoginAction: ToggleEmployeeLoginAction,
     private readonly setEmployeeCashBaseAction: SetEmployeeCashBaseAction,
+    private readonly setEmployeeProfitVisibilityAction: SetEmployeeProfitVisibilityAction,
+    private readonly setEmployeeCashVisibilityAction: SetEmployeeCashVisibilityAction,
+    private readonly getEmployeeCashLogsAction: GetEmployeeCashLogsAction,
     private readonly adjustEmployeeCashAction: AdjustEmployeeCashAction,
     private readonly archiveEmployeeAction: ArchiveEmployeeAction,
     private readonly restoreEmployeeAction: RestoreEmployeeAction,
@@ -101,6 +107,18 @@ export class EmployeesService {
     companyId: number,
   ): Promise<SetEmployeeCashBaseResult> {
     return this.setEmployeeCashBaseAction.execute(id, baseAmount, companyId);
+  }
+
+  setProfitVisibility(id: number, canViewProfit: boolean, companyId: number): Promise<Employee> {
+    return this.setEmployeeProfitVisibilityAction.execute(id, canViewProfit, companyId);
+  }
+
+  setCashVisibility(id: number, canViewCash: boolean, companyId: number): Promise<Employee> {
+    return this.setEmployeeCashVisibilityAction.execute(id, canViewCash, companyId);
+  }
+
+  getCashLogs(id: number, companyId: number, limit: number) {
+    return this.getEmployeeCashLogsAction.execute(id, companyId, limit);
   }
 
   adjustCash(

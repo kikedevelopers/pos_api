@@ -44,6 +44,13 @@ export class SuperadminTenantOwnerDto {
 
   @ApiProperty({ example: 'owner@empresa.com' })
   email!: string;
+
+  @ApiPropertyOptional({
+    example: '2026-07-02T16:21:00.000Z',
+    nullable: true,
+    description: 'Fecha/hora ISO del último login exitoso del owner. null si nunca ha iniciado sesión.',
+  })
+  lastLogin!: string | null;
 }
 
 /**

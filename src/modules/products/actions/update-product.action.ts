@@ -3,7 +3,10 @@ import { DataSource, In } from 'typeorm';
 
 import { calculateMargin, calculateProfit, toBig } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
-import { propagateParentCostToChildren } from '@/modules/purchases/internal/recalculate-product-costs.helper';
+import {
+  propagateParentCostToChildren,
+  recordManualCostEditHistory,
+} from '@/modules/purchases/internal/recalculate-product-costs.helper';
 
 import type { UpdateProductDto } from '../dto/update-product.dto';
 import { Product } from '../entities/product.entity';
@@ -200,6 +203,16 @@ export class UpdateProductAction {
         existing.parent_id === null &&
         !toBig(existing.cost).round(2).eq(toBig(dto.cost).round(2))
       ) {
+        // Fila de auditoría de la edición manual del propio base + propagación
+        // a sus presentaciones.
+        await recordManualCostEditHistory({
+          manager,
+          companyId,
+          productId: id,
+          costBefore: existing.cost,
+          costAfter: dto.cost,
+          actor: { id: actor.id, fullName: actor.fullName },
+        });
         await propagateParentCostToChildren({
           manager,
           companyId,

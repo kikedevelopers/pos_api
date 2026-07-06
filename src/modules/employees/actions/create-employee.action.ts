@@ -13,6 +13,7 @@ import { Employee, EmployeeRole } from '../entities/employee.entity';
 import { translateEmployeeConstraintError } from '../internal/constraint-errors';
 import { ensureMirrorUserForEmployee } from '../internal/ensure-mirror-user-for-employee.helper';
 import { resolveRoleIdOnCreate } from '../internal/role-assignment';
+import { resolveCashVisibilityOnRoleChange } from '../internal/cash-visibility';
 import { assertRoleBelongsToCompany } from '../internal/role-validation';
 
 /**
@@ -93,6 +94,12 @@ export class CreateEmployeeAction {
         defaultRoleId,
       );
 
+      // Ver caja nace en false, salvo que se cree con rol "Cajero": ahí se activa
+      // por defecto (previousRoleId=null → transición). Paridad PlacePos.
+      const cajeroRoleId = await findRoleIdByName(manager, companyId, 'Cajero');
+      const cashDefault =
+        resolveCashVisibilityOnRoleChange(resolvedRoleId, null, cajeroRoleId) ?? false;
+
       const employee = manager.create(Employee, {
         company_id: String(companyId),
         name: dto.name,
@@ -113,6 +120,10 @@ export class CreateEmployeeAction {
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
         is_archived: false,
+        // El acceso a márgenes/ganancias nace deshabilitado; solo un admin lo
+        // concede después vía PUT /employees/:id/profit-visibility.
+        can_view_profit: false,
+        can_view_cash: cashDefault,
         user_id: null,
       });
 

@@ -77,6 +77,9 @@ export function userToUserProfileDto(
     created_at: user.created_at.toISOString(),
     branches_enabled: user.branches_enabled ?? false,
     branches_allowed: user.branches_allowed ?? 0,
+    // owner/superadmin ven márgenes/ganancias y caja siempre.
+    can_view_profit: true,
+    can_view_cash: true,
     permissions,
   };
 }
@@ -104,6 +107,9 @@ export function employeeToUserProfileDto(
     // Los empleados no gestionan sucursales.
     branches_enabled: false,
     branches_allowed: 0,
+    // Según su flag de configuración (POS). Default false.
+    can_view_profit: employee.can_view_profit,
+    can_view_cash: employee.can_view_cash,
     permissions,
   };
 }

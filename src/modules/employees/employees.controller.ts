@@ -39,6 +39,12 @@ import {
 } from './dto/employee-response.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { SetCashBaseDto } from './dto/set-cash-base.dto';
+import { SetProfitVisibilityDto } from './dto/set-profit-visibility.dto';
+import { SetCashVisibilityDto } from './dto/set-cash-visibility.dto';
+import {
+  CashRegisterLogResponseDto,
+  toCashRegisterLogResponseDto,
+} from '@/modules/cash-register/dto/cash-register-log-response.dto';
 import { ToggleLoginDto } from './dto/toggle-login.dto';
 import { UpdateCredentialsDto } from './dto/update-credentials.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
@@ -299,6 +305,83 @@ export class EmployeesController {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
+  }
+
+  // VER MÁRGENES Y GANANCIAS: permiso por-empleado. Owner-only SIN
+  // `@RequirePermission` (como el ajuste de caja) — solo el admin lo cambia.
+  @Put(':id/profit-visibility')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Conceder/revocar el permiso del empleado para ver márgenes y ganancias',
+    description:
+      'Persiste `employees.can_view_profit`. No toca caja ni credenciales. Solo owner.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: SetProfitVisibilityDto })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  async setProfitVisibility(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetProfitVisibilityDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<EmployeeDetailResponseDto> {
+    const employee = await this.employeesService.setProfitVisibility(
+      id,
+      dto.can_view_profit,
+      companyId,
+    );
+    // Re-lectura del detalle para devolver la caja actual (paridad PlacePos,
+    // que serializa cash_balance/base_amount en el response de la mutación).
+    const detail = await this.employeesService.findOne(Number(employee.id), companyId);
+    return toEmployeeDetailResponseDto(detail);
+  }
+
+  // VER CAJA E HISTORIAL: permiso por-empleado. Owner-only SIN
+  // `@RequirePermission` — solo el admin lo cambia. Espejo de profit-visibility.
+  @Put(':id/cash-visibility')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Conceder/revocar el permiso del empleado para ver el saldo y el historial de caja',
+    description:
+      'Persiste `employees.can_view_cash`. No toca caja ni credenciales. Solo owner.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: SetCashVisibilityDto })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  async setCashVisibility(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetCashVisibilityDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<EmployeeDetailResponseDto> {
+    const employee = await this.employeesService.setCashVisibility(id, dto.can_view_cash, companyId);
+    const detail = await this.employeesService.findOne(Number(employee.id), companyId);
+    return toEmployeeDetailResponseDto(detail);
+  }
+
+  // HISTORIAL DE CAJA POR EMPLEADO: el owner ve el mismo historial que ve el
+  // empleado en el POS, pero de ESE empleado. Owner-only. Si el empleado no
+  // tiene caja (sin login) devuelve lista vacía.
+  @Get(':id/cash-register/logs')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Historial de caja del empleado :id' })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.OK })
+  async getCashRegisterLogs(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit') limit: string | undefined,
+    @CurrentCompany() companyId: number,
+  ): Promise<CashRegisterLogResponseDto[]> {
+    const parsedLimit = Number(limit);
+    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.floor(parsedLimit) : 200;
+    const logs = await this.employeesService.getCashLogs(id, companyId, safeLimit);
+    return logs.map(toCashRegisterLogResponseDto);
   }
 
   // ARCHIVAR / RESTAURAR: baja lógica del empleado. Owner-only SIN

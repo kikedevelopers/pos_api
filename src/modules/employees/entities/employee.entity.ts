@@ -153,6 +153,23 @@ export class Employee {
   is_archived!: boolean;
 
   /**
+   * Permiso por-empleado para ver márgenes y ganancias en el POS/reportes.
+   * Nace en false; solo un administrador (owner) lo cambia desde el detalle del
+   * empleado (`PUT /employees/:id/profit-visibility`). Paridad PlacePos.
+   */
+  @Column({ type: 'boolean', default: false })
+  can_view_profit!: boolean;
+
+  /**
+   * Permiso por-empleado para ver el saldo y el historial de caja en el POS.
+   * Nace en false; al asignar el rol "Cajero" se activa por defecto (transición
+   * de rol), pero el admin puede desactivarlo (`PUT /employees/:id/cash-visibility`).
+   * Owner/superadmin siempre ven la caja. Paridad PlacePos.
+   */
+  @Column({ type: 'boolean', default: false })
+  can_view_cash!: boolean;
+
+  /**
    * Snapshot del `full_name` del owner que creó al employee. Texto
    * congelado al momento de creación (no se actualiza si el owner cambia
    * su nombre). Evita un join para el listado.

@@ -68,7 +68,8 @@ export class AppSettingsController {
   // ----------------------------------------------------------------------
 
   @Get('pos-margins')
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Configuración de márgenes POS',
     description: 'Lee `pos_margins_enabled` + `pos_margins` y devuelve `{ enabled, margins }`.',
@@ -98,7 +99,8 @@ export class AppSettingsController {
   }
 
   @Get('strict-inventory')
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Flag global de control estricto de inventario',
     description: 'Devuelve `{ enabled }` desde la key `strict_inventory_control`.',
@@ -131,7 +133,8 @@ export class AppSettingsController {
   }
 
   @Get('customer-points')
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({
     summary: 'Configuración del sistema de puntos de cliente',
     description: 'Lee las keys `customer_points_*` y devuelve `{ enabled, pesoBase, perBase }`.',
@@ -165,7 +168,8 @@ export class AppSettingsController {
   // ----------------------------------------------------------------------
 
   @Get()
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({ summary: 'Listar todos los settings de la company autenticada' })
   @ApiResponse({ status: HttpStatus.OK, type: [AppSettingResponseDto] })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
@@ -176,7 +180,8 @@ export class AppSettingsController {
   }
 
   @Get(':key')
-  @Roles('owner', 'manager')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({ summary: 'Leer el valor de un setting por su clave' })
   @ApiParam({ name: 'key', example: 'app_color_mode' })
   @ApiResponse({ status: HttpStatus.OK, type: AppSettingResponseDto })

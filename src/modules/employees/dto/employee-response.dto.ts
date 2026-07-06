@@ -69,6 +69,20 @@ export class EmployeeResponseDto {
   @ApiProperty({ example: false })
   is_archived!: boolean;
 
+  @ApiProperty({
+    example: false,
+    description:
+      'Permiso del empleado para ver márgenes y ganancias. Default false; solo un admin lo cambia.',
+  })
+  can_view_profit!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Permiso del empleado para ver el saldo y el historial de caja en el POS. Default false; se activa con el rol Cajero.',
+  })
+  can_view_cash!: boolean;
+
   @ApiPropertyOptional({
     example: 'Kike Pacheco',
     nullable: true,
@@ -134,6 +148,8 @@ function toEmployeeBaseResponse(
     username: employee.username,
     has_credentials: Boolean(employee.username),
     is_archived: employee.is_archived,
+    can_view_profit: employee.can_view_profit,
+    can_view_cash: employee.can_view_cash,
     created_by: employee.created_by,
     created_at: employee.created_at.toISOString(),
   };

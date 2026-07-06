@@ -41,6 +41,17 @@ export class SaleListItemDto {
   @ApiProperty({ example: 48.2759 })
   margin!: number;
 
+  @ApiProperty({ example: true, description: 'La venta es a crédito (tiene registro de crédito).' })
+  isCredit!: boolean;
+
+  @ApiPropertyOptional({
+    enum: ['PENDING', 'PARTIAL', 'PAID'],
+    nullable: true,
+    example: 'PENDING',
+    description: 'Estado del crédito (normalizado a vocabulario PlacePos). null si no es crédito.',
+  })
+  creditStatus!: 'PENDING' | 'PARTIAL' | 'PAID' | null;
+
   @ApiProperty({
     example: 'Juan Pérez',
     description:

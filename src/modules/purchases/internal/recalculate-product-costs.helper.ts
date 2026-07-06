@@ -466,6 +466,46 @@ export async function propagateParentCostToChildren(args: {
 }
 
 /**
+ * Registra la edición MANUAL del costo del PROPIO producto (event EDIT,
+ * derived_from MANUAL, sin purchase_id), además de la propagación a hijos. El
+ * `Product.cost` ya lo actualizó el caller (update-product.action); aquí solo
+ * dejamos la fila de auditoría. No-op si el costo no cambió (a 2 decimales).
+ * Espejo de placepos `recordManualCostEditHistory`.
+ */
+export async function recordManualCostEditHistory(args: {
+  manager: EntityManager;
+  companyId: number;
+  productId: number;
+  costBefore: number;
+  costAfter: number;
+  actor: RecalcActor;
+}): Promise<void> {
+  const { manager, companyId, productId, actor } = args;
+  const before = toBig(args.costBefore);
+  const after = toBig(args.costAfter);
+  if (before.round(2).eq(after.round(2))) {
+    return;
+  }
+
+  const changePct = before.gt(0)
+    ? after.minus(before).div(before).times(100).round(4, Big.roundHalfUp).toNumber()
+    : 0;
+
+  await manager.insert(ProductCostHistory, {
+    company_id: String(companyId),
+    product_id: String(productId),
+    purchase_id: null,
+    event_type: ProductCostHistoryEvent.EDIT,
+    derived_from: ProductCostHistoryDerivedFrom.MANUAL,
+    cost_before: before.round(4, Big.roundHalfUp).toNumber(),
+    cost_after: after.round(4, Big.roundHalfUp).toNumber(),
+    change_pct: changePct,
+    created_by: actor.fullName,
+    created_by_id: String(actor.id),
+  });
+}
+
+/**
  * Recalcula `Product.cost` con promedio ponderado a partir de las líneas de
  * una compra. Multi-tenant en TODO acceso a DB.
  *

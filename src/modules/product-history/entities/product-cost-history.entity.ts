@@ -24,10 +24,14 @@ export enum ProductCostHistoryEvent {
 
 /**
  * Origen del recálculo del costo.
+ *   - PURCHASE: recepción/edición/archivo de una compra.
+ *   - PARENT: propagación del costo del producto padre a sus presentaciones.
+ *   - MANUAL: edición directa del costo del propio producto desde el formulario.
  */
 export enum ProductCostHistoryDerivedFrom {
   PURCHASE = 'PURCHASE',
   PARENT = 'PARENT',
+  MANUAL = 'MANUAL',
 }
 
 /**
@@ -35,9 +39,9 @@ export enum ProductCostHistoryDerivedFrom {
  *
  * Multi-tenancy: `company_id` denormalizado para indexar sin join.
  *
- * Fase 2A: estructura creada; los INSERTs ocurren en Fase 5+ desde
- * `purchaseReceiveOperations`. Los GET endpoints devuelven listas vacías
- * mientras tanto.
+ * Se escribe al recibir/editar/archivar una compra (event RECEIVE/EDIT/ARCHIVE,
+ * derived_from PURCHASE), al propagar el costo del padre a sus presentaciones
+ * (EDIT/PARENT) y al editar manualmente el costo del propio producto (EDIT/MANUAL).
  */
 @Entity('product_cost_history')
 export class ProductCostHistory {

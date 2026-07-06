@@ -129,4 +129,12 @@ export class User {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updated_at!: Date;
+
+  /**
+   * Fecha/hora del último login exitoso del usuario. Se actualiza en cada
+   * autenticación válida por el path `users` (owner/superadmin). NULL si nunca
+   * ha iniciado sesión. Lo consume el detalle de tenant del panel kdevs-admin.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  last_login!: Date | null;
 }

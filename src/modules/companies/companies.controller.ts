@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { CompaniesService } from './companies.service';
@@ -36,8 +37,11 @@ import { UpdateCompanyDto } from './dto/update-company.dto';
  *   - `GET`: cualquier rol autenticado (owner / manager / employee). El POS
  *     necesita la info del negocio en operación normal (impresión de
  *     tickets, header del UI).
- *   - `PUT`: solo `owner`. Editar perfil del negocio es atributo de dueño;
- *     manager y employee no tocan esta tabla.
+ *   - `PUT`: `owner`/`manager` por tipo, o `employee` con la key
+ *     `canAccessSettings` (rol Administrador). Editar el perfil del negocio
+ *     es parte de Configuraciones → Mi Negocio; el empleado con rol
+ *     Administrador accede igual que el dueño (paridad con PlacePos, cuyo
+ *     `PUT /companies/:id` no exige rol de dueño).
  *
  * Multi-tenancy: `@CurrentCompany()` propaga el `company_id` del JWT al
  * service. En `PUT`, el path param `:companyId` se valida contra el JWT
@@ -65,7 +69,8 @@ export class CompaniesController {
 
   @Put(':companyId')
   @HttpCode(HttpStatus.OK)
-  @Roles('owner')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
   @ApiOperation({ summary: 'Actualizar la company autenticada' })
   @ApiParam({ name: 'companyId', type: 'integer' })
   @ApiBody({ type: UpdateCompanyDto })

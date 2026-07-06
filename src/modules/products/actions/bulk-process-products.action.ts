@@ -6,9 +6,11 @@ import { resolveCategoryIdByName } from '@/modules/categories/internal/category-
 import { propagateParentCostToChildren } from '@/modules/purchases/internal/recalculate-product-costs.helper';
 
 import type { BulkItemDto, BulkProductsResponseDto } from '../dto/bulk-products.dto';
+import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product, ProductType } from '../entities/product.entity';
 import { ProductPrice } from '../entities/product-price.entity';
 import { adjustInventory } from '../internal/adjust-inventory.helper';
+import { toMinimalStock } from '../internal/compute-stock-display';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 
 import type { ProductCreator } from './create-product.action';
@@ -201,7 +203,19 @@ export class BulkProcessProductsAction {
       item.show_in_pos === undefined ? existing.show_in_pos : item.show_in_pos;
     const resolvedIsPurchasable =
       item.is_purchasable === undefined ? existing.is_purchasable : item.is_purchasable;
-    const resolvedStock = item.stock === undefined ? existing.stock : item.stock;
+
+    // El `stock` de la fila viene en unidad de empaque (paquetes que cuenta el
+    // usuario). Se persiste en unidad mínima usando el packaging vigente del
+    // producto (minimal = paquetes × packaging_value), igual que el formulario y
+    // coherente con ventas/compras. El import no cambia el empaque; sin empaque
+    // => factor 1. Se convierte ANTES de la detección de no-op y del ajuste.
+    const packagingValue = existing.packaging_id
+      ? Number(
+          (await manager.findOne(Packaging, { where: { id: existing.packaging_id } }))?.value ?? 1,
+        )
+      : 1;
+    const resolvedStock =
+      item.stock === undefined ? existing.stock : toMinimalStock(item.stock, packagingValue);
 
     // category: la resolvemos (find-or-create) SOLO si el item la trae
     // (no vacío) — así un re-import sin categoría no crea categorías de más.
@@ -283,7 +297,7 @@ export class BulkProcessProductsAction {
         companyId,
         Number(existing.id),
         existing.stock,
-        item.stock,
+        resolvedStock, // objetivo en unidad mínima (paquetes × packaging_value)
         actor,
       );
     }
@@ -345,6 +359,7 @@ interface ExistingProduct {
   bar_code: string | null;
   category_id: string | null;
   parent_id: string | null;
+  packaging_id: string | null;
   product_type: ProductType;
   show_in_pos: boolean;
   is_purchasable: boolean;
@@ -432,6 +447,7 @@ async function findByCodeColumn(
       'p.bar_code',
       'p.category_id',
       'p.parent_id',
+      'p.packaging_id',
       'p.product_type',
       'p.show_in_pos',
       'p.is_purchasable',
@@ -454,6 +470,7 @@ async function findByCodeColumn(
     bar_code: row.bar_code,
     category_id: row.category_id,
     parent_id: row.parent_id,
+    packaging_id: row.packaging_id,
     product_type: row.product_type,
     show_in_pos: row.show_in_pos,
     is_purchasable: row.is_purchasable,

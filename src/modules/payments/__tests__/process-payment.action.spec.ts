@@ -64,7 +64,7 @@ describe('ProcessPaymentAction (split tender)', () => {
   let paymentsByInvoice: Map<string, Array<{ id: string }>>;
 
   function buildManagerMock() {
-    return {
+    const mgr = {
       findOne: jest.fn(
         (entity: { name?: string } | string, options: { where: Record<string, unknown> }) => {
           const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
@@ -117,7 +117,22 @@ describe('ProcessPaymentAction (split tender)', () => {
           return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
         },
       ),
+      // `recomputeSalePoints` (puntos de cliente) usa el repo del manager de la
+      // TX: `manager.getRepository(SaleInvoice)`. Delegamos en los mismos mocks
+      // para que la venta ORDER del split-tender haga bail-out (no es SALE aún)
+      // sin romper. Añadido cuando el recompute entró al flujo de pago.
+      getRepository: jest.fn((entity: { name?: string } | string) => {
+        const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
+        return {
+          findOne: (options: { where: Record<string, unknown> }) => mgr.findOne(name, options),
+          find: (options: { where: Record<string, unknown> }) => mgr.find(name, options),
+          update: (where: Record<string, unknown>, patch: Record<string, unknown>) =>
+            mgr.update(name, where, patch),
+          save: (payload: Record<string, unknown>) => mgr.save(name, payload),
+        };
+      }),
     };
+    return mgr;
   }
 
   beforeEach(async () => {

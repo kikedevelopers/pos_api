@@ -7,6 +7,7 @@ import { EmployeesService } from '@/modules/employees/employees.service';
 import { ensureMirrorUserForEmployee } from '@/modules/employees/internal/ensure-mirror-user-for-employee.helper';
 import { SubscriptionExpiredException } from '@/modules/subscriptions/subscription-expired.exception';
 import { SubscriptionsService } from '@/modules/subscriptions/subscriptions.service';
+import { User } from '@/modules/users/entities/user.entity';
 import { UsersService } from '@/modules/users/users.service';
 
 import type { AuthResponseDto } from '../dto/auth-response.dto';
@@ -132,6 +133,10 @@ export class LoginAction {
       await this.assertSubscriptionActive(
         user.company_id === null ? null : Number(user.company_id),
       );
+      // Registrar el último login exitoso (owner/superadmin). Update ligero; el
+      // path User es read-only salvo esto y no abre transacción. Lo consume el
+      // detalle de tenant del panel kdevs-admin.
+      await this.dataSource.getRepository(User).update(user.id, { last_login: new Date() });
       const access_token = await this.jwtIssuer.sign({
         userId: user.id,
         companyId: user.company_id,

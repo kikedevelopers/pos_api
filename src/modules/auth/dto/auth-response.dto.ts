@@ -125,6 +125,22 @@ export class UserProfileDto {
   branches_allowed!: number;
 
   /**
+   * Permiso para ver márgenes/ganancias. owner/superadmin siempre true;
+   * empleado según su flag de configuración (POS). El cliente lo deriva en
+   * buildPermissions (isAdmin || can_view_profit). Paridad PlacePos.
+   */
+  @ApiProperty({ example: true })
+  can_view_profit!: boolean;
+
+  /**
+   * Permiso para ver el saldo y el historial de caja en el POS. owner/superadmin
+   * siempre true; empleado según su flag `can_view_cash`. El cliente lo deriva en
+   * buildPermissions (isAdmin || can_view_cash). Paridad PlacePos.
+   */
+  @ApiProperty({ example: true })
+  can_view_cash!: boolean;
+
+  /**
    * FASE 2 (ROLES) — Permisos EFECTIVOS de acceso a módulos del usuario.
    *
    *   - owner/superadmin → las 18 keys del catálogo (acceso total).

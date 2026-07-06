@@ -39,10 +39,19 @@ interface PeriodState {
   paid_amount: number;
   balance: number;
   status: string;
+  due_at: Date;
+  alert_id: string | null;
   paid_at: Date | null;
   paid_by_id: string | null;
   expense_id: string | null;
+  created_at: Date;
+  updated_at: Date;
 }
+
+// Fecha base fija para los campos temporales serializados por el DTO
+// (`due_at`/`created_at`/`updated_at`). No hay Date.now en scripts de prueba;
+// un instante constante basta (las aserciones son sobre saldos, no fechas).
+const FIXED_DATE = new Date('2026-01-01T00:00:00.000Z');
 
 function makePeriod(
   over: Partial<PeriodState> & { id: string; period_number: number; amount: number },
@@ -53,9 +62,13 @@ function makePeriod(
     paid_amount: 0,
     balance: over.amount,
     status: 'PENDING',
+    due_at: FIXED_DATE,
+    alert_id: null,
     paid_at: null,
     paid_by_id: null,
     expense_id: null,
+    created_at: FIXED_DATE,
+    updated_at: FIXED_DATE,
     ...over,
   };
 }
@@ -150,6 +163,14 @@ function buildManager(opts: { periods: PeriodState[]; bank: BankState | null }) 
         return Promise.resolve(undefined);
       },
     ),
+    // La acción lee el snapshot de abonos con `manager.getRepository(Expense)`
+    // (loadPeriodPayments). El mock no persiste Expenses consultables, así que
+    // el repo devuelve [] → histórico embebido vacío (no afecta las aserciones
+    // de saldos/paid_total). Añadido cuando el snapshot pasó a leerse en la TX.
+    getRepository: jest.fn((entity: unknown) => ({
+      find: (options: { where: Record<string, unknown> }) =>
+        (manager.find as jest.Mock)(entity, options),
+    })),
   };
 
   return { manager, periods, bank };

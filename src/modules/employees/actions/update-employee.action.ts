@@ -4,7 +4,9 @@ import { DataSource } from 'typeorm';
 import type { UpdateEmployeeDto } from '../dto/update-employee.dto';
 import { Employee } from '../entities/employee.entity';
 import { findEmployeeInCompany } from '../internal/employee-lookups';
+import { resolveCashVisibilityOnRoleChange } from '../internal/cash-visibility';
 import { assertRoleBelongsToCompany } from '../internal/role-validation';
+import { findRoleIdByName } from '@/modules/roles/internal/system-roles';
 
 /**
  * Actualiza campos de perfil (name/phone/email/address/role). NO toca
@@ -56,7 +58,21 @@ export class UpdateEmployeeAction {
         if (dto.role_id !== null) {
           await assertRoleBelongsToCompany(manager, dto.role_id, companyId);
         }
-        patch.role_id = dto.role_id != null ? String(dto.role_id) : null;
+        const newRoleId = dto.role_id != null ? String(dto.role_id) : null;
+        patch.role_id = newRoleId;
+
+        // Al cambiar el rol a "Cajero" (transición) se activa "ver caja" por
+        // defecto. Si el rol no cambia a Cajero, no se toca (respeta el OFF
+        // explícito del admin). Paridad PlacePos.
+        const cajeroRoleId = await findRoleIdByName(manager, companyId, 'Cajero');
+        const cashDefault = resolveCashVisibilityOnRoleChange(
+          newRoleId,
+          existing.role_id ?? null,
+          cajeroRoleId,
+        );
+        if (cashDefault !== undefined) {
+          patch.can_view_cash = cashDefault;
+        }
       }
 
       if (Object.keys(patch).length === 0) {

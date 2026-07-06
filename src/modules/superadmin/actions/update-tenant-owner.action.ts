@@ -48,6 +48,7 @@ export class UpdateTenantOwnerAction {
       name: updated.name,
       lastname: updated.lastname,
       email: updated.email,
+      lastLogin: updated.last_login ? updated.last_login.toISOString() : null,
     };
   }
 }

@@ -83,6 +83,10 @@ describeIf('Permissions enforcement (e2e)', () => {
   let cajeroToken = '';
   let vendedorToken = '';
   let inventaristaToken = '';
+  // Empleado con rol de fábrica "Administrador" (concede las 22 keys, incluida
+  // canAccessSettings): debe comportarse como el owner en Configuraciones.
+  let adminEmployeeToken = '';
+  let companyId = 0;
 
   const register = async (): Promise<string> => {
     const res = await request(httpServer).post('/api/v1/auth/register').send(owner);
@@ -207,6 +211,24 @@ describeIf('Permissions enforcement (e2e)', () => {
       'InventPass1!',
       inventarista.id,
     );
+
+    // Empleado con rol Administrador de fábrica (canAccessSettings incluido).
+    const administrador = roles.find((r) => r.name === 'Administrador');
+    expect(administrador).toBeDefined();
+    expect(administrador!.permissions).toContain('canAccessSettings');
+    adminEmployeeToken = await createEmployeeWithRole(
+      `admin-emp-${uniqueSuffix()}`,
+      'AdminEmpPass1!',
+      administrador!.id,
+    );
+
+    // Id de la company del tenant (para el PUT de Mi Negocio).
+    const companyRes = await request(httpServer)
+      .get('/api/v1/companies')
+      .set('Authorization', `Bearer ${ownerToken}`);
+    expect(companyRes.status).toBe(HttpStatus.OK);
+    companyId = (companyRes.body as SuccessEnvelope<{ id: number }>).payload.id;
+    expect(companyId).toBeGreaterThan(0);
   });
 
   afterAll(async () => {
@@ -473,6 +495,45 @@ describeIf('Permissions enforcement (e2e)', () => {
     it('GET /sales → 200 (operar el POS)', async () => {
       const res = await get('/api/v1/sales', cajeroToken);
       expect(res.status).toBe(HttpStatus.OK);
+    });
+  });
+
+  // ======================================================================
+  // Configuraciones: el empleado con rol Administrador accede como el owner;
+  // el empleado SIN canAccessSettings (Cajero) queda fuera. Reproduce el bug
+  // "Usuario sin permisos para esta acción" al abrir P.O.S de Configuraciones.
+  // ======================================================================
+
+  describe('Configuraciones (canAccessSettings)', () => {
+    it('Admin-empleado GET /app-settings/pos-margins → 200 (antes: 403)', async () => {
+      const res = await get('/api/v1/app-settings/pos-margins', adminEmployeeToken);
+      expect(res.status).toBe(HttpStatus.OK);
+    });
+
+    it('Cajero (SIN canAccessSettings) GET /app-settings/pos-margins → 403', async () => {
+      const res = await get('/api/v1/app-settings/pos-margins', cajeroToken);
+      expect(res.status).toBe(HttpStatus.FORBIDDEN);
+    });
+
+    it('owner GET /app-settings/pos-margins → 200 (bypass)', async () => {
+      const res = await get('/api/v1/app-settings/pos-margins', ownerToken);
+      expect(res.status).toBe(HttpStatus.OK);
+    });
+
+    it('Admin-empleado PUT /companies/:id (guardar Mi Negocio) → 200 (antes: 403)', async () => {
+      const res = await request(httpServer)
+        .put(`/api/v1/companies/${companyId}`)
+        .set('Authorization', `Bearer ${adminEmployeeToken}`)
+        .send({ name: `Negocio Admin-Emp ${uniqueSuffix()}` });
+      expect(res.status).toBe(HttpStatus.OK);
+    });
+
+    it('Cajero (SIN canAccessSettings) PUT /companies/:id → 403', async () => {
+      const res = await request(httpServer)
+        .put(`/api/v1/companies/${companyId}`)
+        .set('Authorization', `Bearer ${cajeroToken}`)
+        .send({ name: `Negocio Cajero ${uniqueSuffix()}` });
+      expect(res.status).toBe(HttpStatus.FORBIDDEN);
     });
   });
 });

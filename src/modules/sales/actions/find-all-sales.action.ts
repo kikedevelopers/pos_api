@@ -10,6 +10,7 @@ import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resol
 import type { ListSalesQueryDto } from '../dto/list-sales-query.dto';
 import { SaleListItemDto } from '../dto/sale-list-item.dto';
 import { SaleInvoice } from '../entities/sale-invoice.entity';
+import { deriveTicketCredit } from '../internal/derive-ticket-credit';
 
 /**
  * Lista ventas del feed del día. Espejo byte-por-byte de
@@ -50,6 +51,8 @@ export class FindAllSalesAction {
   ): Promise<SaleListItemDto[]> {
     const qb = this.salesRepo
       .createQueryBuilder('s')
+      // `credit` (OneToOne) para el chip "Crédito" del feed. No multiplica filas.
+      .leftJoinAndSelect('s.credit', 'credit')
       .where('s.company_id = :companyId', { companyId: String(companyId) })
       .orderBy('s.created_at', 'DESC');
 
@@ -166,6 +169,7 @@ function sumLineCost(lines: CreditNoteLine[]): number {
 
 function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemDto {
   const consolidated = consolidate(invoice, notes);
+  const { isCredit, creditStatus } = deriveTicketCredit(invoice.credit);
   return {
     id: Number(invoice.id),
     ticketType: invoice.ticket_type,
@@ -175,6 +179,8 @@ function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemD
     cost: consolidated.cost,
     profit: consolidated.profit,
     margin: consolidated.margin,
+    isCredit,
+    creditStatus,
     customerName: invoice.customer_name || 'CONSUMIDOR FINAL',
     synced: true,
     createdAt: invoice.created_at.toISOString(),

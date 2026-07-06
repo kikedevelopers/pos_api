@@ -94,6 +94,7 @@ export class GetTenantDetailAction {
             name: owner.name,
             lastname: owner.lastname,
             email: owner.email,
+            lastLogin: owner.last_login ? owner.last_login.toISOString() : null,
           }
         : null,
       subscription: subscription

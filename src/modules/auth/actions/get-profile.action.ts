@@ -64,7 +64,9 @@ export class GetProfileAction {
           created_at: new Date(0).toISOString(),
           branches_enabled: false,
           branches_allowed: 0,
-          // superadmin → acceso total (las 18 keys del catálogo).
+          // superadmin → acceso total, incluidos márgenes/ganancias y caja.
+          can_view_profit: true,
+          can_view_cash: true,
           permissions: [...PERMISSION_KEYS],
         },
       };
