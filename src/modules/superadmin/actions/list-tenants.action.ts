@@ -18,6 +18,8 @@ export interface ListTenantsItem {
   ownerEmail: string;
   documentNumber: string | null;
   createdAt: string;
+  // Fecha/hora ISO del último login del owner. null si nunca ha iniciado sesión.
+  lastLogin: string | null;
   subscriptionStartedAt: string | null;
   subscriptionExpiresAt: string | null;
 }
@@ -96,6 +98,7 @@ export class ListTenantsAction {
         ownerEmail: owner.email,
         documentNumber: owner.company?.document_number ?? null,
         createdAt: owner.created_at.toISOString(),
+        lastLogin: owner.last_login ? owner.last_login.toISOString() : null,
         subscriptionStartedAt: row?.s_started_at ? new Date(row.s_started_at).toISOString() : null,
         subscriptionExpiresAt: row?.s_expires_at ? new Date(row.s_expires_at).toISOString() : null,
       };

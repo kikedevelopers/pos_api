@@ -32,6 +32,15 @@ export class SuperadminTenantListItemDto {
   createdAt!: string;
 
   @ApiPropertyOptional({
+    example: '2026-07-06T21:13:00.000Z',
+    nullable: true,
+    description:
+      'Fecha/hora del último inicio de sesión del owner (users.last_login). ' +
+      'null si nunca ha iniciado sesión. El panel lo usa para seguimiento de uso.',
+  })
+  lastLogin!: string | null;
+
+  @ApiPropertyOptional({
     example: '2026-05-12T14:30:00.000Z',
     nullable: true,
     description: 'Inicio de la suscripción (started_at). null si el tenant no tiene suscripción.',
