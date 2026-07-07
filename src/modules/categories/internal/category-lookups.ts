@@ -91,9 +91,9 @@ export async function resolveCategoryIdByName(
 // translate() puro (no `unaccent`) para no depender de una extensión en prod y
 // que la expresión sea determinista. Ambas cadenas tienen la MISMA longitud
 // (22) — requisito de translate(). `ñ` se deja intacta (letra propia, no acento).
-const ACCENTED = 'áàäâãéèëêíìïîóòöôõúùüû';
-const UNACCENTED = 'aaaaaeeeeiiiiooooouuuu';
-const normalizeNameSql = (col: string): string =>
+export const ACCENTED = 'áàäâãéèëêíìïîóòöôõúùüû';
+export const UNACCENTED = 'aaaaaeeeeiiiiooooouuuu';
+export const normalizeNameSql = (col: string): string =>
   `translate(lower(btrim(${col})), '${ACCENTED}', '${UNACCENTED}')`;
 
 /**
