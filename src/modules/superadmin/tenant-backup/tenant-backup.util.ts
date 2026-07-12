@@ -32,17 +32,95 @@ export interface TenantBackup {
 
 export interface ImportTableResult {
   table: string;
+  /** Filas borradas del destino (fase de limpieza). */
+  deleted: number;
+  /** Filas del origen insertadas (con ids remapeados). */
   inserted: number;
-  ignored: number;
+  /** Filas del origen descartadas (FK insatisfacible / columna faltante). */
   skipped: number;
 }
 
 export interface ImportResult {
-  companyId: number;
+  /** Company destino sobre la que se REEMPLAZÓ la data. */
+  targetCompanyId: number;
+  /** Company de la que provenía el respaldo (puede ser distinta al destino). */
+  sourceCompanyId: number;
+  sourceCompanyName: string;
+  deleted: number;
   inserted: number;
-  ignored: number;
   skipped: number;
   perTable: ImportTableResult[];
+}
+
+// --------------------------------------------------------------------------
+// Clasificación de tablas para el IMPORT con REEMPLAZO cross-company
+// --------------------------------------------------------------------------
+
+/**
+ * Tablas cuya IDENTIDAD/ACCESO/CONFIG del DESTINO se CONSERVAN: ni se borran del
+ * destino ni se importan del origen. El respaldo puede venir de otra empresa
+ * (p.ej. importar "Esencia & Grano" dentro de "El Surtidor"): el login del
+ * owner, sus empleados/roles y la config de tienda del destino deben sobrevivir,
+ * y los `users` del origen NO pueden entrar (el email es único global y la
+ * empresa origen sigue existiendo). Ver [[project_tenant_backup_export_import]].
+ *
+ * Una tabla NUEVA con `company_id` entra por defecto al conjunto REEMPLAZABLE
+ * (se trata como data de negocio). Si mañana se agrega una tabla de
+ * acceso/identidad/config, hay que añadirla aquí explícitamente.
+ */
+export const PRESERVED_TABLES = new Set<string>([
+  'companies', // la fila del destino se conserva (no se sobreescribe el perfil)
+  'users',
+  'company_members',
+  'subscriptions',
+  'employees',
+  'roles',
+  'app_settings',
+  'ticket_settings',
+  'alert_configs',
+]);
+
+/**
+ * Tablas que se IGNORAN por completo en el import (ni se borran ni se importan):
+ * `inventory_shares` referencia OTRAS companies (source/target) y pertenece al
+ * dominio de sucursales; remapearla a un destino distinto no tiene semántica
+ * segura, así que se deja intacta.
+ */
+export const SKIPPED_IMPORT_TABLES = new Set<string>(['inventory_shares']);
+
+/**
+ * Columnas de auditoría que guardan el ID del usuario creador/editor SIN FK
+ * (referencia blanda). Al importar cross-company se reapuntan al owner del
+ * destino para no dejar registros del destino atribuidos a usuarios de otra
+ * empresa.
+ */
+export const SOFT_USER_ID_COLUMNS = new Set<string>(['created_by_id', 'updated_by_id']);
+
+/**
+ * Columnas de auditoría que guardan el NOMBRE del usuario creador/editor (string
+ * suelto, snapshot). Se reapuntan al nombre del owner del destino.
+ */
+export const SOFT_USER_NAME_COLUMNS = new Set<string>(['created_by', 'updated_by']);
+
+/**
+ * Parte el universo de tablas presentes en el respaldo en el conjunto que se
+ * REEMPLAZA (borrar del destino + importar del origen) vs. el que se conserva o
+ * ignora. Mantiene el orden de entrada.
+ */
+export function partitionImportTables(present: string[]): {
+  replace: string[];
+  preserved: string[];
+  skipped: string[];
+} {
+  const replace: string[] = [];
+  const preserved: string[] = [];
+  const skipped: string[] = [];
+  for (const t of present) {
+    if (SKIPPED_IMPORT_TABLES.has(t)) skipped.push(t);
+    else if (PRESERVED_TABLES.has(t)) preserved.push(t);
+    else replace.push(t);
+  }
+  return { replace, preserved, skipped };
 }
 
 /** Función de consulta mínima (DataSource/QueryRunner/manager `.query`). */
@@ -219,6 +297,130 @@ export async function getJsonColumns(
     (map[r.table_name] ??= new Set()).add(r.column_name);
   }
   return map;
+}
+
+/**
+ * Mapa a nivel de COLUMNA de las FKs: `tabla → { columna → tabla_padre }`. A
+ * diferencia de `getForeignKeyEdges` (aristas tabla→tabla para el topo-sort),
+ * esto dice EXACTAMENTE qué columna apunta a qué tabla, para poder remapear el
+ * valor de cada FK a su nuevo id al importar. Solo se piden las FKs de columna
+ * única (las compuestas, p.ej. no aplican a las tablas reemplazables).
+ */
+export async function getForeignKeyColumns(
+  q: QueryFn,
+  tables: string[],
+): Promise<Record<string, Record<string, string>>> {
+  const rows = await q<{ child: string; col: string; parent: string }>(
+    `SELECT c.relname AS child, a.attname AS col, cf.relname AS parent
+       FROM pg_constraint con
+       JOIN pg_class c ON c.oid = con.conrelid
+       JOIN pg_class cf ON cf.oid = con.confrelid
+       JOIN unnest(con.conkey) AS ck(attnum) ON true
+       JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ck.attnum
+      WHERE con.contype = 'f'
+        AND array_length(con.conkey, 1) = 1
+        AND c.relname = ANY ($1)`,
+    [tables],
+  );
+  const map: Record<string, Record<string, string>> = {};
+  for (const r of rows) {
+    (map[r.child] ??= {})[r.col] = r.parent;
+  }
+  return map;
+}
+
+/** Columna PK (de una sola columna) por tabla, p.ej. `id`. */
+export async function getPrimaryKeyColumns(
+  q: QueryFn,
+  tables: string[],
+): Promise<Record<string, string>> {
+  const rows = await q<{ table: string; col: string }>(
+    `SELECT c.relname AS table, a.attname AS col
+       FROM pg_constraint con
+       JOIN pg_class c ON c.oid = con.conrelid
+       JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+      WHERE con.contype = 'p'
+        AND array_length(con.conkey, 1) = 1
+        AND c.relname = ANY ($1)`,
+    [tables],
+  );
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    map[r.table] = r.col;
+  }
+  return map;
+}
+
+// --------------------------------------------------------------------------
+// Remapeo de filas para el IMPORT con REEMPLAZO cross-company
+// --------------------------------------------------------------------------
+
+/** Contexto (sin I/O) para remapear una fila del respaldo al destino. */
+export interface ImportRemapContext {
+  /** Company destino: todo `company_id` (y FK→companies) se reapunta aquí. */
+  targetCompanyId: number;
+  /** Owner del destino: toda referencia a `users` y auditoría se atribuye aquí. */
+  ownerUserId: number | null;
+  /** Nombre del owner del destino para las columnas de auditoría de nombre. */
+  ownerName: string | null;
+  /** PK a OMITIR en el INSERT (la BD asigna un id nuevo). null → se conserva. */
+  pkColumn: string | null;
+  /** columna → tabla padre (FK) de ESTA tabla. */
+  fkParentByColumn: Record<string, string>;
+  /** Columnas json/jsonb de ESTA tabla (para re-serializar). */
+  jsonColumns: Set<string>;
+  /** tabla padre → (id viejo → id nuevo), acumulado en orden topológico. */
+  idMaps: Map<string, Map<string, number>>;
+}
+
+/**
+ * Remapea UNA fila del respaldo para insertarla en el destino:
+ *
+ *  - La PK se OMITE (la BD asigna un id nuevo → evita colisiones con los ids
+ *    globales de otras companies).
+ *  - `company_id` / cualquier FK→companies → company destino.
+ *  - FK→users → owner del destino (los usuarios del origen no se importan).
+ *  - FK a una tabla reemplazable → su nuevo id vía `idMaps`. Si el padre no se
+ *    pudo importar (id ausente en el mapa) se pone `null` y la BD decide (si la
+ *    columna es NOT NULL, el INSERT falla y la fila se descarta arriba).
+ *  - Columnas de auditoría de usuario (id/nombre) → owner del destino.
+ *  - El resto se conserva tal cual.
+ *
+ * Función PURA (sin BD): el caller arma el INSERT con las columnas/valores.
+ */
+export function remapRowForImport(
+  row: BackupRow,
+  ctx: ImportRemapContext,
+): { columns: string[]; values: unknown[] } {
+  const columns: string[] = [];
+  const values: unknown[] = [];
+
+  for (const col of Object.keys(row)) {
+    if (ctx.pkColumn && col === ctx.pkColumn) {
+      continue; // la BD asigna un id nuevo
+    }
+    const raw = row[col];
+    const isNil = raw === null || raw === undefined;
+    let out: unknown = raw;
+
+    const parent = ctx.fkParentByColumn[col];
+    if (parent === 'companies') {
+      out = isNil ? null : ctx.targetCompanyId;
+    } else if (parent === 'users') {
+      out = isNil ? null : ctx.ownerUserId;
+    } else if (parent) {
+      out = isNil ? null : (ctx.idMaps.get(parent)?.get(String(raw)) ?? null);
+    } else if (SOFT_USER_ID_COLUMNS.has(col)) {
+      out = isNil ? null : ctx.ownerUserId;
+    } else if (SOFT_USER_NAME_COLUMNS.has(col)) {
+      out = isNil ? null : ctx.ownerName;
+    }
+
+    columns.push(col);
+    values.push(serializeValue(out, ctx.jsonColumns.has(col)));
+  }
+
+  return { columns, values };
 }
 
 // --------------------------------------------------------------------------

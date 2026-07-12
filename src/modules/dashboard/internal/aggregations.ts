@@ -411,55 +411,10 @@ export async function fetchSalesNotesAdjustment(
   return Number(rows[0]?.amount ?? 0);
 }
 
-/**
- * Ganancia total del rango: ventas regulares ajustadas por notas + share
- * proporcional de abonos a créditos. Espejo PlacePos `fetchProfitTotal`.
- */
-export async function fetchProfitTotal(
-  dataSource: DataSource,
-  companyId: number,
-  dateStart: Date,
-  dateEnd: Date,
-): Promise<number> {
-  // 1. Profit de ventas regulares (excluye invoices a crédito).
-  const salesRows = await dataSource.query<AmountRow[]>(
-    `
-    SELECT COALESCE(SUM(si.profit), 0)::float AS amount
-    FROM sale_invoices si
-    WHERE si.company_id = $1
-      AND si.ticket_type = 'SALE'
-      AND si.is_deleted = false
-      AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
-      AND NOT EXISTS (
-        SELECT 1 FROM sale_credits sc
-        WHERE sc.sale_invoice_id = si.id
-          AND sc.company_id = $1
-      )
-    `,
-    [String(companyId), dateStart, dateEnd],
-  );
-  const baseProfit = Number(salesRows[0]?.amount ?? 0);
-
-  // 2. Ajuste por notas aplicadas a esas ventas.
-  const notesRows = await fetchNotesByDay(dataSource, companyId, dateStart, dateEnd);
-  let profit = toBig(baseProfit);
-  for (const row of notesRows) {
-    const noteProfit = toBig(row.notes_total).minus(toBig(row.notes_cost));
-    profit = row.note_type === 'CREDIT' ? profit.minus(noteProfit) : profit.plus(noteProfit);
-  }
-
-  // 3. Profit proporcional de abonos a invoices a crédito.
-  const creditBreakdown = await fetchCreditPaymentsBreakdownByDay(
-    dataSource,
-    companyId,
-    dateStart,
-    dateEnd,
-  );
-  for (const row of creditBreakdown) {
-    profit = profit.plus(toBig(row.profit_share));
-  }
-  return profit.toNumber();
-}
+// NOTA: `fetchProfitTotal` (ganancia híbrida: contado por columna + share
+// proporcional de abonos) fue REEMPLAZADO por la ganancia DEVENGADA canónica
+// `fetchRealizedProfit` (financial-facts/internal/sales-facts.ts), que hoy usan
+// `get-today` y `break-even`. Ver financial-facts/contracts/metrics-spec.md.
 
 /**
  * Total de gastos del rango: SOLO `expenses` VARIABLES no archivados

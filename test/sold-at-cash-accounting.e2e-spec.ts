@@ -351,8 +351,12 @@ describe('Contabilidad de caja por sold_at (daily-closure + dashboard, e2e pos_d
       // así que todo el recaudo entra por creditPaymentsCash.
       expect(hoy.creditPaymentsCash).toBe(100);
       expect(hoy.totalCollected).toBe(100);
-      // Ganancia = profit_share del abono = 100 * (120/300) = 40. Cuadra con el recaudo.
+      // Ganancia COBRADA (base caja): la utilidad de la venta a crédito se
+      // reconoce en proporción a lo abonado = 100·120/300 = 40. La utilidad
+      // restante (80) NO se cuenta hasta cobrarse.
       expect(hoy.profit).toBe(40);
+      // Excedente = recaudo − utilidad cobrada = 100 − 40 = 60 (= COGS cobrado).
+      expect(hoy.surplus).toBe(60);
 
       // AYER (día de creación): NADA se reconoce — ni crédito nuevo, ni conteo, ni recaudo.
       const ayer = await dashboard.execute(cid, YESTERDAY);

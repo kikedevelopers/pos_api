@@ -183,15 +183,18 @@ describe('Recaudo del día por fecha de pago (dashboard/today, e2e pos_db)', () 
     expect(res.totalCollected).toBe(0);
   });
 
-  it('la GANANCIA sigue por fecha de la VENTA (si.created_at) → descuadre documentado', async () => {
+  it('GANANCIA por fecha de PAGO (cobrada): fiel a la caja, cuadra con el recaudo', async () => {
     if (!ds) {
       return;
     }
-    // FUERA DE ALCANCE de esta fase: profit agrupa por si.created_at. Solo si3 se
-    // creó el 15 → profit del día = 20, aunque el recaudo del día sea 420. El
-    // "excedente" (surplus = recaudo - ganancia) queda inflado a propósito.
     const res = await action.execute(companyId, TODAY);
-    expect(res.profit).toBe(20);
-    expect(res.surplus).toBe(400); // 420 - 20
+    // Ganancia COBRADA (base caja): utilidad de los 4 pagos recibidos hoy =
+    // 40 + 100 + 20 + 30 = 190. Va por `sp.created_at`, igual que el recaudo, así
+    // que ambos son fieles a la caja (antes la ganancia iba por fecha de venta y
+    // descuadraba con el recaudo).
+    expect(res.profit).toBe(190);
+    // Excedente/reinversión = recaudo (420) − utilidad cobrada (190) = 230 =
+    // COGS de lo cobrado (60+100+30+40).
+    expect(res.surplus).toBe(230);
   });
 });

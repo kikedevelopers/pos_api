@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 import Big from 'big.js';
 import { DataSource } from 'typeorm';
 
+import {
+  fetchAbonoCollectedProfit,
+  fetchCollectedProfit,
+} from '@/modules/financial-facts/internal/collection-facts';
+
 import { toBig } from '@/common/utils/precision';
 
 import { parseUtcRange, todayUtcDate } from '../internal/range';
@@ -23,10 +28,6 @@ import {
 
 interface AbonosRow {
   abonos_total: number;
-}
-
-interface AbonosProfitRow {
-  abonos_profit: number;
 }
 
 interface AdjustmentNoteRow {
@@ -197,7 +198,9 @@ export class GetDailyClosureAction {
         this.fetchAbonos(cid, 'CASH', dateStart, dateEnd),
         this.fetchAbonos(cid, 'TRANSFER', dateStart, dateEnd),
         this.fetchAbonosConsigDetalle(cid, dateStart, dateEnd),
-        this.fetchAbonosProfit(cid, dateStart, dateEnd),
+        // Utilidad cobrada de abonos por modelo PROPORCIONAL (canónico), no
+        // cascada. Ver financial-facts/contracts/metrics-spec.md.
+        fetchAbonoCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
       ]);
 
     const abonosCash = abonosCashData.abonos_total;
@@ -217,11 +220,13 @@ export class GetDailyClosureAction {
         .toNumber(),
     );
 
-    const [newCreditsData, totalPendingData, adjustmentNotesRows] = await Promise.all([
-      fetchNewCredits(this.dataSource, cid, dateStart, dateEnd),
-      fetchTotalPendingCredits(this.dataSource, cid),
-      this.fetchAdjustmentNotes(cid, dateStart, dateEnd),
-    ]);
+    const [newCreditsData, totalPendingData, adjustmentNotesRows, collectedProfitValue] =
+      await Promise.all([
+        fetchNewCredits(this.dataSource, cid, dateStart, dateEnd),
+        fetchTotalPendingCredits(this.dataSource, cid),
+        this.fetchAdjustmentNotes(cid, dateStart, dateEnd),
+        fetchCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
+      ]);
 
     const adjustmentNotes = adjustmentNotesRows.map((row) => ({
       noteNumber: row.note_number,
@@ -261,14 +266,21 @@ export class GetDailyClosureAction {
         ? round2(toBig(creditsProfitTotal).div(abonosTotal).times(100).toNumber())
         : 0;
 
-    const totalProfit = round2(
-      toBig(netProfit).plus(toBig(consignacionesProfit)).plus(toBig(abonosProfit)).toNumber(),
-    );
-    const totalRevenue = round2(
+    // "Ganancia del día" (headline) = utilidad COBRADA (base caja): la porción de
+    // utilidad dentro del recaudo (contado + abonos proporcionales). Fiel a la
+    // caja: una venta a crédito NO suma su ganancia hasta cobrarse. Coincide con
+    // `/dashboard/today.profit` y `extended-summary.ventas.ganancia`. Los bloques
+    // `salesProfit` (contado) y `creditsProfit` (abonos) son sub-métricas cuya
+    // suma es este total. Ver financial-facts/contracts/metrics-spec.md.
+    const totalProfit = round2(collectedProfitValue);
+    // Margen sobre el recaudo del día (contado neto + consignación + abonos).
+    const collectedRevenue = round2(
       toBig(netSales).plus(toBig(consignacionesVentas)).plus(toBig(abonosTotal)).toNumber(),
     );
     const totalMargin =
-      totalRevenue > 0 ? round2(toBig(totalProfit).div(totalRevenue).times(100).toNumber()) : 0;
+      collectedRevenue > 0
+        ? round2(toBig(totalProfit).div(collectedRevenue).times(100).toNumber())
+        : 0;
 
     return {
       date: targetDate,
@@ -364,53 +376,6 @@ export class GetDailyClosureAction {
       `,
       [cid, dateStart, dateEnd],
     );
-  }
-
-  private async fetchAbonosProfit(cid: string, dateStart: Date, dateEnd: Date): Promise<number> {
-    const rows = await this.dataSource.query<AbonosProfitRow[]>(
-      `
-      WITH today_by_invoice AS (
-        SELECT sp.sale_invoice_id AS invoice_id, SUM(sp.amount) AS paid_today
-        FROM sale_payments sp
-        WHERE sp.company_id = $1
-          AND sp.is_voided = false
-          AND sp.created_at BETWEEN $2 AND $3
-          AND EXISTS (
-            SELECT 1 FROM sale_credits sc
-            WHERE sc.sale_invoice_id = sp.sale_invoice_id
-              AND sc.company_id = $1
-          )
-        GROUP BY sp.sale_invoice_id
-      ),
-      prior_by_invoice AS (
-        SELECT sp.sale_invoice_id AS invoice_id, COALESCE(SUM(sp.amount), 0) AS paid_before
-        FROM sale_payments sp
-        WHERE sp.company_id = $1
-          AND sp.is_voided = false
-          AND sp.created_at < $2
-          AND EXISTS (
-            SELECT 1 FROM sale_credits sc
-            WHERE sc.sale_invoice_id = sp.sale_invoice_id
-              AND sc.company_id = $1
-          )
-        GROUP BY sp.sale_invoice_id
-      )
-      SELECT COALESCE(SUM(
-        CASE
-          WHEN t.paid_today > GREATEST(0.0, si.cost - COALESCE(p.paid_before, 0.0))
-          THEN t.paid_today - GREATEST(0.0, si.cost - COALESCE(p.paid_before, 0.0))
-          ELSE 0.0
-        END
-      ), 0)::float AS abonos_profit
-      FROM today_by_invoice t
-      INNER JOIN sale_invoices si
-        ON si.id = t.invoice_id
-       AND si.company_id = $1
-      LEFT JOIN prior_by_invoice p ON p.invoice_id = t.invoice_id
-      `,
-      [cid, dateStart, dateEnd],
-    );
-    return Number(rows[0]?.abonos_profit ?? 0);
   }
 
   private async fetchAdjustmentNotes(

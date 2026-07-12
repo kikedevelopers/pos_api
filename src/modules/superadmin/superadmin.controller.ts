@@ -289,17 +289,18 @@ export class SuperadminController {
 
   @Post('tenants/:companyId/import')
   @ApiOperation({
-    summary: 'Importar un respaldo: inserta lo que falta, ignora lo que ya existe.',
+    summary: 'Importar un respaldo REEMPLAZANDO la data del destino (cross-company).',
     description:
-      'Valida el hash de integridad (400 si fue alterado) y que el respaldo corresponde a esta ' +
-      'company. Inserta en orden topológico con ON CONFLICT DO NOTHING (ids originales): los ' +
-      'datos existentes se ignoran y los nuevos se crean. Reporta cuántas filas se insertaron, ' +
-      'ignoraron y saltaron.',
+      'Valida el hash de integridad (400 si fue alterado). El respaldo PUEDE ser de otra empresa: ' +
+      'se limpia toda la data de negocio del destino y se reemplaza con la del origen, remapeando ' +
+      'ids (nuevos, sin colisión), company_id → destino y las referencias de usuario al owner del ' +
+      'destino. Se conservan identidad/acceso/config del destino (owner, empleados, roles, ' +
+      'suscripción, settings). Reporta cuántas filas se borraron, insertaron y saltaron.',
   })
   @ApiResponse({ status: HttpStatus.CREATED })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
-    description: 'Respaldo inválido, alterado o de otra company',
+    description: 'Respaldo inválido/alterado o company destino inexistente',
   })
   importTenant(
     @Param('companyId', ParseIntPipe) companyId: number,

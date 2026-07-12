@@ -5,8 +5,9 @@ import { DataSource, Repository } from 'typeorm';
 import { toBig } from '@/common/utils/precision';
 import { Company } from '@/modules/companies/entities/company.entity';
 
-import { fetchExpensesTotal, fetchProfitTotal, round2 } from '../internal/aggregations';
+import { fetchExpensesTotal, round2 } from '../internal/aggregations';
 import { parseDateRange, startOfMonthUtc, todayUtc } from '../internal/date-range';
+import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
 
 /**
  * Output del endpoint `GET /dashboard/break-even-progress`.
@@ -80,9 +81,9 @@ export class GetBreakEvenProgressAction {
     const monthRange = parseDateRange(monthFrom, monthTo);
 
     const [dayProfit, dayExpenses, monthProfit, monthExpenses] = await Promise.all([
-      fetchProfitTotal(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
+      fetchCollectedProfit(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
       fetchExpensesTotal(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
-      fetchProfitTotal(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
+      fetchCollectedProfit(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
       fetchExpensesTotal(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
     ]);
 

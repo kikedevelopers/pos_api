@@ -68,6 +68,17 @@ const round2 = (n: unknown): number => Number(toBig(n).round(2).toString());
  * Ventas en efectivo BRUTAS del rango (gross_sales + gross_cost). Excluye
  * facturas que generaron crédito (`sale_credits`) — esas se cuentan como
  * créditos nuevos, no como venta de contado.
+ *
+ * Costo PRORRATEADO por el monto pagado: `si.cost * LEAST(sp.amount, si.total)
+ * / si.total`. El JOIN produce UNA fila por pago, así que una factura con
+ * varios pagos (o método mixto CASH+TRANSFER) aparece varias veces; un
+ * `SUM(si.cost)` plano contaría su costo COMPLETO por cada pago, duplicándolo y
+ * SUBESTIMANDO la utilidad. Prorratear reparte el costo en proporción a lo
+ * cobrado por este método, de modo que la suma del costo entre todas las ramas
+ * de la factura da su costo UNA sola vez (mismo criterio que el prorrateo de
+ * abonos a crédito). Para una venta de contado pagada al 100% con un solo pago
+ * el resultado es idéntico al costo completo. `NULLIF(si.total,0)` evita dividir
+ * por cero en ventas de total 0.
  */
 export async function fetchCashSales(
   dataSource: DataSource,
@@ -79,7 +90,7 @@ export async function fetchCashSales(
     `
       SELECT
         COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS gross_sales,
-        COALESCE(SUM(si.cost), 0)::float AS gross_cost
+        COALESCE(SUM(si.cost * LEAST(sp.amount, si.total) / NULLIF(si.total, 0)), 0)::float AS gross_cost
       FROM sale_payments sp
       INNER JOIN sale_invoices si
         ON sp.sale_invoice_id = si.id
@@ -148,6 +159,10 @@ export async function fetchCashNotes(
 /**
  * Consignaciones (ventas TRANSFER) del rango: totales (con costo) + detalle
  * por banco.
+ *
+ * Costo PRORRATEADO por el monto pagado, igual que `fetchCashSales`: evita que
+ * una factura con varios pagos o método mixto duplique su `si.cost` (una vez
+ * por rama de pago). Ver la nota extensa en `fetchCashSales`.
  */
 export async function fetchTransferSales(
   dataSource: DataSource,
@@ -159,7 +174,7 @@ export async function fetchTransferSales(
     `
       SELECT
         COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS consig_total,
-        COALESCE(SUM(si.cost), 0)::float AS consig_cost
+        COALESCE(SUM(si.cost * LEAST(sp.amount, si.total) / NULLIF(si.total, 0)), 0)::float AS consig_cost
       FROM sale_payments sp
       INNER JOIN sale_invoices si
         ON sp.sale_invoice_id = si.id

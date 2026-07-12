@@ -3,11 +3,11 @@ import { DataSource } from 'typeorm';
 
 import { fetchCashAccounts } from '@/modules/dashboard/internal/cash-accounts';
 import { parseDateRange, startOfMonthUtc, todayUtc } from '@/modules/dashboard/internal/date-range';
+import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
 
 import { toBig } from '@/common/utils/precision';
 
 import {
-  computeConsignacionesProfit,
   computeNetCashSales,
   fetchCashNotes,
   fetchCashSales,
@@ -126,28 +126,36 @@ export class GetExtendedSummaryAction {
     const cid = String(companyId);
 
     // ── Ventas (reutiliza el helper compartido del cierre) ──────────────────
-    const [salesData, creditNotesData, debitNotesData, consigData, newCreditsData, expensesTotal] =
-      await Promise.all([
-        fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
-        fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
-        fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
-        fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
-        fetchNewCredits(this.dataSource, cid, dateStart, dateEnd),
-        fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
-      ]);
+    const [
+      salesData,
+      creditNotesData,
+      debitNotesData,
+      consigData,
+      newCreditsData,
+      expensesTotal,
+      collectedProfitValue,
+    ] = await Promise.all([
+      fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
+      fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
+      fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
+      fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
+      fetchNewCredits(this.dataSource, cid, dateStart, dateEnd),
+      fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
+      fetchCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
+    ]);
 
-    const { netSales, netProfit } = computeNetCashSales(salesData, creditNotesData, debitNotesData);
+    const { netSales } = computeNetCashSales(salesData, creditNotesData, debitNotesData);
     const efectivo = round2(netSales);
     const electronico = round2(consigData.totals.consig_total);
     const credito = round2(newCreditsData.new_credits_total);
-    const consignacionesProfit = computeConsignacionesProfit(consigData.totals);
 
     const ventasTotal = round2(
       toBig(efectivo).plus(toBig(electronico)).plus(toBig(credito)).toNumber(),
     );
-    // Ganancia de VENTAS del rango = utilidad de contado (neta NC/ND) +
-    // utilidad de consignaciones. Espejo del `salesProfit` del cierre.
-    const ventasGanancia = round2(toBig(netProfit).plus(toBig(consignacionesProfit)).toNumber());
+    // Ganancia de VENTAS del rango = utilidad COBRADA (base caja): porción de
+    // utilidad dentro del recaudo (contado + abonos proporcionales). Coincide con
+    // la "Ganancia del día" del dashboard. Ver metrics-spec.md.
+    const ventasGanancia = round2(collectedProfitValue);
     // Margen sobre el total de ventas (efectivo + electrónico + crédito).
     const margen =
       ventasTotal > 0 ? round2(toBig(ventasGanancia).div(ventasTotal).times(100).toNumber()) : 0;

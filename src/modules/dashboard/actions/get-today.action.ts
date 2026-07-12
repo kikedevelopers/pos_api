@@ -7,7 +7,6 @@ import {
   fetchExpensesTotal,
   fetchNewCredits,
   fetchPaymentsTotal,
-  fetchProfitTotal,
   fetchPurchasePaymentsToday,
   fetchPurchasesToday,
   fetchSalesCount,
@@ -18,6 +17,7 @@ import {
 } from '../internal/aggregations';
 import { fetchCashAccounts, type CashAccountsResult } from '../internal/cash-accounts';
 import { parseDateRange, todayUtc } from '../internal/date-range';
+import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
 
 /**
  * Output del endpoint `GET /dashboard/today`. Resumen consolidado del día.
@@ -85,7 +85,6 @@ export class GetTodayAction {
       ndTransfer,
       creditsCash,
       creditsTransfer,
-      profitTotal,
       expensesTotal,
       newCredits,
       salesCount,
@@ -95,6 +94,7 @@ export class GetTodayAction {
       supplierDebt,
       todayCreditsBalance,
       cashAccounts,
+      collectedProfitValue,
     ] = await Promise.all([
       fetchPaymentsTotal(this.dataSource, companyId, 'CASH', false, range.dateStart, range.dateEnd),
       fetchPaymentsTotal(
@@ -146,7 +146,6 @@ export class GetTodayAction {
         range.dateStart,
         range.dateEnd,
       ),
-      fetchProfitTotal(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchExpensesTotal(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchNewCredits(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchSalesCount(this.dataSource, companyId, range.dateStart, range.dateEnd),
@@ -168,6 +167,7 @@ export class GetTodayAction {
       fetchSupplierDebt(this.dataSource, companyId),
       fetchTodayCreditsBalance(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchCashAccounts(this.dataSource, companyId),
+      fetchCollectedProfit(this.dataSource, companyId, range.dateStart, range.dateEnd),
     ]);
 
     const cashSales = round2(toBig(salesCash).minus(toBig(ncCash)).plus(toBig(ndCash)).toNumber());
@@ -189,7 +189,12 @@ export class GetTodayAction {
     );
 
     const expenses = round2(expensesTotal);
-    const profit = round2(profitTotal);
+    // "Ganancia del día" = utilidad COBRADA (base caja): la porción de utilidad
+    // dentro del dinero efectivamente recibido (contado + abonos proporcionales).
+    // Fiel a la caja: una venta a crédito NO suma su ganancia hasta que se cobra.
+    // Ver financial-facts/contracts/metrics-spec.md.
+    const profit = round2(collectedProfitValue);
+    // Excedente/reinversión = recaudo − utilidad cobrada (= COGS cobrado).
     const surplus = round2(toBig(totalCollected).minus(toBig(profit)).toNumber());
     const realProfit = round2(toBig(profit).minus(toBig(expenses)).toNumber());
 

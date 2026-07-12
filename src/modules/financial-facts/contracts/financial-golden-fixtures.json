@@ -1,0 +1,151 @@
+{
+  "_readme": "ARCHIVO COMPARTIDO / BYTE-IDÉNTICO ENTRE REPOS (pos_api: src/modules/financial-facts/contracts/, placepos: src/main/financial/contracts/). Escenarios canónicos de las métricas financieras (ver metrics-spec.md). Cada suite de tests (pos_api e2e con DB real, placepos según su harness) siembra los `invoices/payments/credits/notes/expenses` mapeando los campos LÓGICOS de aquí a su esquema físico (pos_api: sale_invoice_id/amount/unit_cost; placepos: invoice_id/amount_paid/cost) y afirma que las métricas canónicas del día objetivo coinciden con `expected`. Cada escenario fija SOLO las métricas que pinta con certeza; el harness afirma únicamente las claves presentes en `expected`. Montos en unidad monetaria; offsets de día relativos al día objetivo (0=hoy, -1=ayer). Si editas uno, edita el otro EN LA MISMA TAREA (el test de paridad de Fase 3 los diffea).",
+  "schemaVersion": 1,
+  "fieldNotes": {
+    "invoices[]": "key (id lógico), total, cost, profit, soldDayOffset, isDeleted, ticketType(SALE por defecto)",
+    "payments[]": "invoice (key), method(CASH|TRANSFER), amount, createdDayOffset, isVoided",
+    "credits[]": "invoice (key), totalAmount, paidAmount, balance",
+    "notes[]": "invoice (key), noteType(CREDIT|DEBIT), total, cost, createdDayOffset",
+    "expenses[]": "amount, isFixed, isArchived, createdDayOffset",
+    "expected": "métricas canónicas del día objetivo; solo las claves que el escenario fija con certeza"
+  },
+  "scenarios": [
+    {
+      "name": "contado_efectivo_100",
+      "description": "Venta de contado pagada 100% en efectivo con un solo pago.",
+      "invoices": [{ "key": "A", "total": 100, "cost": 60, "profit": 40, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [{ "invoice": "A", "method": "CASH", "amount": 100, "createdDayOffset": 0, "isVoided": false }],
+      "credits": [],
+      "notes": [],
+      "expenses": [],
+      "expected": {
+        "realizedSalesRevenue": 100,
+        "realizedProfit": 40,
+        "recaudo": 100,
+        "collectedProfit": 40,
+        "cartera": 0,
+        "newCreditsTotal": 0,
+        "realProfit": 40,
+        "surplus": 60
+      }
+    },
+    {
+      "name": "contado_multipago_cash",
+      "description": "Contado con DOS pagos en efectivo (40+60): el costo se prorratea, NO se duplica.",
+      "invoices": [{ "key": "A", "total": 100, "cost": 60, "profit": 40, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [
+        { "invoice": "A", "method": "CASH", "amount": 40, "createdDayOffset": 0, "isVoided": false },
+        { "invoice": "A", "method": "CASH", "amount": 60, "createdDayOffset": 0, "isVoided": false }
+      ],
+      "credits": [],
+      "notes": [],
+      "expenses": [],
+      "expected": {
+        "realizedSalesRevenue": 100,
+        "realizedProfit": 40,
+        "recaudo": 100,
+        "collectedProfit": 40,
+        "surplus": 60
+      }
+    },
+    {
+      "name": "contado_mixto_cash_transfer",
+      "description": "Método mixto CASH 300 + TRANSFER 200 sobre una venta de 500: costo prorrateado por rama, contado una vez.",
+      "invoices": [{ "key": "A", "total": 500, "cost": 300, "profit": 200, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [
+        { "invoice": "A", "method": "CASH", "amount": 300, "createdDayOffset": 0, "isVoided": false },
+        { "invoice": "A", "method": "TRANSFER", "amount": 200, "createdDayOffset": 0, "isVoided": false }
+      ],
+      "credits": [],
+      "notes": [],
+      "expenses": [],
+      "expected": {
+        "realizedSalesRevenue": 500,
+        "realizedProfit": 200,
+        "recaudo": 500,
+        "collectedProfit": 200,
+        "realProfit": 200,
+        "surplus": 300
+      }
+    },
+    {
+      "name": "credito_con_abono_devengado",
+      "description": "Venta a CRÉDITO (total 300, saldo 200) con un abono de 100 hoy. Headline COBRADO: la utilidad cobrada (40, proporcional al abono) es la 'Ganancia del día'; la devengada (120) queda como métrica alterna. realProfit = 40 − gastos.",
+      "invoices": [{ "key": "A", "total": 300, "cost": 180, "profit": 120, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [{ "invoice": "A", "method": "CASH", "amount": 100, "createdDayOffset": 0, "isVoided": false }],
+      "credits": [{ "invoice": "A", "totalAmount": 300, "paidAmount": 100, "balance": 200 }],
+      "notes": [],
+      "expenses": [],
+      "expected": {
+        "realizedSalesRevenue": 0,
+        "realizedProfit": 120,
+        "recaudo": 100,
+        "collectedProfit": 40,
+        "newCreditsTotal": 300,
+        "cartera": 200,
+        "realProfit": 40,
+        "surplus": 60
+      }
+    },
+    {
+      "name": "abono_anulado_no_cuenta",
+      "description": "Abono a un crédito con is_voided=true: NO entra al recaudo ni a la utilidad cobrada (bug is_voided). La venta a crédito sí devenga su utilidad.",
+      "invoices": [{ "key": "A", "total": 200, "cost": 120, "profit": 80, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [{ "invoice": "A", "method": "CASH", "amount": 50, "createdDayOffset": 0, "isVoided": true }],
+      "credits": [{ "invoice": "A", "totalAmount": 200, "paidAmount": 0, "balance": 200 }],
+      "notes": [],
+      "expenses": [],
+      "expected": {
+        "recaudo": 0,
+        "collectedProfit": 0,
+        "realizedProfit": 80,
+        "newCreditsTotal": 200,
+        "cartera": 200
+      }
+    },
+    {
+      "name": "nota_credito_mismo_dia",
+      "description": "NC (total 30, costo 18) sobre una venta de contado del mismo día: netea ventas y utilidad devengada.",
+      "invoices": [{ "key": "A", "total": 100, "cost": 60, "profit": 40, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [{ "invoice": "A", "method": "CASH", "amount": 100, "createdDayOffset": 0, "isVoided": false }],
+      "credits": [],
+      "notes": [{ "invoice": "A", "noteType": "CREDIT", "total": 30, "cost": 18, "createdDayOffset": 0 }],
+      "expenses": [],
+      "expected": {
+        "realizedSalesRevenue": 70,
+        "realizedProfit": 28
+      }
+    },
+    {
+      "name": "gastos_variable_vs_fijo",
+      "description": "Solo el gasto VARIABLE baja la utilidad neta; el gasto FIJO (is_fixed) se ignora (su débito ya bajó la fuente).",
+      "invoices": [{ "key": "A", "total": 100, "cost": 60, "profit": 40, "soldDayOffset": 0, "isDeleted": false }],
+      "payments": [{ "invoice": "A", "method": "CASH", "amount": 100, "createdDayOffset": 0, "isVoided": false }],
+      "credits": [],
+      "notes": [],
+      "expenses": [
+        { "amount": 10, "isFixed": false, "isArchived": false, "createdDayOffset": 0 },
+        { "amount": 5, "isFixed": true, "isArchived": false, "createdDayOffset": 0 }
+      ],
+      "expected": {
+        "realizedProfit": 40,
+        "expensesVariable": 10,
+        "realProfit": 30
+      }
+    },
+    {
+      "name": "credito_de_venta_anulada_no_cartera",
+      "description": "Un crédito cuya factura fue anulada (is_deleted) NO cuenta como cartera ni devenga utilidad.",
+      "invoices": [{ "key": "A", "total": 100, "cost": 60, "profit": 40, "soldDayOffset": 0, "isDeleted": true }],
+      "payments": [],
+      "credits": [{ "invoice": "A", "totalAmount": 100, "paidAmount": 0, "balance": 100 }],
+      "notes": [],
+      "expenses": [],
+      "expected": {
+        "cartera": 0,
+        "realizedProfit": 0,
+        "newCreditsTotal": 0
+      }
+    }
+  ]
+}
