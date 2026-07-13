@@ -45,6 +45,11 @@ export interface CustomerProductHistoryResponse {
     profit: number;
     margin: number;
     ticketNumber: string;
+    // Factura de origen: id para abrir el TicketViewer y fecha/hora de la venta.
+    invoiceId: number;
+    createdAt: string;
+    // Tipo de factura para diferenciar visualmente Pedido vs Venta.
+    ticketType: 'SALE' | 'ORDER';
   }>;
 }
 
@@ -225,10 +230,13 @@ export class GetCustomerChartsAction {
       unit_price: string;
       profit: string;
       margin: string;
+      invoice_id: number | string;
+      created_at: string | Date;
+      ticket_type: 'SALE' | 'ORDER';
     }> = await this.repo.query(
       `
       WITH last_invoices AS (
-        SELECT id, sale_number, ticket_number, created_at
+        SELECT id, sale_number, ticket_number, ticket_type, created_at
           FROM sale_invoices
          WHERE company_id = $1
            AND customer_id = $2
@@ -241,7 +249,10 @@ export class GetCustomerChartsAction {
              l.quantity           AS quantity,
              l.unit_price         AS unit_price,
              l.profit             AS profit,
-             l.margin             AS margin
+             l.margin             AS margin,
+             li.id                AS invoice_id,
+             li.created_at        AS created_at,
+             li.ticket_type       AS ticket_type
         FROM last_invoices li
         JOIN sale_invoice_lines l
           ON l.sale_invoice_id = li.id
@@ -263,6 +274,9 @@ export class GetCustomerChartsAction {
         profit: Number(r.profit),
         margin: Number(r.margin),
         ticketNumber: r.ticket_number,
+        invoiceId: Number(r.invoice_id),
+        createdAt: new Date(r.created_at).toISOString(),
+        ticketType: r.ticket_type,
       })),
     };
   }
