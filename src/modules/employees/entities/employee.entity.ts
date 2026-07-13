@@ -244,6 +244,15 @@ export class Employee {
   @JoinColumn({ name: 'role_id' })
   customRole!: Role | null;
 
+  /**
+   * Fecha/hora del último inicio de sesión exitoso del empleado. NULL = nunca
+   * se ha conectado (distinguible de una fecha real). Se sella en el login
+   * (`LoginAction`) y se expone en la lista/detalle de empleados. Paridad
+   * PlacePos (`employees.last_login`).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  last_login!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 

@@ -108,6 +108,14 @@ export class EmployeeResponseDto {
   created_at!: string;
 
   @ApiPropertyOptional({
+    example: '2026-07-13T14:28:00.000Z',
+    nullable: true,
+    description:
+      'Fecha/hora (ISO) del último inicio de sesión exitoso del empleado. NULL = nunca se ha conectado.',
+  })
+  last_login!: string | null;
+
+  @ApiPropertyOptional({
     example: 42,
     nullable: true,
     description:
@@ -168,6 +176,7 @@ function toEmployeeBaseResponse(
     can_view_product_profit: employee.can_view_product_profit,
     created_by: employee.created_by,
     created_at: employee.created_at.toISOString(),
+    last_login: employee.last_login ? employee.last_login.toISOString() : null,
   };
 }
 

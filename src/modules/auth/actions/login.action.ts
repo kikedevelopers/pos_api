@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { DataSource } from 'typeorm';
 
+import { Employee } from '@/modules/employees/entities/employee.entity';
 import { EmployeesService } from '@/modules/employees/employees.service';
 import { ensureMirrorUserForEmployee } from '@/modules/employees/internal/ensure-mirror-user-for-employee.helper';
 import { SubscriptionExpiredException } from '@/modules/subscriptions/subscription-expired.exception';
@@ -165,6 +166,13 @@ export class LoginAction {
       // Bloqueo por suscripción vencida — tras verify, antes de crear/sincronizar
       // el User espejo y firmar. Los employees siempre pertenecen a una company.
       await this.assertSubscriptionActive(Number(employee.company_id));
+
+      // Registrar la última conexión del empleado tras autenticar con éxito.
+      // Update ligero (simétrico al del owner en el path User). Lo consumen la
+      // lista y el detalle de empleados. Paridad PlacePos (auth.routes).
+      await this.dataSource
+        .getRepository(Employee)
+        .update(employee.id, { last_login: new Date() });
 
       // Garantizar el User espejo. Si ya existe, sincroniza; si no, lo crea.
       // Transacción dedicada — corta — para que el INSERT del User + UPDATE
