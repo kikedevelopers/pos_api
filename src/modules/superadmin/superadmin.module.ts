@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AdminSignatureGuard } from '@/common/guards/admin-signature.guard';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { CompaniesModule } from '@/modules/companies/companies.module';
 import { Company } from '@/modules/companies/entities/company.entity';
@@ -14,12 +15,14 @@ import { ExportTenantAction } from './actions/export-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
+import { MigrateCatalogAction } from './actions/migrate-catalog.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction } from './actions/update-branches.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
+import { MigrateCatalogController } from './migrate-catalog.controller';
 import { SuperadminController } from './superadmin.controller';
 
 /**
@@ -46,9 +49,11 @@ import { SuperadminController } from './superadmin.controller';
     CompaniesModule,
     TypeOrmModule.forFeature([Company, User, Subscription]),
   ],
-  controllers: [SuperadminController],
+  controllers: [SuperadminController, MigrateCatalogController],
   providers: [
     SuperadminSignatureGuard,
+    AdminSignatureGuard,
+    MigrateCatalogAction,
     ListTenantsAction,
     GetTenantDetailAction,
     UpdateSubscriptionAction,
