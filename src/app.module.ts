@@ -42,6 +42,7 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { FixedExpensesModule } from './modules/fixed-expenses/fixed-expenses.module';
+import { KanbanModule } from './modules/kanban/kanban.module';
 import { MigrationImportModule } from './modules/migration-import/migration-import.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -238,6 +239,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     PosDataModule,
     // Fase 12 — Backup stub (paridad de contrato; siempre 503).
     BackupModule,
+    // Kanban colaborativo (módulo AISLADO). Quitar esta única línea lo desactiva
+    // por completo — ningún otro módulo lo referencia.
+    KanbanModule,
     // Migración cloud (altivopos Mongo → pos_api). Protegido por firma
     // asimétrica (`AdminSignatureGuard`), por lo que se monta en todos los
     // entornos. Lo consume el panel kdevs-admin (genera el ZIP y lo sube

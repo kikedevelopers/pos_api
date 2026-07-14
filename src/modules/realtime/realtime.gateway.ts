@@ -86,6 +86,10 @@ export class RealtimeGateway implements OnGatewayConnection {
     // SIEMPRE: room propio del usuario dentro de su company.
     void client.join(this.userRoom(companyId, userId));
 
+    // Room del Kanban colaborativo: se une TODO el mundo de la company (incl.
+    // employees), porque el tablero es compartido y cualquiera puede participar.
+    void client.join(this.kanbanRoom(companyId));
+
     // No-employee (owner/manager/superadmin con company): ve TODOS los tickets
     // de la company → room agregado.
     if (type !== 'employee') {
@@ -153,6 +157,22 @@ export class RealtimeGateway implements OnGatewayConnection {
     this.server.to(this.allRoom(companyId)).emit(ALERT_CREATED_EVENT, body);
   }
 
+  /**
+   * Emite `kanban:changed` a TODOS los participantes de la company (room
+   * dedicado `company:<id>:kanban`, al que se unen owner/manager y employees).
+   * Señal de invalidación pura: el cliente refetchea `GET /kanban`.
+   *
+   * Best-effort: el llamador debe envolver en try/catch para que un fallo de
+   * socket NUNCA rompa la operación de negocio (mover/crear tarjeta, etc.).
+   *
+   * @param companyId company del JWT del actor (nunca del cliente).
+   * @param payload   metadatos opcionales; siempre se incluye `companyId`.
+   */
+  emitKanbanChanged(companyId: number, payload: KanbanChangedPayload = {}): void {
+    const body: KanbanChangedPayload = { companyId, ...payload };
+    this.server.to(this.kanbanRoom(companyId)).emit(KANBAN_CHANGED_EVENT, body);
+  }
+
   private extractToken(client: Socket): string | null {
     // `handshake.auth` es `{ [key: string]: any }` en los typings de socket.io;
     // tipamos el acceso para evitar propagar `any` (no-unsafe-assignment).
@@ -175,6 +195,10 @@ export class RealtimeGateway implements OnGatewayConnection {
 
   private allRoom(companyId: number): string {
     return `company:${companyId}:all`;
+  }
+
+  private kanbanRoom(companyId: number): string {
+    return `company:${companyId}:kanban`;
   }
 }
 
@@ -214,4 +238,17 @@ export interface AlertCreatedPayload {
   companyId: number;
   alertType: string;
   severity?: string;
+}
+
+/** Evento único de invalidación del Kanban colaborativo. */
+export const KANBAN_CHANGED_EVENT = 'kanban:changed';
+
+/**
+ * Señal mínima de cambio en el Kanban. El cliente solo la usa para invalidar y
+ * refetchear `GET /kanban`; no transporta el estado del tablero.
+ */
+export interface KanbanChangedPayload {
+  companyId?: number;
+  boardId?: number;
+  cardId?: number;
 }
