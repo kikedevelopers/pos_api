@@ -4,6 +4,8 @@ import { DataSource, QueryRunner } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 
+import { resyncTicketCounters } from '@/modules/ticket-settings/internal/resync-ticket-counters';
+
 import {
   BackupRow,
   ImportRemapContext,
@@ -135,13 +137,17 @@ export class ImportTenantAction {
           true,
         );
         const entry = perTable.get(table);
-        if (entry) entry.deleted = res.affected ?? 0;
+        if (entry) {
+          entry.deleted = res.affected ?? 0;
+        }
       }
 
       // 2) INSERCIÓN: filas del origen con ids nuevos (padres → hijos).
       for (const table of order) {
         let rows = backup.tables[table] ?? [];
-        if (rows.length === 0) continue;
+        if (rows.length === 0) {
+          continue;
+        }
 
         const selfRefCol = selfRefs[table];
         if (selfRefCol) {
@@ -168,13 +174,19 @@ export class ImportTenantAction {
           const merged = this.mergeRows(rows, sumCols);
           const newId = await this.insertRow(runner, table, merged, ctx);
           if (newId === null) {
-            if (entry) entry.skipped += rows.length;
+            if (entry) {
+              entry.skipped += rows.length;
+            }
           } else {
-            if (entry) entry.inserted += 1;
+            if (entry) {
+              entry.inserted += 1;
+            }
             if (map) {
               for (const row of rows) {
                 const oldId = row[ctx.pkColumn];
-                if (oldId !== null && oldId !== undefined) map.set(String(oldId), newId);
+                if (oldId !== null && oldId !== undefined) {
+                  map.set(String(oldId), newId);
+                }
               }
             }
           }
@@ -185,14 +197,35 @@ export class ImportTenantAction {
           const oldId = ctx.pkColumn ? row[ctx.pkColumn] : undefined;
           const newId = await this.insertRow(runner, table, row, ctx);
           if (newId === null) {
-            if (entry) entry.skipped += 1;
+            if (entry) {
+              entry.skipped += 1;
+            }
             continue;
           }
-          if (entry) entry.inserted += 1;
+          if (entry) {
+            entry.inserted += 1;
+          }
           if (map && ctx.pkColumn && oldId !== null && oldId !== undefined) {
             map.set(String(oldId), newId);
           }
         }
+      }
+
+      // 3) RESINCRONIZACIÓN DE FOLIOS: `ticket_settings` está en
+      //    `PRESERVED_TABLES` (el prefix/suffix del destino debe sobrevivir),
+      //    pero las ventas/notas/compras que acabamos de insertar traen los
+      //    folios del ORIGEN. Sin esto el contador del destino queda por detrás
+      //    y la siguiente venta choca contra el UNIQUE de `ticket_number`
+      //    dejando el POS bloqueado (el rollback deshace el incremento, así que
+      //    reintentar pide el mismo folio ocupado). Ver
+      //    [[project_tenant_backup_export_import]].
+      const resynced = await resyncTicketCounters(runner.manager, companyId);
+      if (resynced.length > 0) {
+        this.logger.log({
+          event: 'superadmin.tenant.import.counters_resynced',
+          targetCompanyId: companyId,
+          counters: resynced.map((c) => `${c.ticket_type}=${c.current_number}`),
+        });
       }
 
       await runner.commitTransaction();
