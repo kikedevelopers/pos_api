@@ -170,9 +170,7 @@ export class LoginAction {
       // Registrar la última conexión del empleado tras autenticar con éxito.
       // Update ligero (simétrico al del owner en el path User). Lo consumen la
       // lista y el detalle de empleados. Paridad PlacePos (auth.routes).
-      await this.dataSource
-        .getRepository(Employee)
-        .update(employee.id, { last_login: new Date() });
+      await this.dataSource.getRepository(Employee).update(employee.id, { last_login: new Date() });
 
       // Garantizar el User espejo. Si ya existe, sincroniza; si no, lo crea.
       // Transacción dedicada — corta — para que el INSERT del User + UPDATE

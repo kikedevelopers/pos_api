@@ -1,7 +1,10 @@
 import type { DataSource } from 'typeorm';
 
 import { toSaleResponseDto } from '@/modules/sales/dto/sale-response.dto';
-import { SaleStatusEventType, SaleStatusHistory } from '@/modules/sales/entities/sale-status-history.entity';
+import {
+  SaleStatusEventType,
+  SaleStatusHistory,
+} from '@/modules/sales/entities/sale-status-history.entity';
 import { recordSaleStatus } from '@/modules/sales/internal/record-sale-status.helper';
 import { findSaleInCompany } from '@/modules/sales/internal/sale-lookups';
 
@@ -63,7 +66,9 @@ async function loadStatusHistoryViaSerializer(
   ds: DataSource,
   companyId: number,
   saleId: number,
-): Promise<Array<{ eventType: string; amount: number | null; createdBy: string | null; createdAt: string }>> {
+): Promise<
+  Array<{ eventType: string; amount: number | null; createdBy: string | null; createdAt: string }>
+> {
   const manager = ds.manager;
   const sale = await findSaleInCompany(manager, saleId, companyId, { requireActive: false });
   const statusHistory = await manager.find(SaleStatusHistory, {
@@ -357,9 +362,10 @@ describe('Historial de estados de venta (e2e, pos_db)', () => {
       total: 100,
     });
     const customerId = (
-      await ds.query(`INSERT INTO customers (company_id, name) VALUES ($1, 'BF Cliente') RETURNING id`, [
-        String(companyA),
-      ])
+      await ds.query(
+        `INSERT INTO customers (company_id, name) VALUES ($1, 'BF Cliente') RETURNING id`,
+        [String(companyA)],
+      )
     )[0].id;
     await ds.query(
       `INSERT INTO sale_credits

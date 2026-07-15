@@ -68,7 +68,7 @@ describe('Body parser limit (e2e)', () => {
     });
 
     it('acepta un body JSON grande (>100kb) sin 413', async () => {
-      const response = await request(app.getHttpServer() as Server)
+      const response = await request(app.getHttpServer())
         .post('/probe/echo')
         .send({ blob: bigBlob });
 
@@ -77,7 +77,7 @@ describe('Body parser limit (e2e)', () => {
     });
 
     it('preserva req.rawBody (firma superadmin) junto con el límite ampliado', async () => {
-      const response = await request(app.getHttpServer() as Server)
+      const response = await request(app.getHttpServer())
         .post('/probe/echo')
         .send({ blob: 'hola' });
 
@@ -99,7 +99,7 @@ describe('Body parser limit (e2e)', () => {
     });
 
     it('rechaza un body JSON grande con 413 (control negativo)', async () => {
-      const response = await request(app.getHttpServer() as Server)
+      const response = await request(app.getHttpServer())
         .post('/probe/echo')
         .send({ blob: bigBlob });
 
@@ -127,7 +127,7 @@ describe('Body parser limit (e2e)', () => {
     });
 
     it('el body grande vuelve a fallar con 413 (demuestra por qué el arg extra rompe)', async () => {
-      const response = await request(app.getHttpServer() as Server)
+      const response = await request(app.getHttpServer())
         .post('/probe/echo')
         .send({ blob: bigBlob });
 

@@ -34,7 +34,10 @@ function buildAction(entities: unknown[], raw: unknown[], total: number) {
 }
 
 describe('ListTenantsAction · lastLogin', () => {
-  const sub = { s_started_at: new Date('2026-06-01T00:00:00Z'), s_expires_at: new Date('2026-12-31T00:00:00Z') };
+  const sub = {
+    s_started_at: new Date('2026-06-01T00:00:00Z'),
+    s_expires_at: new Date('2026-12-31T00:00:00Z'),
+  };
 
   it('proyecta lastLogin (ISO) desde owner.last_login', async () => {
     const lastLogin = new Date('2026-07-06T21:13:00.000Z');
@@ -50,7 +53,7 @@ describe('ListTenantsAction · lastLogin', () => {
     };
     const { action } = buildAction([owner], [sub], 1);
 
-    const res = await action.execute({} as never);
+    const res = await action.execute({});
 
     expect(res.total).toBe(1);
     expect(res.tenants[0].lastLogin).toBe(lastLogin.toISOString());
@@ -69,7 +72,7 @@ describe('ListTenantsAction · lastLogin', () => {
     };
     const { action } = buildAction([owner], [sub], 1);
 
-    const res = await action.execute({} as never);
+    const res = await action.execute({});
 
     expect(res.tenants[0].lastLogin).toBeNull();
   });

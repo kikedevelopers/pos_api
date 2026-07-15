@@ -2,10 +2,7 @@ import type { EntityManager } from 'typeorm';
 
 import { SaleCreditStatus } from '../entities/sale-credit.entity';
 import { TicketType, type SaleInvoice } from '../entities/sale-invoice.entity';
-import {
-  SaleStatusEventType,
-  SaleStatusHistory,
-} from '../entities/sale-status-history.entity';
+import { SaleStatusEventType, SaleStatusHistory } from '../entities/sale-status-history.entity';
 import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import { toSaleResponseDto } from '../dto/sale-response.dto';
 
@@ -126,16 +123,7 @@ describe('toSaleResponseDto — statusHistory', () => {
       }),
     ];
 
-    const dto = toSaleResponseDto(
-      baseSale(),
-      [],
-      [],
-      null,
-      [],
-      false,
-      null,
-      history,
-    );
+    const dto = toSaleResponseDto(baseSale(), [], [], null, [], false, null, history);
 
     expect(dto.statusHistory).toEqual([
       {

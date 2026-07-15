@@ -26,9 +26,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * No hay filas con el nuevo valor todavía, así que el ADD no falla la
  * validación de datos existentes.
  */
-export class AddSalePaymentCustomerAdvanceAccountType1747012120000
-  implements MigrationInterface
-{
+export class AddSalePaymentCustomerAdvanceAccountType1747012120000 implements MigrationInterface {
   name = 'AddSalePaymentCustomerAdvanceAccountType1747012120000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -1147,8 +1147,18 @@ describe('VoidSaleAction (e2e, pos_db) — anulación TOTAL sobre el CONSOLIDADO
     const P1 = await insertProduct(ds, companyId, { name: 'V5 P1', cost: 4, stock: 100 });
 
     // Cobro 3× P1; NC parcial remueve LAS 3 → consolidado queda VACÍO.
-    await deductReal(ds, companyId, [{ item_id: Number(P1), quantity: 3, packaging_value: 1 }], 'DEDUCT');
-    await deductReal(ds, companyId, [{ item_id: Number(P1), quantity: 3, packaging_value: 1 }], 'RETURN');
+    await deductReal(
+      ds,
+      companyId,
+      [{ item_id: Number(P1), quantity: 3, packaging_value: 1 }],
+      'DEDUCT',
+    );
+    await deductReal(
+      ds,
+      companyId,
+      [{ item_id: Number(P1), quantity: 3, packaging_value: 1 }],
+      'RETURN',
+    );
     expect(await stockOf(ds, companyId, P1)).toBe(100); // 100 - 3 + 3
 
     const saleId = await insertSaleInvoiceSALE(ds, companyId, {

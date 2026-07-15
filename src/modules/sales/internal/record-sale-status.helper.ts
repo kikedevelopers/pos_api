@@ -1,9 +1,7 @@
 import type { EntityManager } from 'typeorm';
 
-import {
-  SaleStatusEventType,
-  SaleStatusHistory,
-} from '../entities/sale-status-history.entity';
+import type { SaleStatusEventType } from '../entities/sale-status-history.entity';
+import { SaleStatusHistory } from '../entities/sale-status-history.entity';
 
 /**
  * Parámetros para registrar una transición de estado de una venta.

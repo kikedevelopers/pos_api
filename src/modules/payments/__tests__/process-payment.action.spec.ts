@@ -515,7 +515,9 @@ describe('ProcessPaymentAction (split tender)', () => {
     const dto: ProcessPaymentDto = {
       invoice_id: 142,
       amount_due: 150,
-      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 }],
+      payments: [
+        { payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 },
+      ],
       is_credit: false,
       credit_amount: 0,
     };
@@ -551,7 +553,9 @@ describe('ProcessPaymentAction (split tender)', () => {
     const dto: ProcessPaymentDto = {
       invoice_id: 142,
       amount_due: 150,
-      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 }],
+      payments: [
+        { payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 },
+      ],
       is_credit: false,
       credit_amount: 0,
     };
@@ -567,7 +571,9 @@ describe('ProcessPaymentAction (split tender)', () => {
     const dto: ProcessPaymentDto = {
       invoice_id: 142,
       amount_due: 150,
-      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 }],
+      payments: [
+        { payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, change_amount: 0 },
+      ],
       is_credit: false,
       credit_amount: 0,
     };
@@ -586,9 +592,7 @@ describe('ProcessPaymentAction (split tender)', () => {
     const dto: ProcessPaymentDto = {
       invoice_id: 142,
       amount_due: 150,
-      payments: [
-        { payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, bank_id: 7 },
-      ],
+      payments: [{ payment_method: ProcessPaymentMethod.ADVANCE, amount_paid: 150, bank_id: 7 }],
       is_credit: false,
       credit_amount: 0,
     };

@@ -75,8 +75,7 @@ export class ExpandFactoryRolesPermissions1747011960000 implements MigrationInte
 
   // Set viejo de fábrica del Cajero (5 keys) ORDENADO alfabéticamente, para
   // detectar "no personalizado" comparando contra el array de permisos ordenado.
-  private static readonly OLD_CASHIER_SORTED =
-    `ARRAY['canAccessClientsReport','canAccessCustomers','canAccessExpenses','canAccessPOS','canAccessSalesReport']::text[]`;
+  private static readonly OLD_CASHIER_SORTED = `ARRAY['canAccessClientsReport','canAccessCustomers','canAccessExpenses','canAccessPOS','canAccessSalesReport']::text[]`;
 
   private static readonly SELLER_PERMISSIONS = JSON.stringify([
     'canAccessPOS',

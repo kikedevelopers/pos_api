@@ -116,9 +116,13 @@ export function partitionImportTables(present: string[]): {
   const preserved: string[] = [];
   const skipped: string[] = [];
   for (const t of present) {
-    if (SKIPPED_IMPORT_TABLES.has(t)) skipped.push(t);
-    else if (PRESERVED_TABLES.has(t)) preserved.push(t);
-    else replace.push(t);
+    if (SKIPPED_IMPORT_TABLES.has(t)) {
+      skipped.push(t);
+    } else if (PRESERVED_TABLES.has(t)) {
+      preserved.push(t);
+    } else {
+      replace.push(t);
+    }
   }
   return { replace, preserved, skipped };
 }

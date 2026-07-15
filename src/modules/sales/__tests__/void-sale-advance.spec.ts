@@ -39,7 +39,11 @@ const getConsolidatedMock = getConsolidatedInvoice as jest.MockedFunction<
  */
 describe('VoidSaleAction (restauración ADVANCE)', () => {
   let action: VoidSaleAction;
-  let updates: Array<{ entity: string; where: Record<string, unknown>; patch: Record<string, unknown> }>;
+  let updates: Array<{
+    entity: string;
+    where: Record<string, unknown>;
+    patch: Record<string, unknown>;
+  }>;
   let recordSpy: jest.Mock;
   let customerAdvanceBalance: number;
   let salePayments: Array<Record<string, unknown>>;

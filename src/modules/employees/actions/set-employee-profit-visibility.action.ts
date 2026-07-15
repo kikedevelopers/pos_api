@@ -38,7 +38,9 @@ export class SetEmployeeProfitVisibilityAction {
     // Solo los campos booleanos presentes forman el patch (ignora undefined).
     const patch: ProfitVisibilityPatch = {};
     for (const field of FIELDS) {
-      if (typeof input[field] === 'boolean') patch[field] = input[field];
+      if (typeof input[field] === 'boolean') {
+        patch[field] = input[field];
+      }
     }
     if (Object.keys(patch).length === 0) {
       throw new BadRequestException('No se recibió ningún permiso para actualizar');

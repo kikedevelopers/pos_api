@@ -7,10 +7,7 @@ import {
 import type { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 
 import { CashRegister } from '../../entities/cash-register.entity';
-import {
-  CashRegisterLog,
-  CashRegisterLogType,
-} from '../../entities/cash-register-log.entity';
+import { CashRegisterLog, CashRegisterLogType } from '../../entities/cash-register-log.entity';
 import { AdjustCashRegisterAction } from '../adjust-cash-register.action';
 
 /**

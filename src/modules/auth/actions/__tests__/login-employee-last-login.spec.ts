@@ -55,7 +55,7 @@ describe('LoginAction · last_login del empleado', () => {
   it('sella employees.last_login tras un login de empleado exitoso', async () => {
     const { action, updateFn, employee } = build();
 
-    const res = await action.execute({ username: 'panchito', password: 'pw' } as never);
+    const res = await action.execute({ username: 'panchito', password: 'pw' });
 
     expect(updateFn).toHaveBeenCalledTimes(1);
     const [id, patch] = updateFn.mock.calls[0];
@@ -68,9 +68,7 @@ describe('LoginAction · last_login del empleado', () => {
     const { action, updateFn } = build();
     (argon2.verify as jest.Mock).mockResolvedValueOnce(false);
 
-    await expect(
-      action.execute({ username: 'panchito', password: 'mala' } as never),
-    ).rejects.toThrow();
+    await expect(action.execute({ username: 'panchito', password: 'mala' })).rejects.toThrow();
 
     expect(updateFn).not.toHaveBeenCalled();
   });

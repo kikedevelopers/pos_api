@@ -17,7 +17,9 @@ import {
 import { DeleteSalePaymentAction } from '../actions/delete-sale-payment.action';
 
 const loadSaleMock = loadSaleForSettlement as jest.MockedFunction<typeof loadSaleForSettlement>;
-const recomputeMock = recomputeSaleSettlement as jest.MockedFunction<typeof recomputeSaleSettlement>;
+const recomputeMock = recomputeSaleSettlement as jest.MockedFunction<
+  typeof recomputeSaleSettlement
+>;
 
 /**
  * Reverso de un pago ADVANCE: debe RESTAURAR `advance_balance` del cliente
@@ -27,7 +29,11 @@ const recomputeMock = recomputeSaleSettlement as jest.MockedFunction<typeof reco
  */
 describe('DeleteSalePaymentAction (reverso ADVANCE)', () => {
   let action: DeleteSalePaymentAction;
-  let updates: Array<{ entity: string; where: Record<string, unknown>; patch: Record<string, unknown> }>;
+  let updates: Array<{
+    entity: string;
+    where: Record<string, unknown>;
+    patch: Record<string, unknown>;
+  }>;
   let recordSpy: jest.Mock;
   let customerAdvanceBalance: number;
 
@@ -75,7 +81,9 @@ describe('DeleteSalePaymentAction (reverso ADVANCE)', () => {
           return Promise.resolve({ raw: [], affected: 1, generatedMaps: [] });
         },
       ),
-      save: jest.fn((_entity: unknown, payload: Record<string, unknown>) => Promise.resolve(payload)),
+      save: jest.fn((_entity: unknown, payload: Record<string, unknown>) =>
+        Promise.resolve(payload),
+      ),
       create: jest.fn((_entity: unknown, input: Record<string, unknown>) => input),
     };
   }

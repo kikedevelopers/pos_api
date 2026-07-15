@@ -19,7 +19,9 @@ function build(userOverrides: Record<string, unknown> = {}) {
   const jwtIssuer = { sign: jest.fn().mockResolvedValue('tok') };
   const dummyHash = {};
   const subscriptionsService = {
-    findApplicable: jest.fn().mockResolvedValue({ expires_at: new Date(Date.now() + 1_000_000_000) }),
+    findApplicable: jest
+      .fn()
+      .mockResolvedValue({ expires_at: new Date(Date.now() + 1_000_000_000) }),
   };
   const dataSource = { getRepository: jest.fn().mockReturnValue({ update: updateFn }) };
 
@@ -38,7 +40,7 @@ describe('LoginAction · last_login', () => {
   it('actualiza last_login del owner tras un login exitoso', async () => {
     const { action, updateFn, user } = build();
 
-    const res = await action.execute({ username: 'cesar@hotmail.com', password: 'pw' } as never);
+    const res = await action.execute({ username: 'cesar@hotmail.com', password: 'pw' });
 
     expect(updateFn).toHaveBeenCalledTimes(1);
     const [id, patch] = updateFn.mock.calls[0];
@@ -50,7 +52,7 @@ describe('LoginAction · last_login', () => {
   it('el superadmin (company_id null) también actualiza last_login (exento de suscripción)', async () => {
     const { action, updateFn } = build({ company_id: null, type: 'superadmin' });
 
-    await action.execute({ username: 'cesar@hotmail.com', password: 'pw' } as never);
+    await action.execute({ username: 'cesar@hotmail.com', password: 'pw' });
 
     expect(updateFn).toHaveBeenCalledTimes(1);
     expect(updateFn.mock.calls[0][1].last_login).toBeInstanceOf(Date);

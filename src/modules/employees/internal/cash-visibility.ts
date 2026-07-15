@@ -14,7 +14,11 @@ export function resolveCashVisibilityOnRoleChange(
   previousRoleId: string | null,
   cajeroRoleId: string | null,
 ): boolean | undefined {
-  if (cajeroRoleId == null) return undefined;
-  if (newRoleId === cajeroRoleId && previousRoleId !== cajeroRoleId) return true;
+  if (cajeroRoleId == null) {
+    return undefined;
+  }
+  if (newRoleId === cajeroRoleId && previousRoleId !== cajeroRoleId) {
+    return true;
+  }
   return undefined;
 }

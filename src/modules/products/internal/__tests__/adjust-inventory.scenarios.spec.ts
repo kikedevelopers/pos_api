@@ -89,7 +89,9 @@ describe('adjustInventory — escenarios de negocio (base + presentaciones)', ()
           const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
           if (name === 'Product') {
             const p = productById.get(String(where.id));
-            if (p) p.stock = patch.stock;
+            if (p) {
+              p.stock = patch.stock;
+            }
           }
           return Promise.resolve({ affected: 1 });
         },

@@ -64,7 +64,9 @@ describe('RolesGuard', () => {
 
   it('empleado fuera de @Roles y SIN @RequirePermission → 403', () => {
     const guard = new RolesGuard(buildReflector(['owner', 'manager'], undefined));
-    expect(() => guard.canActivate(buildContext(buildUser('employee')))).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(buildContext(buildUser('employee')))).toThrow(
+      ForbiddenException,
+    );
   });
 
   it('empleado fuera de @Roles pero CON @RequirePermission → pasa (delega al PermissionsGuard)', () => {

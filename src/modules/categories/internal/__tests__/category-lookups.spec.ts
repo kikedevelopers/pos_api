@@ -75,9 +75,7 @@ function buildManager(opts: ManagerOptions = {}) {
           const wanted = normalizeLikeSql(String(params.name));
           const match = rows.find(
             (r) =>
-              r.company_id === companyId &&
-              !r.is_archived &&
-              normalizeLikeSql(r.name) === wanted,
+              r.company_id === companyId && !r.is_archived && normalizeLikeSql(r.name) === wanted,
           );
           return match ? { id: match.id } : undefined;
         },
@@ -127,9 +125,7 @@ describe('resolveCategoryIdByName (pos_api)', () => {
       ['solo espacios', '   '],
     ])('%s → null', async (_label, value) => {
       const { manager, saveCalls } = buildManager();
-      expect(
-        await resolveCategoryIdByName(manager, value as string | undefined | null, COMPANY),
-      ).toBeNull();
+      expect(await resolveCategoryIdByName(manager, value, COMPANY)).toBeNull();
       expect(saveCalls).toHaveLength(0);
     });
   });

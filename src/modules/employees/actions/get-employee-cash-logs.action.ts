@@ -23,7 +23,9 @@ export class GetEmployeeCashLogsAction {
   async execute(id: number, companyId: number, limit: number): Promise<CashRegisterLog[]> {
     const employee = await findEmployeeInCompany(this.dataSource.manager, id, companyId);
     const userId = employee.user_id !== null ? Number(employee.user_id) : null;
-    if (userId === null) return [];
+    if (userId === null) {
+      return [];
+    }
     return this.cashRegisterService.listLogs(companyId, userId, limit);
   }
 }

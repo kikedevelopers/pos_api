@@ -1,5 +1,5 @@
+import type { ImportRemapContext } from '../tenant-backup.util';
 import {
-  ImportRemapContext,
   canonicalize,
   computeTablesHash,
   partitionImportTables,
@@ -146,7 +146,14 @@ describe('tenant-backup.util', () => {
       const { replace, preserved, skipped } = partitionImportTables(present);
       expect(skipped).toEqual(['inventory_shares']);
       expect(preserved).toEqual(
-        expect.arrayContaining(['companies', 'users', 'subscriptions', 'employees', 'roles', 'app_settings']),
+        expect.arrayContaining([
+          'companies',
+          'users',
+          'subscriptions',
+          'employees',
+          'roles',
+          'app_settings',
+        ]),
       );
       expect(replace).toEqual(['products', 'sale_invoices', 'customers']);
       // Ninguna tabla aparece en dos grupos.
@@ -175,10 +182,8 @@ describe('tenant-backup.util', () => {
       ...over,
     });
 
-    const pick = (
-      result: { columns: string[]; values: unknown[] },
-      col: string,
-    ): unknown => result.values[result.columns.indexOf(col)];
+    const pick = (result: { columns: string[]; values: unknown[] }, col: string): unknown =>
+      result.values[result.columns.indexOf(col)];
 
     it('omite la PK (la BD asigna un id nuevo)', () => {
       const res = remapRowForImport({ id: 100, total: '5' }, baseCtx());
@@ -220,14 +225,23 @@ describe('tenant-backup.util', () => {
     it('si el padre no se importó, la FK queda null (la BD descarta si es NOT NULL)', () => {
       const res = remapRowForImport(
         { id: 1, customer_id: 50 },
-        baseCtx({ fkParentByColumn: { customer_id: 'customers' }, idMaps: new Map([['customers', new Map()]]) }),
+        baseCtx({
+          fkParentByColumn: { customer_id: 'customers' },
+          idMaps: new Map([['customers', new Map()]]),
+        }),
       );
       expect(pick(res, 'customer_id')).toBeNull();
     });
 
     it('reapunta la auditoría (created_by_id → owner, created_by → nombre owner)', () => {
       const res = remapRowForImport(
-        { id: 1, created_by_id: 13, created_by: 'DIANA BOLAÑOS', updated_by_id: 15, updated_by: 'OTRO' },
+        {
+          id: 1,
+          created_by_id: 13,
+          created_by: 'DIANA BOLAÑOS',
+          updated_by_id: 15,
+          updated_by: 'OTRO',
+        },
         baseCtx(),
       );
       expect(pick(res, 'created_by_id')).toBe(90);

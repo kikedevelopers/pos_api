@@ -344,8 +344,7 @@ export class EmployeesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Conceder/revocar el permiso del empleado para ver el saldo y el historial de caja',
-    description:
-      'Persiste `employees.can_view_cash`. No toca caja ni credenciales. Solo owner.',
+    description: 'Persiste `employees.can_view_cash`. No toca caja ni credenciales. Solo owner.',
   })
   @ApiParam({ name: 'id', type: 'integer', example: 1 })
   @ApiBody({ type: SetCashVisibilityDto })
@@ -359,7 +358,11 @@ export class EmployeesController {
     @Body() dto: SetCashVisibilityDto,
     @CurrentCompany() companyId: number,
   ): Promise<EmployeeDetailResponseDto> {
-    const employee = await this.employeesService.setCashVisibility(id, dto.can_view_cash, companyId);
+    const employee = await this.employeesService.setCashVisibility(
+      id,
+      dto.can_view_cash,
+      companyId,
+    );
     const detail = await this.employeesService.findOne(Number(employee.id), companyId);
     return toEmployeeDetailResponseDto(detail);
   }
@@ -378,7 +381,8 @@ export class EmployeesController {
     @CurrentCompany() companyId: number,
   ): Promise<CashRegisterLogResponseDto[]> {
     const parsedLimit = Number(limit);
-    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.floor(parsedLimit) : 200;
+    const safeLimit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.floor(parsedLimit) : 200;
     const logs = await this.employeesService.getCashLogs(id, companyId, safeLimit);
     return logs.map(toCashRegisterLogResponseDto);
   }

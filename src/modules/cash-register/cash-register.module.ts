@@ -29,10 +29,7 @@ import { CashRegister } from './entities/cash-register.entity';
  * requiere inyección DI.
  */
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([CashRegister, CashRegisterLog]),
-    FinancialMovementsModule,
-  ],
+  imports: [TypeOrmModule.forFeature([CashRegister, CashRegisterLog]), FinancialMovementsModule],
   controllers: [CashRegisterController],
   providers: [
     CashRegisterService,

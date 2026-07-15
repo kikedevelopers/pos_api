@@ -51,12 +51,9 @@ export enum ProcessPaymentMethod {
  */
 export class ProcessPaymentTenderDto {
   @ApiProperty({
-    description: 'Método de este tender. CREDIT no es válido aquí. ADVANCE redime `advance_balance`.',
-    enum: [
-      ProcessPaymentMethod.CASH,
-      ProcessPaymentMethod.TRANSFER,
-      ProcessPaymentMethod.ADVANCE,
-    ],
+    description:
+      'Método de este tender. CREDIT no es válido aquí. ADVANCE redime `advance_balance`.',
+    enum: [ProcessPaymentMethod.CASH, ProcessPaymentMethod.TRANSFER, ProcessPaymentMethod.ADVANCE],
     example: ProcessPaymentMethod.CASH,
   })
   @IsEnum(ProcessPaymentMethod)
