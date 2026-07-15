@@ -8,6 +8,7 @@ import {
   IsString,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -38,8 +39,27 @@ export class UpdateCompanyDto {
   @IsString({ message: 'address debe ser un texto' })
   address?: string;
 
+  /**
+   * Correo de contacto del negocio. OPCIONAL: se puede guardar el resto de la
+   * ficha sin él, y enviarlo vacío lo BORRA (`UpdateCompanyAction` persiste
+   * `dto.email || null`).
+   *
+   * `@ValidateIf` y no solo `@IsOptional()`: `IsOptional` únicamente salta
+   * `null`/`undefined`, así que la cadena vacía SÍ llegaba a `@IsEmail` y el
+   * update entero se caía con 400 — imposible guardar dirección o teléfono
+   * dejando el correo en blanco. El formulario manda `''` cuando el campo está
+   * vacío, que es el caso normal, no un caso raro.
+   *
+   * Y `@ValidateIf` en vez del `@Transform(emptyToUndefined)` que usan otros
+   * DTOs (`create-customer`, `create-branch`): ahí sirve porque son CREACIONES,
+   * pero aquí `''` → `undefined` haría que el action se saltara el campo
+   * (`if (dto.email !== undefined)`) y el correo NUNCA se podría borrar. Con
+   * `ValidateIf`, el `''` llega intacto y el action lo persiste como `null`.
+   *
+   * Con un valor no vacío sí se valida el formato.
+   */
   @ApiPropertyOptional({ example: 'contacto@minegocio.com', nullable: true })
-  @IsOptional()
+  @ValidateIf((o: UpdateCompanyDto) => o.email !== undefined && o.email !== null && o.email !== '')
   @IsEmail({}, { message: 'email debe ser una dirección de correo válida' })
   email?: string;
 
