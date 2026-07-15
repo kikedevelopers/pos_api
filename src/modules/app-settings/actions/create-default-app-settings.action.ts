@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS: Array<{ key: string; value: string }> = [
   { key: APP_SETTING_KEYS.APP_COLOR_MODE, value: 'white' },
   { key: APP_SETTING_KEYS.POS_MARGINS_ENABLED, value: 'false' },
   { key: APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS, value: 'false' },
+  { key: APP_SETTING_KEYS.SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES, value: 'false' },
 ];
 
 /**

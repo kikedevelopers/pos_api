@@ -30,18 +30,21 @@ describe('CreateDefaultAppSettingsAction', () => {
     action = module.get(CreateDefaultAppSettingsAction);
   });
 
-  it('crea los settings defaults (app_color_mode=white, pos_margins_enabled=false, include_orders_in_reports=false)', async () => {
+  it('crea los settings defaults, con TODOS los flags de negocio en false', async () => {
     await action.execute(managerMock as never, {
       companyId: 42,
       createdBy: { id: 7, fullName: 'Kike Pacheco' },
     });
 
-    expect(createdRows).toHaveLength(3);
+    expect(createdRows).toHaveLength(4);
 
     const map = new Map(createdRows.map((r) => [r.key, r.value]));
     expect(map.get(APP_SETTING_KEYS.APP_COLOR_MODE)).toBe('white');
     expect(map.get(APP_SETTING_KEYS.POS_MARGINS_ENABLED)).toBe('false');
+    // Los flags de comportamiento nacen APAGADOS: una company nueva se comporta
+    // como siempre hasta que alguien los active a conciencia.
     expect(map.get(APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS)).toBe('false');
+    expect(map.get(APP_SETTING_KEYS.SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES)).toBe('false');
 
     for (const row of createdRows) {
       expect(row.company_id).toBe('42');

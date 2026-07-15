@@ -29,6 +29,10 @@ export const APP_SETTING_KEYS = {
   // ventas y como sub-línea de facturación en Finanzas. NO afecta caja/recaudo
   // ni la ganancia cobrada canónica. Default false (comportamiento actual).
   INCLUDE_ORDERS_IN_REPORTS: 'include_orders_in_reports',
+  // Mostrar TODOS los productos base (parent_id IS NULL) en el buscador de
+  // compras, saltándose la validación de `is_purchasable`. Aditivo: nunca
+  // esconde lo que ya aparecía. Default false (comportamiento actual).
+  SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES: 'show_all_base_products_in_purchases',
   // Sistema de PUNTOS de cliente (paridad PlacePos `customerPointsSettings`).
   // 3 keys: flag + base de pesos + puntos por base.
   CUSTOMER_POINTS_ENABLED: 'customer_points_enabled',

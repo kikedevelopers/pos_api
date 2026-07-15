@@ -15,10 +15,12 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import { GetCustomerPointsAction } from './actions/get-customer-points.action';
 import { GetIncludeOrdersInReportsAction } from './actions/get-include-orders-in-reports.action';
 import { GetPosMarginsAction } from './actions/get-pos-margins.action';
+import { GetShowAllBaseProductsInPurchasesAction } from './actions/get-show-all-base-products-in-purchases.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
 import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.action';
 import { UpsertIncludeOrdersInReportsAction } from './actions/upsert-include-orders-in-reports.action';
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
+import { UpsertShowAllBaseProductsInPurchasesAction } from './actions/upsert-show-all-base-products-in-purchases.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
@@ -28,6 +30,10 @@ import {
   UpdateIncludeOrdersInReportsDto,
 } from './dto/include-orders-in-reports.dto';
 import { PosMarginsConfigDto, UpdatePosMarginsDto } from './dto/pos-margins.dto';
+import {
+  ShowAllBaseProductsInPurchasesConfigDto,
+  UpdateShowAllBaseProductsInPurchasesDto,
+} from './dto/show-all-base-products-in-purchases.dto';
 import { StrictInventoryConfigDto, UpdateStrictInventoryDto } from './dto/strict-inventory.dto';
 import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
 
@@ -67,6 +73,8 @@ export class AppSettingsController {
     private readonly upsertCustomerPointsAction: UpsertCustomerPointsAction,
     private readonly getIncludeOrdersInReportsAction: GetIncludeOrdersInReportsAction,
     private readonly upsertIncludeOrdersInReportsAction: UpsertIncludeOrdersInReportsAction,
+    private readonly getShowAllBaseProductsInPurchasesAction: GetShowAllBaseProductsInPurchasesAction,
+    private readonly upsertShowAllBaseProductsInPurchasesAction: UpsertShowAllBaseProductsInPurchasesAction,
   ) {}
 
   // ----------------------------------------------------------------------
@@ -206,6 +214,39 @@ export class AppSettingsController {
     @CurrentCompany() companyId: number,
   ): Promise<IncludeOrdersInReportsConfigDto> {
     return this.upsertIncludeOrdersInReportsAction.execute(dto, companyId);
+  }
+
+  @Get('show-all-base-products-in-purchases')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Flag «mostrar todos los productos base en compras»',
+    description:
+      'Devuelve `{ enabled }` desde la key `show_all_base_products_in_purchases`. Cuando está activo, todos los productos base aparecen en el buscador de compras sin necesidad de marcarlos "Disponible para compra".',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: ShowAllBaseProductsInPurchasesConfigDto })
+  async getShowAllBaseProductsInPurchases(
+    @CurrentCompany() companyId: number,
+  ): Promise<ShowAllBaseProductsInPurchasesConfigDto> {
+    return this.getShowAllBaseProductsInPurchasesAction.execute(companyId);
+  }
+
+  @Put('show-all-base-products-in-purchases')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set flag «mostrar todos los productos base en compras»',
+    description:
+      'Lo gestionan administradores Y dueños (a diferencia de `include-orders-in-reports`, que es owner-only): no mueve dinero ni datos, solo decide qué lista el buscador de compras.',
+  })
+  @ApiBody({ type: UpdateShowAllBaseProductsInPurchasesDto })
+  @ApiResponse({ status: HttpStatus.OK, type: ShowAllBaseProductsInPurchasesConfigDto })
+  async upsertShowAllBaseProductsInPurchases(
+    @Body() dto: UpdateShowAllBaseProductsInPurchasesDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<ShowAllBaseProductsInPurchasesConfigDto> {
+    return this.upsertShowAllBaseProductsInPurchasesAction.execute(dto, companyId);
   }
 
   // ----------------------------------------------------------------------
