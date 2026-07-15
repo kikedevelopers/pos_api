@@ -1,9 +1,15 @@
 import type { DataSource } from 'typeorm';
 
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import { GetTodayAction } from '@/modules/dashboard/actions/get-today.action';
 import { GetDailyClosureAction } from '@/modules/reports/actions/get-daily-closure.action';
 
-import { cleanupCompany, createDisposableCompany, tryInitDataSource } from './helpers/e2e-db';
+import {
+  cleanupCompany,
+  createDisposableCompany,
+  includeOrdersFlagStub,
+  tryInitDataSource,
+} from './helpers/e2e-db';
 
 /**
  * E2E (BD REAL) de la contabilidad de caja por `sold_at`.
@@ -103,8 +109,7 @@ async function insertSaleCredit(
   opts: { totalAmount: number; paidAmount: number },
 ): Promise<void> {
   const balance = opts.totalAmount - opts.paidAmount;
-  const status =
-    opts.paidAmount <= 0 ? 'PENDING' : balance <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+  const status = opts.paidAmount <= 0 ? 'PENDING' : balance <= 0 ? 'PAID' : 'PARTIALLY_PAID';
   await db.query(
     `INSERT INTO sale_credits
        (company_id, sale_invoice_id, customer_id, total_amount, paid_amount, balance, status)
@@ -177,8 +182,10 @@ describe('Contabilidad de caja por sold_at (daily-closure + dashboard, e2e pos_d
       return;
     }
     companyId = await createDisposableCompany(ds, '__E2E_SOLD_AT_CASH_ACCOUNTING__');
-    dashboard = new GetTodayAction(ds);
-    closure = new GetDailyClosureAction(ds);
+    dashboard = new GetTodayAction(ds, includeOrdersFlagStub(false));
+    // Flag `include_orders_in_reports` sin fila en app_settings → OFF: el ORDER
+    // sigue sin contar como venta del día (que es justo lo que valida este e2e).
+    closure = new GetDailyClosureAction(ds, new GetIncludeOrdersInReportsAction(ds));
 
     // A: PEDIDO creado AYER, cobrado HOY en efectivo (contado).
     const a = await insertSale(ds, companyId, {
@@ -188,7 +195,11 @@ describe('Contabilidad de caja por sold_at (daily-closure + dashboard, e2e pos_d
       cost: 60,
       profit: 40,
     });
-    await insertPayment(ds, companyId, a, { method: 'CASH', amount: 100, createdAtIso: SOLD_TODAY });
+    await insertPayment(ds, companyId, a, {
+      method: 'CASH',
+      amount: 100,
+      createdAtIso: SOLD_TODAY,
+    });
 
     // B: PEDIDO creado AYER, cobrado HOY por transferencia (contado).
     const b = await insertSale(ds, companyId, {

@@ -30,17 +30,18 @@ describe('CreateDefaultAppSettingsAction', () => {
     action = module.get(CreateDefaultAppSettingsAction);
   });
 
-  it('crea los settings defaults (app_color_mode=white, pos_margins_enabled=false)', async () => {
+  it('crea los settings defaults (app_color_mode=white, pos_margins_enabled=false, include_orders_in_reports=false)', async () => {
     await action.execute(managerMock as never, {
       companyId: 42,
       createdBy: { id: 7, fullName: 'Kike Pacheco' },
     });
 
-    expect(createdRows).toHaveLength(2);
+    expect(createdRows).toHaveLength(3);
 
     const map = new Map(createdRows.map((r) => [r.key, r.value]));
     expect(map.get(APP_SETTING_KEYS.APP_COLOR_MODE)).toBe('white');
     expect(map.get(APP_SETTING_KEYS.POS_MARGINS_ENABLED)).toBe('false');
+    expect(map.get(APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS)).toBe('false');
 
     for (const row of createdRows) {
       expect(row.company_id).toBe('42');

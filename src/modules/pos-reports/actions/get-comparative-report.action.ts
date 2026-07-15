@@ -139,7 +139,9 @@ export class GetComparativeReportAction {
         // caería fuera del rango pero SÍ dentro de su día colombiano → descuadre.
         // `dayjs.tz(... , Bogota).toDate()` da el instante UTC de la medianoche
         // colombiana, alineando las claves de día del dayMap con el rango.
-        const dateStart = dayjs.tz(`${formatDateOnlyUtc(start)} 00:00:00.000`, APP_TIMEZONE).toDate();
+        const dateStart = dayjs
+          .tz(`${formatDateOnlyUtc(start)} 00:00:00.000`, APP_TIMEZONE)
+          .toDate();
         const dateEnd = dayjs.tz(`${formatDateOnlyUtc(end)} 23:59:59.999`, APP_TIMEZONE).toDate();
         const dayMap = await fetchDayMetricsMap(this.dataSource, companyId, dateStart, dateEnd);
         return { start, end, dayMap };

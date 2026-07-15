@@ -25,6 +25,10 @@ export const APP_SETTING_KEYS = {
   POS_MARGINS_ENABLED: 'pos_margins_enabled',
   POS_MARGINS: 'pos_margins',
   STRICT_INVENTORY_CONTROL: 'strict_inventory_control',
+  // Incluir los pedidos (ticket_type = 'ORDER') en los INGRESOS del informe de
+  // ventas y como sub-línea de facturación en Finanzas. NO afecta caja/recaudo
+  // ni la ganancia cobrada canónica. Default false (comportamiento actual).
+  INCLUDE_ORDERS_IN_REPORTS: 'include_orders_in_reports',
   // Sistema de PUNTOS de cliente (paridad PlacePos `customerPointsSettings`).
   // 3 keys: flag + base de pesos + puntos por base.
   CUSTOMER_POINTS_ENABLED: 'customer_points_enabled',

@@ -13,6 +13,8 @@ import {
   round2,
 } from '../internal/aggregations';
 import { buildDateList, daysAgoUtc, parseDateRange, todayUtc } from '../internal/date-range';
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
+import { fetchOrdersByDay } from '@/modules/reports/internal/sales-aggregations';
 
 /**
  * Output del endpoint `GET /dashboard/performance`. Series temporales + totales.
@@ -27,6 +29,13 @@ export interface PerformancePoint {
   profit: number;
   expenses: number;
   credits: number;
+  /**
+   * Facturación de pedidos del día (flag `include_orders_in_reports`; 0 con el
+   * flag OFF). YA ESTÁ SUMADA dentro de `sales` (el pedido se trata como una
+   * venta normal) y su ganancia dentro de `profit`; se expone aparte solo para
+   * poder discriminar qué parte de `sales` viene de pedidos.
+   */
+  orders: number;
 }
 
 export interface PerformanceTotals {
@@ -34,6 +43,7 @@ export interface PerformanceTotals {
   profit: number;
   expenses: number;
   credits: number;
+  orders: number;
   margin: number;
 }
 
@@ -60,7 +70,10 @@ export interface PerformanceResult {
  */
 @Injectable()
 export class GetPerformanceAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
+  ) {}
 
   async execute(
     companyId: number,
@@ -71,20 +84,29 @@ export class GetPerformanceAction {
     const toStr = toInput ?? todayUtc();
     const range = parseDateRange(fromStr, toStr);
 
-    // Paralelizamos los 5 reads — son SELECTs independientes contra la misma DB.
-    const [salesRows, notesRows, expensesRows, creditPaymentRows, creditsGeneratedRows] =
-      await Promise.all([
-        fetchSalesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-        fetchNotesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-        fetchExpensesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-        fetchCreditPaymentsBreakdownByDay(
-          this.dataSource,
-          companyId,
-          range.dateStart,
-          range.dateEnd,
-        ),
-        fetchCreditsGeneratedByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      ]);
+    // Flag `include_orders_in_reports`: con él activo el pedido cuenta como una
+    // venta normal — suma a la serie "Recaudo" y su ganancia a "Ganancia",
+    // igual que en el resto del dashboard.
+    const includeOrders = await this.getIncludeOrdersInReports.execute(companyId);
+
+    // Paralelizamos los reads — son SELECTs independientes contra la misma DB.
+    const [
+      salesRows,
+      notesRows,
+      expensesRows,
+      creditPaymentRows,
+      creditsGeneratedRows,
+      ordersRows,
+    ] = await Promise.all([
+      fetchSalesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchNotesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchExpensesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchCreditPaymentsBreakdownByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      fetchCreditsGeneratedByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      includeOrders.enabled
+        ? fetchOrdersByDay(this.dataSource, String(companyId), range.dateStart, range.dateEnd)
+        : Promise.resolve([]),
+    ]);
 
     interface Bucket {
       sales: Big;
@@ -92,6 +114,7 @@ export class GetPerformanceAction {
       cost: Big;
       expenses: Big;
       credits: Big;
+      orders: Big;
     }
     const byDate = new Map<string, Bucket>();
     const ensure = (date: string): Bucket => {
@@ -105,6 +128,7 @@ export class GetPerformanceAction {
         cost: new Big(0),
         expenses: new Big(0),
         credits: new Big(0),
+        orders: new Big(0),
       };
       byDate.set(date, fresh);
       return fresh;
@@ -150,6 +174,19 @@ export class GetPerformanceAction {
       b.credits = b.credits.plus(toBig(row.credits));
     }
 
+    // Pedidos (flag ON): se tratan como una venta normal — su total suma a
+    // `sales` y su ganancia real (total − costo) a `profit`. `orders` guarda
+    // aparte cuánto de `sales` viene de pedidos, para poder discriminarlo.
+    for (const row of ordersRows) {
+      const b = ensure(row.date);
+      const ordersTotal = toBig(row.orders_total);
+      const ordersCost = toBig(row.orders_cost);
+      b.orders = b.orders.plus(ordersTotal);
+      b.sales = b.sales.plus(ordersTotal);
+      b.cost = b.cost.plus(ordersCost);
+      b.profit = b.profit.plus(ordersTotal.minus(ordersCost));
+    }
+
     const series: PerformancePoint[] = buildDateList(range.from, range.to).map((date) => {
       const b = byDate.get(date);
       return {
@@ -158,6 +195,7 @@ export class GetPerformanceAction {
         profit: round2(b ? b.profit.toNumber() : 0),
         expenses: round2(b ? b.expenses.toNumber() : 0),
         credits: round2(b ? b.credits.toNumber() : 0),
+        orders: round2(b ? b.orders.toNumber() : 0),
       };
     });
 
@@ -169,6 +207,7 @@ export class GetPerformanceAction {
         acc.profit = acc.profit.plus(d.profit);
         acc.expenses = acc.expenses.plus(d.expenses);
         acc.credits = acc.credits.plus(d.credits);
+        acc.orders = acc.orders.plus(d.orders);
         return acc;
       },
       {
@@ -176,11 +215,15 @@ export class GetPerformanceAction {
         profit: new Big(0),
         expenses: new Big(0),
         credits: new Big(0),
+        orders: new Big(0),
       },
     );
 
     const salesTotal = round2(totals.sales.toNumber());
     const profitTotal = round2(totals.profit.toNumber());
+    const ordersTotal = round2(totals.orders.toNumber());
+    // `sales` ya incluye los pedidos, así que numerador y denominador son
+    // coherentes y la fórmula del margen no cambia con el flag.
     const margin = totals.sales.gt(0)
       ? round2(totals.profit.times(100).div(totals.sales).toNumber())
       : 0;
@@ -194,6 +237,7 @@ export class GetPerformanceAction {
         profit: profitTotal,
         expenses: round2(totals.expenses.toNumber()),
         credits: round2(totals.credits.toNumber()),
+        orders: ordersTotal,
         margin,
       },
     };

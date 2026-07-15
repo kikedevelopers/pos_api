@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import { fetchCashAccounts } from '@/modules/dashboard/internal/cash-accounts';
 import { parseDateRange, startOfMonthUtc, todayUtc } from '@/modules/dashboard/internal/date-range';
 import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
@@ -9,10 +10,13 @@ import { toBig } from '@/common/utils/precision';
 
 import {
   computeNetCashSales,
+  computeOrdersProfit,
+  EMPTY_ORDERS_BILLING,
   fetchCashNotes,
   fetchCashSales,
   fetchExpensesTotal,
   fetchNewCredits,
+  fetchOrdersBilling,
   fetchTotalPendingCredits,
   fetchTransferSales,
 } from '../internal/sales-aggregations';
@@ -54,6 +58,14 @@ export interface ExtendedSummaryResult {
     efectivo: number;
     electronico: number;
     credito: number;
+    // Facturación de pedidos (ticket_type='ORDER', no borrados) en el rango.
+    // Solo > 0 cuando el flag `include_orders_in_reports` está ON; si OFF → 0.
+    // Con el flag ON el pedido se asume COMPLETO, como si fuera una venta
+    // normal: suma a `total`, su ganancia real (total - costo) suma a `ganancia`
+    // y por tanto a `gananciaReal`, y el `margen` se calcula sobre el `total`
+    // (que ya lo incluye). `efectivo`/`electronico`/`credito` NO cambian: esos
+    // son dinero real.
+    pedidos: number;
     total: number;
     ganancia: number;
     margen: number;
@@ -112,7 +124,10 @@ const round2 = (n: unknown): number => Number(toBig(n).round(2).toString());
  */
 @Injectable()
 export class GetExtendedSummaryAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
+  ) {}
 
   async execute(
     companyId: number,
@@ -134,6 +149,7 @@ export class GetExtendedSummaryAction {
       newCreditsData,
       expensesTotal,
       collectedProfitValue,
+      includeOrdersConfig,
     ] = await Promise.all([
       fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
       fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
@@ -142,6 +158,7 @@ export class GetExtendedSummaryAction {
       fetchNewCredits(this.dataSource, cid, dateStart, dateEnd),
       fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
       fetchCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
+      this.getIncludeOrdersInReports.execute(companyId),
     ]);
 
     const { netSales } = computeNetCashSales(salesData, creditNotesData, debitNotesData);
@@ -149,14 +166,30 @@ export class GetExtendedSummaryAction {
     const electronico = round2(consigData.totals.consig_total);
     const credito = round2(newCreditsData.new_credits_total);
 
-    const ventasTotal = round2(
+    // Flag ON: facturación de pedidos ORDER (no borrados) del rango, con su
+    // costo. OFF → fila neutra (ni siquiera se ejecuta la query).
+    const ordersData = includeOrdersConfig.enabled
+      ? await fetchOrdersBilling(this.dataSource, cid, dateStart, dateEnd)
+      : EMPTY_ORDERS_BILLING;
+    const pedidos = round2(ordersData.orders_total);
+    // Ganancia REAL del pedido (total - costo): con el flag ON se asume COMPLETO.
+    const ordersProfit = computeOrdersProfit(ordersData);
+
+    // Base COBRADA/generada: efectivo + electrónico + crédito (dinero real).
+    const cobradoBase = round2(
       toBig(efectivo).plus(toBig(electronico)).plus(toBig(credito)).toNumber(),
     );
-    // Ganancia de VENTAS del rango = utilidad COBRADA (base caja): porción de
-    // utilidad dentro del recaudo (contado + abonos proporcionales). Coincide con
-    // la "Ganancia del día" del dashboard. Ver metrics-spec.md.
-    const ventasGanancia = round2(collectedProfitValue);
-    // Margen sobre el total de ventas (efectivo + electrónico + crédito).
+    // Total de ventas = base cobrada/generada + facturación de pedidos (0 si OFF).
+    const ventasTotal = round2(toBig(cobradoBase).plus(toBig(pedidos)).toNumber());
+    // Ganancia de VENTAS del rango = utilidad COBRADA (base caja: porción de
+    // utilidad dentro del recaudo, contado + abonos proporcionales; ver
+    // metrics-spec.md) + la utilidad de los pedidos asumidos (0 con el flag OFF).
+    // El delta de pedidos se suma AQUÍ, en el action del informe: la métrica
+    // canónica `fetchCollectedProfit` NO se toca.
+    const ventasGanancia = round2(toBig(collectedProfitValue).plus(toBig(ordersProfit)).toNumber());
+    // Margen sobre el TOTAL de ventas (que ya incluye los pedidos): numerador y
+    // denominador asumen el pedido por igual, así que el margen sigue siendo
+    // coherente. Con OFF el total ≡ base cobrada → margen idéntico al de siempre.
     const margen =
       ventasTotal > 0 ? round2(toBig(ventasGanancia).div(ventasTotal).times(100).toNumber()) : 0;
 
@@ -177,6 +210,7 @@ export class GetExtendedSummaryAction {
         efectivo,
         electronico,
         credito,
+        pedidos,
         total: ventasTotal,
         ganancia: ventasGanancia,
         margen,

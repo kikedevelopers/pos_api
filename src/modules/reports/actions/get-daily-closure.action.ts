@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import Big from 'big.js';
 import { DataSource } from 'typeorm';
 
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import {
   fetchAbonoCollectedProfit,
   fetchCollectedProfit,
@@ -13,12 +14,15 @@ import { parseUtcRange, todayUtcDate } from '../internal/range';
 import {
   computeConsignacionesProfit,
   computeNetCashSales,
+  computeOrdersProfit,
+  EMPTY_ORDERS_BILLING,
   fetchCashNotes,
   fetchCashSales,
   fetchExpensesDetail,
   fetchExpensesTotal,
   fetchFixedExpensePaymentsDetail,
   fetchNewCredits,
+  fetchOrdersBilling,
   fetchTotalPendingCredits,
   fetchTransferSales,
   type ConsigDetalleRow,
@@ -51,6 +55,17 @@ export interface DailyClosureResult {
   };
   consignacionesVentas: number;
   consignacionesDetalle: { bankName: string; amount: number }[];
+  /**
+   * Facturación de pedidos (`ticket_type='ORDER'`, no borrados) del día.
+   * Solo > 0 con el flag `include_orders_in_reports` ON; con OFF → 0 (y ni
+   * siquiera se emite la query).
+   *
+   * Con el flag ON el pedido se asume COMPLETO, como si fuera una venta normal:
+   * suma a `salesProfit`/`salesMargin` y a `profit`/`margin`. Lo que NUNCA toca
+   * es la CAJA: `finalTotal`, `cashSalesTotal`, `consignacionesVentas` y los
+   * abonos quedan idénticos (un pedido no cobrado no entra a caja).
+   */
+  ordersTotal: number;
   creditsBreakdown: {
     newCreditsCount: number;
     newCreditsTotal: number;
@@ -114,6 +129,8 @@ const round2 = (n: unknown): number => Number(toBig(n).round(2).toString());
  *   - Saldo total pendiente de TODOS los créditos.
  *   - Gastos.
  *   - Notas de ajuste (aquellas cuyo invoice padre es de otro día).
+ *   - Facturación de pedidos (`ordersTotal`), solo con el flag
+ *     `include_orders_in_reports` ON. Ver la nota del campo en el contrato.
  *
  * --------------------------------------------------------------------------
  * Multi-tenancy
@@ -125,7 +142,10 @@ const round2 = (n: unknown): number => Number(toBig(n).round(2).toString());
  */
 @Injectable()
 export class GetDailyClosureAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
+  ) {}
 
   async execute(companyId: number, dateInput?: string): Promise<DailyClosureResult> {
     const targetDate = dateInput ?? todayUtcDate();
@@ -141,6 +161,7 @@ export class GetDailyClosureAction {
       expensesTotal,
       expensesDetailRows,
       fixedExpensePaymentRows,
+      includeOrdersConfig,
     ] = await Promise.all([
       fetchCashSales(this.dataSource, cid, dateStart, dateEnd),
       fetchCashNotes(this.dataSource, cid, 'CREDIT', dateStart, dateEnd),
@@ -149,6 +170,7 @@ export class GetDailyClosureAction {
       fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
       fetchExpensesDetail(this.dataSource, cid, dateStart, dateEnd),
       fetchFixedExpensePaymentsDetail(this.dataSource, cid, dateStart, dateEnd),
+      this.getIncludeOrdersInReports.execute(companyId),
     ]);
 
     const expensesDetail = expensesDetailRows.map((r) => ({
@@ -193,7 +215,7 @@ export class GetDailyClosureAction {
       amount: round2(r.amount),
     }));
 
-    const [abonosCashData, abonosConsigData, abonosConsigDetalleRows, abonosProfit] =
+    const [abonosCashData, abonosConsigData, abonosConsigDetalleRows, abonosProfit, ordersData] =
       await Promise.all([
         this.fetchAbonos(cid, 'CASH', dateStart, dateEnd),
         this.fetchAbonos(cid, 'TRANSFER', dateStart, dateEnd),
@@ -201,7 +223,16 @@ export class GetDailyClosureAction {
         // Utilidad cobrada de abonos por modelo PROPORCIONAL (canónico), no
         // cascada. Ver financial-facts/contracts/metrics-spec.md.
         fetchAbonoCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
+        // Facturación de pedidos: solo con el flag ON (OFF → fila neutra, sin query).
+        includeOrdersConfig.enabled
+          ? fetchOrdersBilling(this.dataSource, cid, dateStart, dateEnd)
+          : Promise.resolve(EMPTY_ORDERS_BILLING),
       ]);
+
+    // Pedidos del día (0 con el flag OFF). `ordersProfit` es la ganancia REAL
+    // del pedido (total - costo): con el flag ON se asume COMPLETO.
+    const ordersTotal = round2(ordersData.orders_total);
+    const ordersProfit = computeOrdersProfit(ordersData);
 
     const abonosCash = abonosCashData.abonos_total;
     const abonosConsig = abonosConsigData.abonos_total;
@@ -253,8 +284,16 @@ export class GetDailyClosureAction {
       totalDebit: round2(totalDebitAdj.toNumber()),
     };
 
-    const salesProfitTotal = round2(toBig(netProfit).plus(toBig(consignacionesProfit)).toNumber());
-    const salesRevenueTotal = round2(toBig(netSales).plus(toBig(consignacionesVentas)).toNumber());
+    // Bloque VENTAS. Con el flag ON el pedido se asume COMPLETO, como una venta
+    // normal: su facturación entra al denominador y su ganancia REAL al
+    // numerador, así que el margen sigue siendo coherente. Con OFF ambos deltas
+    // son 0 → cifras idénticas a las de siempre.
+    const salesProfitTotal = round2(
+      toBig(netProfit).plus(toBig(consignacionesProfit)).plus(toBig(ordersProfit)).toNumber(),
+    );
+    const salesRevenueTotal = round2(
+      toBig(netSales).plus(toBig(consignacionesVentas)).plus(toBig(ordersTotal)).toNumber(),
+    );
     const salesMarginValue =
       salesRevenueTotal > 0
         ? round2(toBig(salesProfitTotal).div(salesRevenueTotal).times(100).toNumber())
@@ -272,15 +311,23 @@ export class GetDailyClosureAction {
     // `/dashboard/today.profit` y `extended-summary.ventas.ganancia`. Los bloques
     // `salesProfit` (contado) y `creditsProfit` (abonos) son sub-métricas cuya
     // suma es este total. Ver financial-facts/contracts/metrics-spec.md.
-    const totalProfit = round2(collectedProfitValue);
-    // Margen sobre el recaudo del día (contado neto + consignación + abonos).
-    const collectedRevenue = round2(
-      toBig(netSales).plus(toBig(consignacionesVentas)).plus(toBig(abonosTotal)).toNumber(),
+    //
+    // Flag `include_orders_in_reports` ON: se le SUMA ARRIBA la ganancia real de
+    // los pedidos del día. El delta se aplica AQUÍ, en el action del informe —
+    // `fetchCollectedProfit` (métrica canónica, base caja) NO se toca. Con OFF
+    // `ordersProfit`/`ordersTotal` son 0 → totalProfit ≡ collectedProfit.
+    const totalProfit = round2(toBig(collectedProfitValue).plus(toBig(ordersProfit)).toNumber());
+    // Margen sobre el recaudo del día (contado neto + consignación + abonos) +
+    // la facturación de pedidos asumida (0 con el flag OFF).
+    const totalRevenue = round2(
+      toBig(netSales)
+        .plus(toBig(consignacionesVentas))
+        .plus(toBig(abonosTotal))
+        .plus(toBig(ordersTotal))
+        .toNumber(),
     );
     const totalMargin =
-      collectedRevenue > 0
-        ? round2(toBig(totalProfit).div(collectedRevenue).times(100).toNumber())
-        : 0;
+      totalRevenue > 0 ? round2(toBig(totalProfit).div(totalRevenue).times(100).toNumber()) : 0;
 
     return {
       date: targetDate,
@@ -293,6 +340,7 @@ export class GetDailyClosureAction {
       },
       consignacionesVentas: round2(consignacionesVentas),
       consignacionesDetalle,
+      ordersTotal,
       creditsBreakdown: {
         newCreditsCount: Number(newCreditsData.new_credits_count),
         newCreditsTotal: round2(newCreditsData.new_credits_total),

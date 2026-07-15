@@ -2,7 +2,12 @@ import type { DataSource } from 'typeorm';
 
 import { GetTodayAction } from '@/modules/dashboard/actions/get-today.action';
 
-import { cleanupCompany, createDisposableCompany, tryInitDataSource } from './helpers/e2e-db';
+import {
+  cleanupCompany,
+  createDisposableCompany,
+  includeOrdersFlagStub,
+  tryInitDataSource,
+} from './helpers/e2e-db';
 
 /**
  * E2E (BD REAL) del fix "Recaudo del día por FECHA DE PAGO".
@@ -83,7 +88,7 @@ describe('Recaudo del día por fecha de pago (dashboard/today, e2e pos_db)', () 
       return;
     }
     companyId = await createDisposableCompany(ds, '__E2E_RECAUDO_PAYMENT_DATE__');
-    action = new GetTodayAction(ds);
+    action = new GetTodayAction(ds, includeOrdersFlagStub(false));
 
     // si1: PEDIDO creado AYER, cobrado HOY en efectivo.
     const si1 = await insertSale(ds, companyId, {

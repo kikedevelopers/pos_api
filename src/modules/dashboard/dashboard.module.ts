@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { Company } from '@/modules/companies/entities/company.entity';
 
 import { GetBreakEvenProgressAction } from './actions/get-break-even-progress.action';
@@ -20,7 +21,10 @@ import { DashboardService } from './dashboard.service';
  * porque se lee con TypeORM convencional.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Company])],
+  // `AppSettingsModule` provee `GetIncludeOrdersInReportsAction` (flag
+  // `include_orders_in_reports`), que el resumen del día usa para decidir si los
+  // pedidos cuentan como venta.
+  imports: [TypeOrmModule.forFeature([Company]), AppSettingsModule],
   controllers: [DashboardController],
   providers: [
     DashboardService,

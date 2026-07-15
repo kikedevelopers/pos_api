@@ -45,9 +45,7 @@ describe('reports/internal/range (zona America/Bogota)', () => {
     expect(isValidDateString('2026-05-01')).toBe(true);
     expect(() => parseUtcRange('bad', '2026-05-01')).toThrow(BadRequestException);
     expect(() => parseUtcRange('2026-05-31', '2026-05-01')).toThrow(BadRequestException);
-    const to = dayjs('2026-01-01', 'YYYY-MM-DD')
-      .add(MAX_RANGE_DAYS, 'day')
-      .format('YYYY-MM-DD');
+    const to = dayjs('2026-01-01', 'YYYY-MM-DD').add(MAX_RANGE_DAYS, 'day').format('YYYY-MM-DD');
     expect(() => parseUtcRange('2026-01-01', to)).toThrow(BadRequestException);
   });
 });

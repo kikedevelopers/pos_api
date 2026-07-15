@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 
 import type { AuthUser } from '@/common/types/jwt-payload.type';
+import type { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import type { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
 import type { PermissionKey } from '@/modules/roles/internal/permission-catalog';
 
@@ -39,10 +40,13 @@ describe('GetSalesReportAction', () => {
   // siempre reciben `canViewAllSales` (acceso total). Configurable por test para
   // cubrir Vendedor (sin la key → solo sus ventas) y Cajero (con la key → todas).
   let employeeEffective: PermissionKey[];
+  // Flag `include_orders_in_reports` de la company (default OFF).
+  let includeOrders: boolean;
 
   beforeEach(() => {
     querySpy = jest.fn(() => Promise.resolve([]));
     employeeEffective = [];
+    includeOrders = false;
     const dataSourceMock = { query: querySpy } as unknown as DataSource;
     const resolvePermissionsMock = {
       execute: jest.fn((actor: { type: string }) =>
@@ -53,7 +57,10 @@ describe('GetSalesReportAction', () => {
         ),
       ),
     } as unknown as ResolveEffectivePermissionsAction;
-    action = new GetSalesReportAction(dataSourceMock, resolvePermissionsMock);
+    const getIncludeOrdersMock = {
+      execute: jest.fn(() => Promise.resolve({ enabled: includeOrders })),
+    } as unknown as GetIncludeOrdersInReportsAction;
+    action = new GetSalesReportAction(dataSourceMock, resolvePermissionsMock, getIncludeOrdersMock);
   });
 
   function allCalls(): Array<{ sql: string; params: unknown[] }> {
@@ -187,5 +194,136 @@ describe('GetSalesReportAction', () => {
     for (const c of allCalls()) {
       expect(c.sql).not.toMatch(/created_by_id/);
     }
+  });
+
+  // ─── Flag include_orders_in_reports: ingresos con/ sin pedidos ORDER ─────────
+
+  interface RawInvoice {
+    id: string;
+    ticket_type: string;
+    original_total: number;
+    original_cost: number;
+    is_deleted: boolean;
+  }
+
+  function makeInvoice(o: RawInvoice): Record<string, unknown> {
+    return {
+      ...o,
+      ticket_number: `T-${o.id}`,
+      sale_number: o.ticket_type === 'SALE' ? `V-${o.id}` : null,
+      original_profit: 0,
+      original_margin: 0,
+      customer_name: null,
+      created_by: null,
+      created_at: new Date('2026-05-10T12:00:00Z'),
+      notes_count: 0,
+      note_types: null,
+      is_credit: false,
+      credit_balance: 0,
+      credit_status: null,
+      paid_amount: 0,
+      payment_methods: null,
+    };
+  }
+
+  // Devuelve invoiceRows en la 1.ª query (invoices) y [] en la 2.ª (notas).
+  function mockInvoices(rows: Record<string, unknown>[]): void {
+    let call = 0;
+    querySpy.mockImplementation(() => {
+      call += 1;
+      return Promise.resolve(call === 1 ? rows : []);
+    });
+  }
+
+  const SALE = makeInvoice({
+    id: '1',
+    ticket_type: 'SALE',
+    original_total: 100,
+    original_cost: 60,
+    is_deleted: false,
+  });
+  const ORDER = makeInvoice({
+    id: '2',
+    ticket_type: 'ORDER',
+    original_total: 40,
+    original_cost: 20,
+    is_deleted: false,
+  });
+  const ORDER_DELETED = makeInvoice({
+    id: '3',
+    ticket_type: 'ORDER',
+    original_total: 999,
+    original_cost: 500,
+    is_deleted: true,
+  });
+
+  it('flag OFF: total_revenue solo cuenta SALE (los ORDER se excluyen) y summary.include_orders_in_reports=false', async () => {
+    includeOrders = false;
+    mockInvoices([SALE, ORDER, ORDER_DELETED]);
+    const { summary } = await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31' },
+      OWNER,
+    );
+    expect(summary.total_revenue).toBe(100);
+    expect(summary.total_cost).toBe(60);
+    expect(summary.total_profit).toBe(40);
+    expect(summary.include_orders_in_reports).toBe(false);
+  });
+
+  it('flag ON: el pedido se asume COMPLETO (total Y costo), como una venta normal', async () => {
+    includeOrders = true;
+    mockInvoices([SALE, ORDER, ORDER_DELETED]);
+    const { summary } = await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31' },
+      OWNER,
+    );
+    // 100 (SALE) + 40 (ORDER vivo). El ORDER borrado (999) NO suma.
+    expect(summary.total_revenue).toBe(140);
+    // 60 (SALE) + 20 (ORDER vivo). El costo del ORDER borrado (500) NO suma.
+    expect(summary.total_cost).toBe(80);
+    // La ganancia sube por la ganancia REAL del pedido (40 − 20 = 20), NO por su
+    // total: 40 (SALE) + 20 (ORDER) = 60. Regresión del bug que inflaba la
+    // ganancia con el total del pedido.
+    expect(summary.total_profit).toBe(60);
+    expect(summary.include_orders_in_reports).toBe(true);
+  });
+
+  it('flag ON: el margen se calcula sobre ingresos y costo con el pedido incluido', async () => {
+    includeOrders = true;
+    mockInvoices([SALE, ORDER]);
+    const { summary } = await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31' },
+      OWNER,
+    );
+    // margen = profit/revenue*100 = 60/140*100 = 42.857… → 42.86 (escala 2).
+    expect(summary.total_revenue).toBe(140);
+    expect(summary.total_cost).toBe(80);
+    expect(summary.average_margin).toBeCloseTo(42.86, 2);
+  });
+
+  it('paridad con PlacePos: incluir un pedido NO altera el margen si su margen es igual al de la venta', async () => {
+    includeOrders = true;
+    // ORDER con el mismo margen que SALE (40%): total 50, costo 30.
+    const ORDER_SAME_MARGIN = makeInvoice({
+      id: '4',
+      ticket_type: 'ORDER',
+      original_total: 50,
+      original_cost: 30,
+      is_deleted: false,
+    });
+    mockInvoices([SALE, ORDER_SAME_MARGIN]);
+    const { summary } = await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31' },
+      OWNER,
+    );
+    // 150 ingresos, 90 costo → 60 ganancia → 40% (igual que la venta sola).
+    expect(summary.total_revenue).toBe(150);
+    expect(summary.total_cost).toBe(90);
+    expect(summary.total_profit).toBe(60);
+    expect(summary.average_margin).toBeCloseTo(40, 3);
   });
 });

@@ -33,6 +33,8 @@ const SETTINGS_ENDPOINTS: ControllerMethod[] = [
   'upsertStrictInventory',
   'getCustomerPoints',
   'upsertCustomerPoints',
+  'getIncludeOrdersInReports',
+  'upsertIncludeOrdersInReports',
   'findAll',
   'findOne',
   'upsert',
@@ -51,6 +53,15 @@ describe('AppSettingsController · RBAC metadata', () => {
     for (const getter of ['getPosMargins', 'getStrictInventory', 'getCustomerPoints'] as const) {
       expect(rolesOf(getter)).toContain('employee');
       expect(permissionOf(getter)).toBe('canAccessSettings');
+    }
+  });
+
+  it('los PUT de flags de negocio (strict-inventory, include-orders) admiten owner/superadmin, no manager', () => {
+    for (const setter of ['upsertStrictInventory', 'upsertIncludeOrdersInReports'] as const) {
+      const roles = rolesOf(setter);
+      expect(roles).toContain('owner');
+      expect(roles).toContain('superadmin');
+      expect(roles).not.toContain('manager');
     }
   });
 });

@@ -55,6 +55,14 @@ export interface NewCreditsRow {
   pending_balance: number;
 }
 
+export interface OrdersBillingRow {
+  orders_total: number;
+  orders_cost: number;
+}
+
+/** Fila neutra de pedidos: lo que se usa cuando el flag está OFF (sin query). */
+export const EMPTY_ORDERS_BILLING: OrdersBillingRow = { orders_total: 0, orders_cost: 0 };
+
 export interface PendingCreditsRow {
   pending_count: string | number;
   total_amount: number;
@@ -256,6 +264,86 @@ export async function fetchNewCredits(
       new_credits_total: 0,
       pending_balance: 0,
     }
+  );
+}
+
+/**
+ * Facturación de PEDIDOS (`ticket_type = 'ORDER'`, no borrados) cuyo
+ * `COALESCE(sold_at, created_at)` cae en el rango: total Y costo.
+ *
+ * Solo se invoca cuando el flag `include_orders_in_reports` de la company está
+ * ON (con OFF ni siquiera se emite la query; ver `EMPTY_ORDERS_BILLING`).
+ * Compartida por el cierre diario y el resumen extendido para que ambos midan
+ * EXACTAMENTE lo mismo (la ventana temporal la fija quien llama).
+ *
+ * A diferencia de `fetchCashSales`/`fetchTransferSales`, NO hay JOIN a
+ * `sale_payments`: un pedido se asume COMPLETO (no depende de lo cobrado), así
+ * que no hay filas duplicadas por pago y `SUM(si.cost)` es directo, sin
+ * prorrateo. Multi-tenant: `si.company_id = $1`.
+ */
+export async function fetchOrdersBilling(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<OrdersBillingRow> {
+  const rows = await dataSource.query<OrdersBillingRow[]>(
+    `
+      SELECT
+        COALESCE(SUM(si.total), 0)::float AS orders_total,
+        COALESCE(SUM(si.cost), 0)::float AS orders_cost
+      FROM sale_invoices si
+      WHERE si.company_id = $1
+        AND si.ticket_type = 'ORDER'
+        AND si.is_deleted = false
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
+      `,
+    [cid, dateStart, dateEnd],
+  );
+  return rows[0] ?? EMPTY_ORDERS_BILLING;
+}
+
+/**
+ * Utilidad de los pedidos = total - costo (Big.js). Es la ganancia REAL del
+ * pedido: con el flag ON se asume el pedido COMPLETO, como si fuera una venta
+ * normal (decisión de producto, spec Fase 2 §0).
+ */
+export function computeOrdersProfit(orders: OrdersBillingRow): number {
+  return round2(toBig(orders.orders_total).minus(toBig(orders.orders_cost)).toNumber());
+}
+
+/** Misma facturación de pedidos, agrupada por día (gráfico Rendimiento). */
+export interface OrdersByDayRow {
+  date: string;
+  orders_total: number;
+  orders_cost: number;
+}
+
+/**
+ * Agrupa en hora COLOMBIA (`AT TIME ZONE 'America/Bogota'`), igual que
+ * `fetchSalesByDay`: agrupar en UTC metería las ventas de la noche en el día
+ * siguiente y los buckets no cuadrarían entre series.
+ */
+export async function fetchOrdersByDay(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<OrdersByDayRow[]> {
+  return dataSource.query<OrdersByDayRow[]>(
+    `
+      SELECT
+        TO_CHAR(COALESCE(si.sold_at, si.created_at) AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
+        COALESCE(SUM(si.total), 0)::float AS orders_total,
+        COALESCE(SUM(si.cost), 0)::float AS orders_cost
+      FROM sale_invoices si
+      WHERE si.company_id = $1
+        AND si.ticket_type = 'ORDER'
+        AND si.is_deleted = false
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
+      GROUP BY 1
+      `,
+    [cid, dateStart, dateEnd],
   );
 }
 

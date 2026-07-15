@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { toBig } from '@/common/utils/precision';
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import { parseUtcRange } from '@/modules/reports/internal/range';
 import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
 
@@ -80,6 +81,10 @@ export interface SalesReportResult {
     total_cost: number;
     total_profit: number;
     average_margin: number;
+    // Refleja el flag `include_orders_in_reports` de la company. Cuando es
+    // true, `total_revenue` incluye los pedidos ORDER (no borrados). El front
+    // lo propaga para replicar la inclusión en la agrupación por mes.
+    include_orders_in_reports: boolean;
   };
 }
 
@@ -103,6 +108,7 @@ export class GetSalesReportAction {
   constructor(
     private readonly dataSource: DataSource,
     private readonly resolvePermissions: ResolveEffectivePermissionsAction,
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
   ) {}
 
   /**
@@ -141,6 +147,10 @@ export class GetSalesReportAction {
 
     // Scope de ventas según permiso `canViewAllSales` (null = ve todas).
     const scopeToUserId = await this.resolveScopeUserId(actor);
+
+    // Flag por company: cuando ON, los pedidos ORDER (no borrados) se cuentan
+    // como INGRESO en el summary (sin tocar caja ni ganancia cobrada canónica).
+    const { enabled: includeOrders } = await this.getIncludeOrdersInReports.execute(companyId);
 
     const { sql, params } = this.buildInvoiceQuery(cid, filters, dateFrom, dateTo, scopeToUserId);
     const invoiceRows = await this.dataSource.query<InvoiceRow[]>(sql, params);
@@ -184,6 +194,20 @@ export class GetSalesReportAction {
       summaryRevenue = summaryRevenue.plus(toBig(inv.original_total));
       summaryCost = summaryCost.plus(toBig(inv.original_cost));
     }
+    // Flag ON: el pedido ORDER vivo se asume COMPLETO, como si fuera una venta
+    // normal: suma su total a los INGRESOS y su costo al COSTO, de modo que la
+    // ganancia (ingresos − costo) y el margen reflejen la ganancia REAL del
+    // pedido y no su total. Paridad exacta con PlacePos (`selectRevenueInvoices`).
+    // Los ORDER no tienen notas crédito/débito. Esto NO afecta la ganancia
+    // cobrada canónica (base caja), que se calcula aparte.
+    if (includeOrders) {
+      for (const inv of invoiceRows) {
+        if (inv.ticket_type === 'ORDER' && !inv.is_deleted) {
+          summaryRevenue = summaryRevenue.plus(toBig(inv.original_total));
+          summaryCost = summaryCost.plus(toBig(inv.original_cost));
+        }
+      }
+    }
     for (const note of noteRows) {
       if (!invoiceIds.has(Number(note.sale_invoice_id))) {
         continue;
@@ -225,6 +249,7 @@ export class GetSalesReportAction {
       total_cost: totalCost,
       total_profit: totalProfit,
       average_margin: averageMargin,
+      include_orders_in_reports: includeOrders,
     };
 
     return { tickets, summary };

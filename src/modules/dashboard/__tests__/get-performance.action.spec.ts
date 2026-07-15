@@ -1,5 +1,7 @@
 import type { DataSource } from 'typeorm';
 
+import type { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
+
 import { GetPerformanceAction } from '../actions/get-performance.action';
 
 /**
@@ -23,7 +25,12 @@ describe('GetPerformanceAction', () => {
   beforeEach(() => {
     querySpy = jest.fn(() => Promise.resolve([]));
     const dataSourceMock = { query: querySpy } as unknown as DataSource;
-    action = new GetPerformanceAction(dataSourceMock);
+    // Flag ON a propósito: así la query de pedidos (`fetchOrdersByDay`) también
+    // se ejecuta y queda cubierta por la garantía de aislamiento multi-tenant.
+    const includeOrdersMock = {
+      execute: jest.fn().mockResolvedValue({ enabled: true }),
+    } as unknown as GetIncludeOrdersInReportsAction;
+    action = new GetPerformanceAction(dataSourceMock, includeOrdersMock);
   });
 
   function allCalls(): Array<{ sql: string; params: unknown[] }> {

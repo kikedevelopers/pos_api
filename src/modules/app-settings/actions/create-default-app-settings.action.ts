@@ -21,6 +21,8 @@ export interface CreateDefaultAppSettingsInput {
  *     si la row no existe; insertamos explícitamente para que el cliente
  *     vea el valor sin depender del fallback.
  *   - `pos_margins_enabled = 'false'` — feature off por defecto.
+ *   - `include_orders_in_reports = 'false'` — los pedidos ORDER NO se cuentan
+ *     como ingreso en los informes hasta que el owner active el flag.
  *
  * `pos_margins` NO se inserta hasta que el usuario active la feature y
  * configure los porcentajes vía `PUT /app-settings/pos-margins`.
@@ -28,6 +30,7 @@ export interface CreateDefaultAppSettingsInput {
 const DEFAULT_SETTINGS: Array<{ key: string; value: string }> = [
   { key: APP_SETTING_KEYS.APP_COLOR_MODE, value: 'white' },
   { key: APP_SETTING_KEYS.POS_MARGINS_ENABLED, value: 'false' },
+  { key: APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS, value: 'false' },
 ];
 
 /**

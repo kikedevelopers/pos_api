@@ -3,7 +3,12 @@ import type { DataSource } from 'typeorm';
 import { GetBreakEvenProgressAction } from '@/modules/dashboard/actions/get-break-even-progress.action';
 import { Company } from '@/modules/companies/entities/company.entity';
 
-import { cleanupCompany, createDisposableCompany, tryInitDataSource } from './helpers/e2e-db';
+import {
+  cleanupCompany,
+  createDisposableCompany,
+  includeOrdersFlagStub,
+  tryInitDataSource,
+} from './helpers/e2e-db';
 
 /**
  * E2E (BD REAL) — la "Meta del mes" (break-even) usa la utilidad COBRADA (base
@@ -80,7 +85,7 @@ describe('Meta del mes (break-even) con ganancia cobrada (e2e pos_db)', () => {
       `UPDATE companies SET break_even_amount = 9000, break_even_period_days = 30 WHERE id = $1`,
       [String(companyId)],
     );
-    action = new GetBreakEvenProgressAction(ds, ds.getRepository(Company));
+    action = new GetBreakEvenProgressAction(ds, ds.getRepository(Company), includeOrdersFlagStub(false));
 
     // Venta a CRÉDITO de hoy (total 300, utilidad 120) con un abono de 50.
     await insertCreditSaleWithAbono(ds, companyId, {

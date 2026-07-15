@@ -3,6 +3,7 @@ import { config as loadEnv } from 'dotenv';
 import { DataSource } from 'typeorm';
 
 import { dataSourceOptions } from '@/database/data-source';
+import type { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 
 // Carga `.env` para que el DataSource e2e tome las credenciales de pos_db
 // fuera del contexto de Nest (igual que el CLI de TypeORM).
@@ -47,6 +48,21 @@ export async function tryInitDataSource(): Promise<DataSource | null> {
 
 /** Actor de prueba para los actions (no hay FK en created_by_id). */
 export const E2E_ACTOR = { id: 1, fullName: 'E2E_ITEST' } as const;
+
+/**
+ * Stub del flag `include_orders_in_reports` para construir a mano los actions
+ * del dashboard sin levantar el contenedor de Nest.
+ *
+ * Los e2e canónicos de ganancia (`ganancia-canonica`, `break-even-canonical`,
+ * `mixed-payment-profit`, ...) lo usan en **OFF**: fijan la ganancia COBRADA
+ * canónica (base caja), que por contrato NO cambia con el flag. Ver
+ * `financial-facts/contracts/metrics-spec.md`.
+ */
+export function includeOrdersFlagStub(enabled: boolean): GetIncludeOrdersInReportsAction {
+  return {
+    execute: () => Promise.resolve({ enabled }),
+  } as unknown as GetIncludeOrdersInReportsAction;
+}
 
 /**
  * Crea una company desechable con el nombre dado y devuelve su id numérico.

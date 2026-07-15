@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 
 import { GetComparativeByDayReportAction } from './actions/get-comparative-by-day-report.action';
@@ -13,10 +14,11 @@ import { PosReportsService } from './pos-reports.service';
  * Módulo `pos-reports` (Fase 11.3). Read-only — SQL crudo vía DataSource.
  *
  * Importa `RolesModule` para que `GetSalesReportAction` resuelva los permisos
- * efectivos del actor (scope de ventas por `canViewAllSales`).
+ * efectivos del actor (scope de ventas por `canViewAllSales`) y
+ * `AppSettingsModule` para leer el flag `include_orders_in_reports` por company.
  */
 @Module({
-  imports: [RolesModule],
+  imports: [RolesModule, AppSettingsModule],
   controllers: [PosReportsController],
   providers: [
     PosReportsService,

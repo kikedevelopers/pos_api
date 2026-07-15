@@ -8,6 +8,12 @@ import { Company } from '@/modules/companies/entities/company.entity';
 import { fetchExpensesTotal, round2 } from '../internal/aggregations';
 import { parseDateRange, startOfMonthUtc, todayUtc } from '../internal/date-range';
 import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
+import {
+  computeOrdersProfit,
+  EMPTY_ORDERS_BILLING,
+  fetchOrdersBilling,
+} from '@/modules/reports/internal/sales-aggregations';
 
 /**
  * Output del endpoint `GET /dashboard/break-even-progress`.
@@ -44,6 +50,7 @@ export class GetBreakEvenProgressAction {
     private readonly dataSource: DataSource,
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
   ) {}
 
   async execute(companyId: number, dateInput?: string): Promise<BreakEvenProgressResult> {
@@ -80,16 +87,40 @@ export class GetBreakEvenProgressAction {
     const dayRange = parseDateRange(today, today);
     const monthRange = parseDateRange(monthFrom, monthTo);
 
-    const [dayProfit, dayExpenses, monthProfit, monthExpenses] = await Promise.all([
-      fetchCollectedProfit(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
-      fetchExpensesTotal(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
-      fetchCollectedProfit(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
-      fetchExpensesTotal(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
-    ]);
+    // Flag `include_orders_in_reports`: con él activo el pedido cuenta como una
+    // venta normal, así que su ganancia entra en la meta igual que entra en
+    // "Ganancia del día". Coherente con `GetTodayAction`: si el dashboard dice
+    // que hoy ganaste X, la meta debe medirse contra ese mismo X.
+    const includeOrders = await this.getIncludeOrdersInReports.execute(companyId);
+    const cid = String(companyId);
+
+    const [dayProfit, dayExpenses, monthProfit, monthExpenses, dayOrders, monthOrders] =
+      await Promise.all([
+        fetchCollectedProfit(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
+        fetchExpensesTotal(this.dataSource, companyId, dayRange.dateStart, dayRange.dateEnd),
+        fetchCollectedProfit(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
+        fetchExpensesTotal(this.dataSource, companyId, monthRange.dateStart, monthRange.dateEnd),
+        includeOrders.enabled
+          ? fetchOrdersBilling(this.dataSource, cid, dayRange.dateStart, dayRange.dateEnd)
+          : Promise.resolve(EMPTY_ORDERS_BILLING),
+        includeOrders.enabled
+          ? fetchOrdersBilling(this.dataSource, cid, monthRange.dateStart, monthRange.dateEnd)
+          : Promise.resolve(EMPTY_ORDERS_BILLING),
+      ]);
 
     const dailyTarget = round2(toBig(breakEvenAmount).div(breakEvenPeriodDays).toNumber());
-    const dayRealProfit = round2(toBig(dayProfit).minus(toBig(dayExpenses)).toNumber());
-    const monthRealProfit = round2(toBig(monthProfit).minus(toBig(monthExpenses)).toNumber());
+    const dayRealProfit = round2(
+      toBig(dayProfit)
+        .plus(toBig(computeOrdersProfit(dayOrders)))
+        .minus(toBig(dayExpenses))
+        .toNumber(),
+    );
+    const monthRealProfit = round2(
+      toBig(monthProfit)
+        .plus(toBig(computeOrdersProfit(monthOrders)))
+        .minus(toBig(monthExpenses))
+        .toNumber(),
+    );
     // Los ratios de progreso se redondean a 4 decimales (no a 2): redondear a 2
     // da granularidad de 1% y haría que, p. ej., 0.9975 (99.75%) se redondee a
     // 1.00, marcando falsamente la meta como alcanzada (isReached / "Meta

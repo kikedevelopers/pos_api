@@ -17,7 +17,14 @@ import {
 } from '../internal/aggregations';
 import { fetchCashAccounts, type CashAccountsResult } from '../internal/cash-accounts';
 import { parseDateRange, todayUtc } from '../internal/date-range';
+import { computeTodayTotals } from '../internal/today-orders';
 import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
+import {
+  computeOrdersProfit,
+  EMPTY_ORDERS_BILLING,
+  fetchOrdersBilling,
+} from '@/modules/reports/internal/sales-aggregations';
 
 /**
  * Output del endpoint `GET /dashboard/today`. Resumen consolidado del día.
@@ -30,6 +37,11 @@ import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collect
  *     invoices a crédito (Activos del día).
  *   - `newCredits` = créditos GENERADOS (Pasivos): conteo + total.
  *   - `realProfit` = `profit - expenses` (gastos NUNCA tocan recaudo).
+ *   - `ordersTotal` = facturación de pedidos del día (flag
+ *     `include_orders_in_reports`; 0 cuando está OFF). Con el flag ON el pedido
+ *     se trata como una venta normal: `ordersTotal` YA ESTÁ SUMADO dentro de
+ *     `totalCollected` y su ganancia dentro de `profit`. Se expone aparte solo
+ *     para poder mostrarlo DISCRIMINADO. Ver `internal/today-orders.ts`.
  *   - `surplus` = `totalCollected - profit` (excedente / reinversión).
  *   - `purchases.*` = compras del día + abonos a proveedores +
  *     `supplierDebt` (cartera).
@@ -43,6 +55,7 @@ export interface TodayResult {
   creditPaymentsTransfer: number;
   creditPaymentsTotal: number;
   totalCollected: number;
+  ordersTotal: number;
   profit: number;
   surplus: number;
   expenses: number;
@@ -69,7 +82,10 @@ export interface TodayResult {
  */
 @Injectable()
 export class GetTodayAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
+  ) {}
 
   async execute(companyId: number, dateInput?: string): Promise<TodayResult> {
     const today = dateInput ?? todayUtc();
@@ -180,7 +196,7 @@ export class GetTodayAction {
       toBig(creditPaymentsCash).plus(toBig(creditPaymentsTransfer)).toNumber(),
     );
 
-    const totalCollected = round2(
+    const collectedCash = round2(
       toBig(cashSales)
         .plus(toBig(transferSales))
         .plus(toBig(creditPaymentsCash))
@@ -189,14 +205,25 @@ export class GetTodayAction {
     );
 
     const expenses = round2(expensesTotal);
-    // "Ganancia del día" = utilidad COBRADA (base caja): la porción de utilidad
-    // dentro del dinero efectivamente recibido (contado + abonos proporcionales).
-    // Fiel a la caja: una venta a crédito NO suma su ganancia hasta que se cobra.
-    // Ver financial-facts/contracts/metrics-spec.md.
-    const profit = round2(collectedProfitValue);
-    // Excedente/reinversión = recaudo − utilidad cobrada (= COGS cobrado).
-    const surplus = round2(toBig(totalCollected).minus(toBig(profit)).toNumber());
-    const realProfit = round2(toBig(profit).minus(toBig(expenses)).toNumber());
+
+    // Flag `include_orders_in_reports`: con él activo el pedido se trata como una
+    // venta normal (suma al recaudo y su ganancia a la del día). El delta se suma
+    // AQUÍ, en el action: `fetchCollectedProfit` es la ganancia cobrada canónica
+    // (base caja) y NO se toca. Ver financial-facts/contracts/metrics-spec.md.
+    const includeOrders = await this.getIncludeOrdersInReports.execute(companyId);
+    const ordersData = includeOrders.enabled
+      ? await fetchOrdersBilling(this.dataSource, String(companyId), range.dateStart, range.dateEnd)
+      : EMPTY_ORDERS_BILLING;
+    const ordersTotal = round2(ordersData.orders_total);
+    const ordersProfit = computeOrdersProfit(ordersData);
+
+    const { totalCollected, profit, surplus, realProfit } = computeTodayTotals({
+      collectedCash,
+      ordersTotal,
+      collectedProfit: collectedProfitValue,
+      ordersProfit,
+      expenses,
+    });
 
     const purchasePaymentsCash = round2(purchasePaymentsCashAmt);
     const purchasePaymentsTransfer = round2(purchasePaymentsTransferAmt);
@@ -212,6 +239,7 @@ export class GetTodayAction {
       creditPaymentsTransfer,
       creditPaymentsTotal,
       totalCollected,
+      ordersTotal,
       profit,
       surplus,
       expenses,

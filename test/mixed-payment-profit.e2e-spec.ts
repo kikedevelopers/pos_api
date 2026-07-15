@@ -1,10 +1,16 @@
 import type { DataSource } from 'typeorm';
 
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import { GetTodayAction } from '@/modules/dashboard/actions/get-today.action';
 import { GetDailyClosureAction } from '@/modules/reports/actions/get-daily-closure.action';
 import { GetExtendedSummaryAction } from '@/modules/reports/actions/get-extended-summary.action';
 
-import { cleanupCompany, createDisposableCompany, tryInitDataSource } from './helpers/e2e-db';
+import {
+  cleanupCompany,
+  createDisposableCompany,
+  includeOrdersFlagStub,
+  tryInitDataSource,
+} from './helpers/e2e-db';
 
 /**
  * E2E (BD REAL) — regresión de la GANANCIA de ventas del día cuando una factura
@@ -94,9 +100,10 @@ describe('Ganancia con pagos múltiples / método mixto (cierre + dashboard + ex
       console.warn('[e2e] pos_db no disponible — mixed-payment-profit e2e SKIPPED.');
       return;
     }
-    dashboard = new GetTodayAction(ds);
-    closure = new GetDailyClosureAction(ds);
-    extended = new GetExtendedSummaryAction(ds);
+    dashboard = new GetTodayAction(ds, includeOrdersFlagStub(false));
+    // Flag `include_orders_in_reports` sin fila en app_settings → OFF.
+    closure = new GetDailyClosureAction(ds, new GetIncludeOrdersInReportsAction(ds));
+    extended = new GetExtendedSummaryAction(ds, new GetIncludeOrdersInReportsAction(ds));
   });
 
   afterAll(async () => {

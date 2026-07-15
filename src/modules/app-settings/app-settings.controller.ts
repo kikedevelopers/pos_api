@@ -13,14 +13,20 @@ import { RequirePermission } from '@/common/decorators/require-permission.decora
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { GetCustomerPointsAction } from './actions/get-customer-points.action';
+import { GetIncludeOrdersInReportsAction } from './actions/get-include-orders-in-reports.action';
 import { GetPosMarginsAction } from './actions/get-pos-margins.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
 import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.action';
+import { UpsertIncludeOrdersInReportsAction } from './actions/upsert-include-orders-in-reports.action';
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
 import { CustomerPointsConfigDto, UpdateCustomerPointsDto } from './dto/customer-points.dto';
+import {
+  IncludeOrdersInReportsConfigDto,
+  UpdateIncludeOrdersInReportsDto,
+} from './dto/include-orders-in-reports.dto';
 import { PosMarginsConfigDto, UpdatePosMarginsDto } from './dto/pos-margins.dto';
 import { StrictInventoryConfigDto, UpdateStrictInventoryDto } from './dto/strict-inventory.dto';
 import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
@@ -59,6 +65,8 @@ export class AppSettingsController {
     private readonly upsertStrictInventoryAction: UpsertStrictInventoryAction,
     private readonly getCustomerPointsAction: GetCustomerPointsAction,
     private readonly upsertCustomerPointsAction: UpsertCustomerPointsAction,
+    private readonly getIncludeOrdersInReportsAction: GetIncludeOrdersInReportsAction,
+    private readonly upsertIncludeOrdersInReportsAction: UpsertIncludeOrdersInReportsAction,
   ) {}
 
   // ----------------------------------------------------------------------
@@ -161,6 +169,43 @@ export class AppSettingsController {
     @CurrentCompany() companyId: number,
   ): Promise<CustomerPointsConfigDto> {
     return this.upsertCustomerPointsAction.execute(dto, companyId);
+  }
+
+  @Get('include-orders-in-reports')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Flag «incluir pedidos en informes»',
+    description:
+      'Devuelve `{ enabled }` desde la key `include_orders_in_reports`. Cuando está activo, los pedidos (ORDER) se suman a los ingresos del informe de ventas y a la facturación de Finanzas.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: IncludeOrdersInReportsConfigDto })
+  async getIncludeOrdersInReports(
+    @CurrentCompany() companyId: number,
+  ): Promise<IncludeOrdersInReportsConfigDto> {
+    return this.getIncludeOrdersInReportsAction.execute(companyId);
+  }
+
+  @Put('include-orders-in-reports')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set flag «incluir pedidos en informes»',
+    description:
+      'Solo `owner` o `superadmin` pueden modificar este flag — afecta cómo se contabilizan los ingresos en todos los informes.',
+  })
+  @ApiBody({ type: UpdateIncludeOrdersInReportsDto })
+  @ApiResponse({ status: HttpStatus.OK, type: IncludeOrdersInReportsConfigDto })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Solo un administrador puede modificar esta configuración',
+  })
+  async upsertIncludeOrdersInReports(
+    @Body() dto: UpdateIncludeOrdersInReportsDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<IncludeOrdersInReportsConfigDto> {
+    return this.upsertIncludeOrdersInReportsAction.execute(dto, companyId);
   }
 
   // ----------------------------------------------------------------------

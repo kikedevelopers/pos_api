@@ -1,10 +1,16 @@
 import type { DataSource } from 'typeorm';
 
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import { GetTodayAction } from '@/modules/dashboard/actions/get-today.action';
 import { GetDailyClosureAction } from '@/modules/reports/actions/get-daily-closure.action';
 import { GetExtendedSummaryAction } from '@/modules/reports/actions/get-extended-summary.action';
 
-import { cleanupCompany, createDisposableCompany, tryInitDataSource } from './helpers/e2e-db';
+import {
+  cleanupCompany,
+  createDisposableCompany,
+  includeOrdersFlagStub,
+  tryInitDataSource,
+} from './helpers/e2e-db';
 
 /**
  * E2E (BD REAL) — INVARIANTE ANTI-DIVERGENCIA: la "Ganancia del día" (headline)
@@ -79,7 +85,15 @@ async function insertSaleCredit(
     `INSERT INTO sale_credits
        (company_id, sale_invoice_id, customer_id, total_amount, paid_amount, balance, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7::credit_status)`,
-    [String(companyId), saleInvoiceId, customer[0].id, opts.totalAmount, opts.paidAmount, balance, status],
+    [
+      String(companyId),
+      saleInvoiceId,
+      customer[0].id,
+      opts.totalAmount,
+      opts.paidAmount,
+      balance,
+      status,
+    ],
   );
 }
 
@@ -101,9 +115,11 @@ describe('Ganancia del día canónica: misma en today, cierre y extended (e2e po
       return;
     }
     companyId = await createDisposableCompany(ds, '__E2E_GANANCIA_CANONICA__');
-    today = new GetTodayAction(ds);
-    closure = new GetDailyClosureAction(ds);
-    extended = new GetExtendedSummaryAction(ds);
+    today = new GetTodayAction(ds, includeOrdersFlagStub(false));
+    // Flag `include_orders_in_reports` sin fila en app_settings → OFF: la
+    // ganancia canónica no se ve afectada por los pedidos.
+    closure = new GetDailyClosureAction(ds, new GetIncludeOrdersInReportsAction(ds));
+    extended = new GetExtendedSummaryAction(ds, new GetIncludeOrdersInReportsAction(ds));
 
     // Venta de CONTADO: total 100, utilidad 40, pagada en efectivo.
     const contado = await insertSale(ds, companyId, {
