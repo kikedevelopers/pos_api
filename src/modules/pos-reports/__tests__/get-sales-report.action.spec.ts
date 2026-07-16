@@ -326,4 +326,69 @@ describe('GetSalesReportAction', () => {
     expect(summary.total_profit).toBe(60);
     expect(summary.average_margin).toBeCloseTo(40, 3);
   });
+
+  // ─── Ventas a crédito: cuentan como una venta más (valor íntegro) ────────────
+
+  it('la query de invoices YA NO excluye las ventas a crédito (sin `sc.id IS NULL`)', async () => {
+    await action.execute(42, { dateFrom: '2026-05-01', dateTo: '2026-05-31' }, OWNER);
+    const invoiceCall = allCalls()[0];
+    expect(invoiceCall.sql).not.toMatch(/sc\.id\s+IS\s+NULL/i);
+    // Pero conserva el LEFT JOIN a sale_credits para exponer is_credit/saldo.
+    expect(invoiceCall.sql).toMatch(/LEFT JOIN sale_credits sc/);
+  });
+
+  it('venta a crédito: suma su valor íntegro a ingresos/costo y cuenta como venta', async () => {
+    const CREDIT_SALE = makeInvoice({
+      id: '5',
+      ticket_type: 'SALE',
+      original_total: 200,
+      original_cost: 120,
+      is_deleted: false,
+    });
+    CREDIT_SALE.original_profit = 80;
+    CREDIT_SALE.is_credit = true;
+    CREDIT_SALE.credit_balance = 200;
+    CREDIT_SALE.credit_status = 'PENDING';
+    mockInvoices([SALE, CREDIT_SALE]);
+    const { summary, tickets } = await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31' },
+      OWNER,
+    );
+    // 100 (contado) + 200 (crédito) = 300; costo 60 + 120 = 180; ganancia 120.
+    expect(summary.total_revenue).toBe(300);
+    expect(summary.total_cost).toBe(180);
+    expect(summary.total_profit).toBe(120);
+    expect(summary.total_sales_count).toBe(2);
+    // El ticket a crédito se distingue como "Crédito" y pendiente por su saldo
+    // autoritativo (sc.balance), aunque aún no tenga pagos.
+    const creditTicket = (tickets as Array<Record<string, unknown>>).find((t) => t.id === 5);
+    expect(creditTicket?.paymentType).toBe('CREDIT');
+    expect(creditTicket?.isCredit).toBe(true);
+    expect(creditTicket?.balanceDue).toBe(200);
+    expect(creditTicket?.isPending).toBe(true);
+  });
+
+  it('venta a crédito PAGADA (saldo 0): se distingue como Crédito pero NO pendiente', async () => {
+    const CREDIT_PAID = makeInvoice({
+      id: '6',
+      ticket_type: 'SALE',
+      original_total: 150,
+      original_cost: 90,
+      is_deleted: false,
+    });
+    CREDIT_PAID.is_credit = true;
+    CREDIT_PAID.credit_balance = 0;
+    CREDIT_PAID.credit_status = 'PAID';
+    mockInvoices([CREDIT_PAID]);
+    const { tickets } = await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31' },
+      OWNER,
+    );
+    const t = (tickets as Array<Record<string, unknown>>)[0];
+    expect(t.paymentType).toBe('CREDIT');
+    expect(t.isPending).toBe(false);
+    expect(t.balanceDue).toBe(0);
+  });
 });

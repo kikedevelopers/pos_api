@@ -256,13 +256,18 @@ export class GetSalesReportAction {
   }
 
   private mapInvoiceTicket(inv: InvoiceRow): Record<string, unknown> {
-    // Saldo pendiente DERIVADO de los pagos vivos. Esta lista solo trae ventas
-    // SIN crédito (sc.id IS NULL), por lo que el pendiente nace de reversar un
-    // pago de una venta de contado: queda como VENTA (SALE) con saldo, sin pasar
-    // a crédito. Solo aplica a ventas constituidas (SALE) vivas.
-    const balanceDue = round2(Number(inv.original_total) - Number(inv.paid_amount));
+    // Saldo pendiente. Para una venta a crédito es el `sc.balance` autoritativo
+    // (exacto al centavo). Para una venta de contado se deriva de los pagos
+    // vivos: el pendiente nace de reversar un pago (queda como VENTA con saldo,
+    // sin pasar a crédito). Solo aplica a ventas constituidas (SALE) vivas.
+    const balanceDue = inv.is_credit
+      ? round2(Number(inv.credit_balance))
+      : round2(Number(inv.original_total) - Number(inv.paid_amount));
     const isPending = inv.ticket_type === 'SALE' && !inv.is_deleted && balanceDue > 0;
-    const paymentType = derivePaymentType(inv.payment_methods);
+    // Una venta a crédito se rotula "Crédito" en Tipo de pago aunque aún no tenga
+    // pagos (medio de pago sin definir): la distinción la da `is_credit`, no el
+    // medio con que luego se abone.
+    const paymentType = inv.is_credit ? 'CREDIT' : derivePaymentType(inv.payment_methods);
     return {
       id: Number(inv.id),
       rowType: 'INVOICE',
@@ -307,11 +312,11 @@ export class GetSalesReportAction {
       return `$${params.length}`;
     };
     const conditions: string[] = [
+      // Las ventas a crédito SÍ entran al reporte: una venta a crédito es una
+      // venta más (se cuenta y suma a ingresos/ganancia/margen por su valor
+      // íntegro el día en que se hizo). El LEFT JOIN a sale_credits solo aporta
+      // el flag `is_credit`, el saldo y el estado para distinguirlas en la UI.
       `si.company_id = $1`,
-      // `sc.id IS NULL` significa que la factura NO es a crédito (consistente
-      // con el filtro PlacePos original). El LEFT JOIN ya garantiza el
-      // company_id de sc cuando existe.
-      `sc.id IS NULL`,
     ];
 
     const fromPh = placeholder(dateFrom);
