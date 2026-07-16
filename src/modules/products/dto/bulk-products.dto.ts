@@ -65,6 +65,32 @@ export class BulkPriceDto {
 }
 
 /**
+ * Empaque de una fila del bulk (columna "Empaque" del Excel, "NOMBRE - VALOR").
+ * find-or-create por nombre scoped company; `value` es el factor a unidad mínima.
+ *
+ * Declarada ANTES de `BulkItemDto` a propósito: `emitDecoratorMetadata` emite una
+ * referencia EAGER a esta clase en la propiedad `packaging?` (design:type), que
+ * se evalúa al definir `BulkItemDto`. Si estuviera declarada después → TDZ
+ * (ReferenceError: Cannot access 'BulkPackagingDto' before initialization).
+ */
+export class BulkPackagingDto {
+  @ApiProperty({ example: 'MEDIA LIBRA', maxLength: 150 })
+  @IsString()
+  @IsNotEmpty({ message: 'El nombre del empaque no puede estar vacío' })
+  @MaxLength(150)
+  name!: string;
+
+  @ApiProperty({ example: 0.5, description: 'Factor a unidad mínima. Debe ser > 0.' })
+  @Type(() => Number)
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 4 },
+    { message: 'El valor del empaque debe ser numérico' },
+  )
+  @Min(0.0001, { message: 'El valor del empaque debe ser mayor que 0' })
+  value!: number;
+}
+
+/**
  * Un item dentro de `POST /inventory/bulk`. Espejo de `BulkImportItem` en
  * `placepos/src/main/server/routes/inventory.routes.ts`.
  *
@@ -177,6 +203,31 @@ export class BulkItemDto {
   @ValidateNested({ each: true })
   @Type(() => BulkPriceDto)
   prices?: BulkPriceDto[];
+
+  // ── Jerarquía base/presentación (columnas "Base" y "Empaque" del Excel) ──
+  @ApiPropertyOptional({
+    example: 'Linaza x libra',
+    maxLength: 150,
+    description:
+      'NOMBRE del producto BASE al que se ancla esta fila. undefined = columna ' +
+      '"Base" ausente (preservar jerarquía). "" = la fila es un BASE (parent NULL). ' +
+      'Con valor = la fila es una PRESENTACIÓN anclada al base con ese nombre.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  base_name?: string;
+
+  @ApiPropertyOptional({
+    type: () => BulkPackagingDto,
+    description:
+      'Empaque parseado de la columna "Empaque" (NOMBRE - VALOR). find-or-create ' +
+      'por nombre. undefined = columna ausente.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BulkPackagingDto)
+  packaging?: BulkPackagingDto;
 }
 
 /**

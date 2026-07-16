@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource, type EntityManager } from 'typeorm';
+import { DataSource, QueryFailedError, type EntityManager } from 'typeorm';
 
 import { calculateMargin, calculateProfit, preciseNumber } from '@/common/utils/precision';
-import { resolveCategoryIdByName } from '@/modules/categories/internal/category-lookups';
+import {
+  normalizeNameSql,
+  resolveCategoryIdByName,
+} from '@/modules/categories/internal/category-lookups';
+import { PG_UNIQUE_VIOLATION } from '@/modules/categories/internal/constraint-errors';
 import { propagateParentCostToChildren } from '@/modules/purchases/internal/recalculate-product-costs.helper';
 
 import type { BulkItemDto, BulkProductsResponseDto } from '../dto/bulk-products.dto';
@@ -75,7 +79,23 @@ export class BulkProcessProductsAction {
       conflicts: [],
     };
 
-    for (const item of items) {
+    // Procesar BASES antes que PRESENTACIONES: una presentación resuelve su padre
+    // por nombre en la BD, así que el base debe estar creado/commiteado antes
+    // (cada item va en su propia transacción). El front además ordena bases-primero
+    // globalmente. Orden estable (índice) para no alterar el resto del lote.
+    const ordered = items
+      .map((item, idx) => ({ item, idx }))
+      .sort((a, b) => {
+        const aPres = a.item.base_name !== undefined && !!a.item.base_name.trim();
+        const bPres = b.item.base_name !== undefined && !!b.item.base_name.trim();
+        if (aPres === bPres) {
+          return a.idx - b.idx;
+        }
+        return aPres ? 1 : -1;
+      })
+      .map((x) => x.item);
+
+    for (const item of ordered) {
       try {
         const outcome = await this.processOne(item, companyId, actor);
         if (outcome.kind === 'created') {
@@ -143,7 +163,30 @@ export class BulkProcessProductsAction {
       return { kind: 'conflict', reason: 'No tiene precios válidos.' };
     }
 
-    const categoryId = await resolveCategoryIdByName(manager, item.category, companyId);
+    const h = await resolveHierarchy(manager, item, null, companyId, actor);
+    const isPresentation = h.kind === 'presentation';
+
+    // Presentación: costo DERIVADO del base, stock 0 (se deriva del padre),
+    // categoría HEREDADA, parent_id/packaging_id; precios recalculados contra el
+    // costo derivado. Base: categoría find-or-create, empaque opcional, stock
+    // (paquetes) → mínima con el valor del empaque.
+    const resolvedCost = isPresentation ? (h.derivedCost as number) : ctx.cost;
+    const resolvedStock = isPresentation ? 0 : toMinimalStock(item.stock ?? 0, h.packagingValue);
+    const resolvedCategoryId = isPresentation
+      ? h.inheritedCategoryId ?? null
+      : await resolveCategoryIdByName(manager, item.category, companyId);
+    const resolvedParentId = isPresentation ? (h.parentId as string) : null;
+    const resolvedPackagingId = isPresentation
+      ? (h.packagingIdFromColumn as string)
+      : h.packagingIdFromColumn ?? null;
+    // Precios: para presentación, profit/margin contra el costo DERIVADO.
+    const pricesToInsert = isPresentation
+      ? ctx.validPrices.map((p) => ({
+          sale_price: p.sale_price,
+          profit: calculateProfit(p.sale_price, resolvedCost),
+          margin: calculateMargin(p.sale_price, resolvedCost),
+        }))
+      : ctx.validPrices;
 
     let created: Product;
     try {
@@ -155,9 +198,11 @@ export class BulkProcessProductsAction {
           description: item.description?.trim() || null,
           sku_code: ctx.sku,
           bar_code: ctx.bar,
-          category_id: categoryId,
-          cost: ctx.cost,
-          stock: item.stock ?? 0,
+          category_id: resolvedCategoryId,
+          parent_id: resolvedParentId,
+          packaging_id: resolvedPackagingId,
+          cost: resolvedCost,
+          stock: resolvedStock,
           product_type: item.product_type ?? ProductType.SIMPLE,
           show_in_pos: item.show_in_pos === undefined ? true : item.show_in_pos,
           is_purchasable: item.is_purchasable === undefined ? false : item.is_purchasable,
@@ -173,7 +218,7 @@ export class BulkProcessProductsAction {
 
     await manager.insert(
       ProductPrice,
-      ctx.validPrices.map((p) => buildPriceInsert(p, companyId, created.id, actor)),
+      pricesToInsert.map((p) => buildPriceInsert(p, companyId, created.id, actor)),
     );
 
     return { kind: 'created' };
@@ -204,39 +249,61 @@ export class BulkProcessProductsAction {
     const resolvedIsPurchasable =
       item.is_purchasable === undefined ? existing.is_purchasable : item.is_purchasable;
 
-    // El `stock` de la fila viene en unidad de empaque (paquetes que cuenta el
-    // usuario). Se persiste en unidad mínima usando el packaging vigente del
-    // producto (minimal = paquetes × packaging_value), igual que el formulario y
-    // coherente con ventas/compras. El import no cambia el empaque; sin empaque
-    // => factor 1. Se convierte ANTES de la detección de no-op y del ajuste.
-    const packagingValue = existing.packaging_id
-      ? Number(
-          (await manager.findOne(Packaging, { where: { id: existing.packaging_id } }))?.value ?? 1,
-        )
-      : 1;
-    const resolvedStock =
-      item.stock === undefined ? existing.stock : toMinimalStock(item.stock, packagingValue);
+    // Jerarquía (columnas "Base"/"Empaque"): resuelve base/presentación/preservar
+    // y los campos derivados. Ver resolveHierarchy.
+    const h = await resolveHierarchy(manager, item, existing, companyId, actor);
+    const isPresentation = h.kind === 'presentation';
 
-    // category: la resolvemos (find-or-create) SOLO si el item la trae
-    // (no vacío) — así un re-import sin categoría no crea categorías de más.
-    // undefined/'' → PRESERVAR el category_id existente.
+    // parent_id: presentación → base.id; base → null; preservar → el actual.
+    const resolvedParentId = isPresentation
+      ? (h.parentId as string)
+      : h.kind === 'base'
+        ? null
+        : existing.parent_id;
+    // packaging_id: presentación/base con columna Empaque → el resuelto; sin
+    // columna → preservar el actual.
+    const resolvedPackagingId = isPresentation
+      ? (h.packagingIdFromColumn as string)
+      : h.packagingIdFromColumn !== undefined
+        ? h.packagingIdFromColumn
+        : existing.packaging_id;
+    // cost: presentación DERIVADO; base/preservar → passthrough del Excel.
+    const resolvedCost = isPresentation ? (h.derivedCost as number) : ctx.cost;
+    // stock: presentación = 0 (se deriva del padre); base/preservar = paquetes →
+    // mínima con el valor del empaque a usar. Si item.stock undefined → preservar.
+    const resolvedStock = isPresentation
+      ? 0
+      : item.stock === undefined
+        ? existing.stock
+        : toMinimalStock(item.stock, h.packagingValue);
+
+    // category: presentación HEREDA del padre; base/preservar → find-or-create
+    // (solo si trae categoría) o preservar.
     const itemHasCategory = !(item.category === undefined || item.category.trim() === '');
-    const resolvedCategoryId = itemHasCategory
-      ? await resolveCategoryIdByName(manager, item.category, companyId)
-      : existing.category_id;
+    const resolvedCategoryId = isPresentation
+      ? h.inheritedCategoryId ?? null
+      : itemHasCategory
+        ? await resolveCategoryIdByName(manager, item.category, companyId)
+        : existing.category_id;
 
-    // description: misma semántica que category — undefined/'' → PRESERVAR la
-    // actual; con valor → reemplazar (trim).
+    // description: undefined/'' → PRESERVAR la actual; con valor → reemplazar (trim).
     const itemHasDescription = !(item.description === undefined || item.description.trim() === '');
     const resolvedDescription = itemHasDescription
       ? item.description!.trim()
       : existing.description;
 
-    // sku_code/bar_code: preserve-on-empty. El match pudo ser por UNO de los dos
-    // códigos; si la fila no trae el otro (null), NO debe borrarse el del producto.
-    // null → preservar el existente; con valor → reemplazar.
+    // sku_code/bar_code: preserve-on-empty. null → preservar; con valor → reemplazar.
     const resolvedSku = ctx.sku ?? existing.sku_code;
     const resolvedBar = ctx.bar ?? existing.bar_code;
+
+    // Precios a escribir (presentación: profit/margin contra el costo DERIVADO).
+    const resolvedPrices = isPresentation
+      ? ctx.validPrices.map((p) => ({
+          sale_price: p.sale_price,
+          profit: calculateProfit(p.sale_price, resolvedCost),
+          margin: calculateMargin(p.sale_price, resolvedCost),
+        }))
+      : ctx.validPrices;
 
     // ----- Detección de no-op (skipped) ANTES de cualquier escritura. -----
     const existingSalePrices = await loadSalePrices(manager, companyId, existing.id);
@@ -245,14 +312,14 @@ export class BulkProcessProductsAction {
       existing.description === resolvedDescription &&
       existing.sku_code === resolvedSku &&
       existing.bar_code === resolvedBar &&
-      preciseNumber(existing.cost, 2) === preciseNumber(ctx.cost, 2) &&
+      preciseNumber(existing.cost, 2) === preciseNumber(resolvedCost, 2) &&
       preciseNumber(existing.stock, 4) === preciseNumber(resolvedStock, 4) &&
       existing.product_type === resolvedType &&
       existing.show_in_pos === resolvedShowInPos &&
       existing.is_purchasable === resolvedIsPurchasable &&
       existing.category_id === resolvedCategoryId &&
-      // Precios: solo se reemplazan si hay validPrices; si están vacíos se
-      // preservan (no es cambio). Si hay, comparamos el set de sale_price.
+      existing.parent_id === resolvedParentId &&
+      existing.packaging_id === resolvedPackagingId &&
       (ctx.validPrices.length === 0 ||
         salePriceSetsEqual(
           existingSalePrices,
@@ -263,8 +330,6 @@ export class BulkProcessProductsAction {
       return { kind: 'skipped' };
     }
 
-    const categoryId = resolvedCategoryId;
-
     try {
       await manager.update(
         Product,
@@ -274,11 +339,19 @@ export class BulkProcessProductsAction {
           description: resolvedDescription,
           sku_code: resolvedSku,
           bar_code: resolvedBar,
-          category_id: categoryId,
-          cost: ctx.cost,
+          category_id: resolvedCategoryId,
+          parent_id: resolvedParentId,
+          packaging_id: resolvedPackagingId,
+          cost: resolvedCost,
           product_type: resolvedType,
           show_in_pos: resolvedShowInPos,
           is_purchasable: resolvedIsPurchasable,
+          // Presentación: su stock es DERIVADO del padre → se fija a 0 DIRECTO
+          // (sin movimiento auditado). NO se rutea por adjustInventory: ese
+          // helper agrupa el delta por `parent_id ?? id`, y como el parent_id ya
+          // quedó seteado arriba, el descuento caería sobre el PADRE (bug). Para
+          // base/preserve el stock se ajusta auditado más abajo.
+          ...(isPresentation ? { stock: 0 } : {}),
           updated_by: actor.fullName,
           updated_by_id: String(actor.id),
         },
@@ -288,44 +361,44 @@ export class BulkProcessProductsAction {
       throw error;
     }
 
-    // Stock: si viene definido y difiere, ajuste AUDITADO (inventory_movements).
-    // Si es undefined, PRESERVAR (no tocar). Paridad PlacePos
-    // (`applyStockChangeWithLog`).
-    if (item.stock !== undefined) {
+    // Stock: base/preservar → si item.stock definido y difiere, ajuste AUDITADO.
+    // Presentación NO entra aquí: su stock 0 ya se fijó directo en el update de
+    // arriba (evita que adjustInventory descuente del padre). Si item.stock es
+    // undefined (y no presentación), se preserva.
+    if (!isPresentation && item.stock !== undefined) {
       await applyAuditedStockChange(
         manager,
         companyId,
         Number(existing.id),
         existing.stock,
-        resolvedStock, // objetivo en unidad mínima (paquetes × packaging_value)
+        resolvedStock,
         actor,
       );
     }
 
     // Precios: reemplazo total SOLO si hay validPrices. Si no, se preservan.
-    if (ctx.validPrices.length > 0) {
+    if (resolvedPrices.length > 0) {
       await manager.delete(ProductPrice, {
         product_id: existing.id,
         company_id: String(companyId),
       });
       await manager.insert(
         ProductPrice,
-        ctx.validPrices.map((p) => buildPriceInsert(p, companyId, existing.id, actor)),
+        resolvedPrices.map((p) => buildPriceInsert(p, companyId, existing.id, actor)),
       );
     }
 
-    // Si cambió el costo de un producto BASE, propagar a sus presentaciones
-    // (cost + profit/margin de sus precios). No-op si no tiene hijos. Solo
-    // aplica a base (parent_id null): una presentación no tiene presentaciones.
+    // Si cambió el costo de un producto BASE (parent NULL), propagar a sus
+    // presentaciones. Una presentación no tiene presentaciones → no propaga.
     if (
-      existing.parent_id === null &&
-      preciseNumber(existing.cost, 2) !== preciseNumber(ctx.cost, 2)
+      resolvedParentId === null &&
+      preciseNumber(existing.cost, 2) !== preciseNumber(resolvedCost, 2)
     ) {
       await propagateParentCostToChildren({
         manager,
         companyId,
         parentId: Number(existing.id),
-        parentCost: ctx.cost,
+        parentCost: resolvedCost,
         actor,
       });
     }
@@ -569,6 +642,187 @@ async function applyAuditedStockChange(
       actorUserId: actor.id,
     },
   );
+}
+
+/** Error de negocio de un item del lote → se cuenta como `conflict` (no aborta). */
+class BulkItemError extends Error {}
+
+/**
+ * find-or-create de un EMPAQUE por nombre, scoped company. Espejo de
+ * `resolvePackagingIdByName` de placepos. Match por `lower(btrim(name))` para
+ * ALINEARSE con el índice único `idx_packagings_company_name_unique`
+ * (company_id, lower(btrim(name))) — NO accent-insensitive, o divergiría del
+ * índice. Empaque NOMBRADO gestionable → `is_auto = false`. Maneja la carrera
+ * 23505 re-buscando el ganador. Dentro de la transacción del caller.
+ */
+async function resolvePackagingIdByName(
+  manager: EntityManager,
+  name: string,
+  value: number,
+  companyId: number,
+  actor: ProductCreator,
+): Promise<string> {
+  const trimmed = name.trim();
+  const find = async (): Promise<string | null> => {
+    const row = await manager
+      .getRepository(Packaging)
+      .createQueryBuilder('pk')
+      .select('pk.id', 'id')
+      .where('pk.company_id = :cid', { cid: String(companyId) })
+      .andWhere('pk.is_archived = false')
+      .andWhere('lower(btrim(pk.name)) = lower(btrim(:name))', { name: trimmed })
+      .limit(1)
+      .getRawOne<{ id: string }>();
+    return row?.id ?? null;
+  };
+
+  const existing = await find();
+  if (existing) {
+    return existing;
+  }
+  try {
+    const created = await manager.save(
+      Packaging,
+      manager.create(Packaging, {
+        company_id: String(companyId),
+        name: trimmed,
+        value,
+        is_auto: false,
+        is_archived: false,
+        created_by: actor.fullName,
+        created_by_id: String(actor.id),
+      }),
+    );
+    return created.id;
+  } catch (error) {
+    if (error instanceof QueryFailedError && (error as { code?: string }).code === PG_UNIQUE_VIOLATION) {
+      const winner = await find();
+      if (winner) {
+        return winner;
+      }
+    }
+    throw error;
+  }
+}
+
+/** Referencia a un producto BASE (para anclar presentaciones). */
+interface BaseProductRef {
+  id: string;
+  cost: number;
+  packagingValue: number; // valor del empaque del base (1 si no tiene)
+  categoryId: string | null;
+}
+
+/**
+ * Busca un producto BASE activo (parent_id NULL) de la company por nombre,
+ * ignorando mayúsculas y acentos (mismo criterio que el front y la categoría).
+ * Devuelve su costo, el valor de su empaque (1 si no tiene) y su categoría.
+ */
+async function findBaseByName(
+  manager: EntityManager,
+  name: string,
+  companyId: number,
+): Promise<BaseProductRef | null> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const row = await manager
+    .getRepository(Product)
+    .createQueryBuilder('p')
+    .leftJoin('p.packaging', 'pk')
+    .select('p.id', 'id')
+    .addSelect('p.cost', 'cost')
+    .addSelect('p.category_id', 'category_id')
+    .addSelect('pk.value', 'pkg_value')
+    .where('p.company_id = :cid', { cid: String(companyId) })
+    .andWhere('p.is_archived = false')
+    .andWhere('p.parent_id IS NULL')
+    .andWhere(`${normalizeNameSql('p.name')} = ${normalizeNameSql(':name')}`, { name: trimmed })
+    .limit(1)
+    .getRawOne<{ id: string; cost: string; category_id: string | null; pkg_value: string | null }>();
+  if (!row) {
+    return null;
+  }
+  const pkgValue = row.pkg_value != null ? Number(row.pkg_value) || 1 : 1;
+  return {
+    id: row.id,
+    cost: Number(row.cost),
+    packagingValue: pkgValue,
+    categoryId: row.category_id ?? null,
+  };
+}
+
+/**
+ * Resuelve la clasificación (base/presentación/preservar) y los campos de
+ * jerarquía derivados de un item. Espejo de `resolveHierarchy` de placepos.
+ */
+interface ResolvedHierarchy {
+  kind: 'base' | 'presentation' | 'preserve';
+  packagingIdFromColumn: string | null | undefined; // undefined = columna "Empaque" ausente
+  packagingValue: number;
+  parentId?: string;
+  inheritedCategoryId?: string | null;
+  derivedCost?: number;
+}
+
+async function resolveHierarchy(
+  manager: EntityManager,
+  item: BulkItemDto,
+  existing: ExistingProduct | null,
+  companyId: number,
+  actor: ProductCreator,
+): Promise<ResolvedHierarchy> {
+  const hasBaseColumn = item.base_name !== undefined;
+  const isPresentation = hasBaseColumn && !!item.base_name?.trim();
+
+  let packagingIdFromColumn: string | null | undefined;
+  let packagingValue: number;
+  if (item.packaging) {
+    packagingIdFromColumn = await resolvePackagingIdByName(
+      manager,
+      item.packaging.name,
+      item.packaging.value,
+      companyId,
+      actor,
+    );
+    packagingValue = item.packaging.value;
+  } else {
+    packagingIdFromColumn = undefined;
+    packagingValue = existing?.packaging_id
+      ? Number(
+          (await manager.findOne(Packaging, { where: { id: existing.packaging_id } }))?.value ?? 1,
+        )
+      : 1;
+  }
+
+  if (!hasBaseColumn) {
+    return { kind: 'preserve', packagingIdFromColumn, packagingValue };
+  }
+  if (!isPresentation) {
+    return { kind: 'base', packagingIdFromColumn, packagingValue };
+  }
+
+  const base = await findBaseByName(manager, item.base_name as string, companyId);
+  if (!base) {
+    throw new BulkItemError(
+      `Producto base "${(item.base_name as string).trim()}" no encontrado.`,
+    );
+  }
+  const packagingId =
+    packagingIdFromColumn ?? (existing && existing.parent_id ? existing.packaging_id : null);
+  if (!packagingId) {
+    throw new BulkItemError('Una presentación requiere un empaque (columna "Empaque").');
+  }
+  const derivedCost = preciseNumber((base.cost / base.packagingValue) * packagingValue, 2);
+  return {
+    kind: 'presentation',
+    packagingIdFromColumn: packagingId,
+    packagingValue,
+    parentId: base.id,
+    inheritedCategoryId: base.categoryId,
+    derivedCost,
+  };
 }
 
 /**

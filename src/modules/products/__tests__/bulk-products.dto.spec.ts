@@ -165,4 +165,105 @@ describe('BulkProductsDto / BulkItemDto validation', () => {
     expect(errors.length).toBeGreaterThan(0);
     expect(flattenConstraintKeys(errors)).toContain('arrayMinSize');
   });
+
+  // ── Jerarquía base/presentación (columnas "Base" y "Empaque") ──────────────
+  it('presentación válida (base_name + packaging con value numérico) → 0 errores', async () => {
+    const errors = await validatePayload({
+      items: [
+        {
+          name: 'Linaza 1/2 libra',
+          sku_code: 'PRE-HALF',
+          base_name: 'Linaza x libra',
+          packaging: { name: 'MEDIA LIBRA', value: 0.5 },
+          prices: [{ sale_price: 3000 }],
+        },
+      ],
+    });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('base_name vacío (fila = BASE) → 0 errores', async () => {
+    const errors = await validatePayload({
+      items: [{ name: 'Linaza x libra', base_name: '', cost: 3705, prices: [{ sale_price: 6000 }] }],
+    });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('empaque con value NO numérico (p.ej. "KILO - MIL") → error isNumber (error grave)', async () => {
+    // El front parsea "NOMBRE - VALOR"; si el VALOR no es numérico debe rechazarse
+    // ANTES de tocar la BD. `value: 'MIL'` simula ese parseo fallido.
+    const errors = await validatePayload({
+      items: [
+        {
+          name: 'Café x kilo',
+          base_name: 'Café',
+          packaging: { name: 'KILO', value: 'MIL' },
+          prices: [{ sale_price: 12000 }],
+        },
+      ],
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    const messages = flattenConstraints(errors);
+    expect(messages.some((m) => m.includes('valor del empaque debe ser numérico'))).toBe(true);
+    expect(flattenConstraintKeys(errors)).toContain('isNumber');
+  });
+
+  it('empaque con value <= 0 → error Min(0.0001)', async () => {
+    const errors = await validatePayload({
+      items: [
+        {
+          name: 'Café x kilo',
+          base_name: 'Café',
+          packaging: { name: 'KILO', value: 0 },
+          prices: [{ sale_price: 12000 }],
+        },
+      ],
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    const messages = flattenConstraints(errors);
+    expect(messages.some((m) => m.includes('valor del empaque debe ser mayor que 0'))).toBe(true);
+    expect(flattenConstraintKeys(errors)).toContain('min');
+  });
+
+  it('empaque con nombre vacío → error IsNotEmpty', async () => {
+    const errors = await validatePayload({
+      items: [
+        {
+          name: 'Café x kilo',
+          base_name: 'Café',
+          packaging: { name: '', value: 1 },
+          prices: [{ sale_price: 12000 }],
+        },
+      ],
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    const messages = flattenConstraints(errors);
+    expect(messages.some((m) => m.includes('nombre del empaque no puede estar vacío'))).toBe(true);
+    expect(flattenConstraintKeys(errors)).toContain('isNotEmpty');
+  });
+
+  it('empaque con value > 4 decimales → error maxDecimalPlaces', async () => {
+    const errors = await validatePayload({
+      items: [
+        {
+          name: 'Café x kilo',
+          base_name: 'Café',
+          packaging: { name: 'KILO', value: 1.23456 },
+          prices: [{ sale_price: 12000 }],
+        },
+      ],
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(flattenConstraintKeys(errors)).toContain('isNumber');
+  });
+
+  it('base_name que excede 150 chars → error MaxLength', async () => {
+    const errors = await validatePayload({
+      items: [
+        { name: 'X', base_name: 'a'.repeat(151), packaging: { name: 'U', value: 1 }, prices: [{ sale_price: 1 }] },
+      ],
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(flattenConstraintKeys(errors)).toContain('maxLength');
+  });
 });
