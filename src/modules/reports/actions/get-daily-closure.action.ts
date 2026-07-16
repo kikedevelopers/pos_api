@@ -69,6 +69,10 @@ export interface DailyClosureResult {
   creditsBreakdown: {
     newCreditsCount: number;
     newCreditsTotal: number;
+    // Ganancia/margen DEVENGADOS de los créditos del día (discriminados en el
+    // bloque "Ventas del Día"; YA sumados en salesProfit/salesRevenue/salesMargin).
+    newCreditsProfit: number;
+    newCreditsMargin: number;
     abonosCash: number;
     abonosConsignacion: number;
     abonosConsignacionDetalle: { bankName: string; amount: number }[];
@@ -284,15 +288,33 @@ export class GetDailyClosureAction {
       totalDebit: round2(totalDebitAdj.toNumber()),
     };
 
-    // Bloque VENTAS. Con el flag ON el pedido se asume COMPLETO, como una venta
-    // normal: su facturación entra al denominador y su ganancia REAL al
-    // numerador, así que el margen sigue siendo coherente. Con OFF ambos deltas
-    // son 0 → cifras idénticas a las de siempre.
+    // Créditos del día (DEVENGADO): una venta a crédito es una venta más, así que
+    // su valor y ganancia ÍNTEGROS entran al bloque "Ventas del Día" el día en
+    // que se hace, discriminados. NO se confunde con "Recaudo de Cartera"
+    // (abonos), que es dinero real y va en su propio bloque.
+    const newCreditsTotal = round2(newCreditsData.new_credits_total);
+    const newCreditsProfit = round2(newCreditsData.new_credits_profit);
+    const newCreditsMargin =
+      newCreditsTotal > 0
+        ? round2(toBig(newCreditsProfit).div(newCreditsTotal).times(100).toNumber())
+        : 0;
+
+    // Bloque VENTAS DEL DÍA = contado (neto NC/ND) + consignaciones + CRÉDITOS +
+    // pedidos. Con el flag de pedidos ON el pedido se asume COMPLETO. Con crédito
+    // 0 y pedidos 0 las cifras son idénticas a las de siempre.
     const salesProfitTotal = round2(
-      toBig(netProfit).plus(toBig(consignacionesProfit)).plus(toBig(ordersProfit)).toNumber(),
+      toBig(netProfit)
+        .plus(toBig(consignacionesProfit))
+        .plus(toBig(newCreditsProfit))
+        .plus(toBig(ordersProfit))
+        .toNumber(),
     );
     const salesRevenueTotal = round2(
-      toBig(netSales).plus(toBig(consignacionesVentas)).plus(toBig(ordersTotal)).toNumber(),
+      toBig(netSales)
+        .plus(toBig(consignacionesVentas))
+        .plus(toBig(newCreditsTotal))
+        .plus(toBig(ordersTotal))
+        .toNumber(),
     );
     const salesMarginValue =
       salesRevenueTotal > 0
@@ -305,12 +327,13 @@ export class GetDailyClosureAction {
         ? round2(toBig(creditsProfitTotal).div(abonosTotal).times(100).toNumber())
         : 0;
 
-    // "Ganancia del día" (headline) = utilidad COBRADA (base caja): la porción de
+    // "Ganancia del día" (headline CAJA) = utilidad COBRADA: la porción de
     // utilidad dentro del recaudo (contado + abonos proporcionales). Fiel a la
-    // caja: una venta a crédito NO suma su ganancia hasta cobrarse. Coincide con
-    // `/dashboard/today.profit` y `extended-summary.ventas.ganancia`. Los bloques
-    // `salesProfit` (contado) y `creditsProfit` (abonos) son sub-métricas cuya
-    // suma es este total. Ver financial-facts/contracts/metrics-spec.md.
+    // caja: una venta a crédito NO suma su ganancia hasta cobrarse. Alimenta las
+    // tarjetas de caja del Dashboard/Finanzas. Es DISTINTA del bloque "Ventas del
+    // Día" (`salesProfit`), que ahora es DEVENGADO e incluye el crédito íntegro:
+    // por diseño la venta (devengado) y el recaudo (caja) ya no coinciden. Ver
+    // financial-facts/contracts/metrics-spec.md.
     //
     // Flag `include_orders_in_reports` ON: se le SUMA ARRIBA la ganancia real de
     // los pedidos del día. El delta se aplica AQUÍ, en el action del informe —
@@ -343,7 +366,11 @@ export class GetDailyClosureAction {
       ordersTotal,
       creditsBreakdown: {
         newCreditsCount: Number(newCreditsData.new_credits_count),
-        newCreditsTotal: round2(newCreditsData.new_credits_total),
+        newCreditsTotal,
+        // Ganancia/margen DEVENGADOS de los créditos del día, para mostrarlos
+        // discriminados dentro del bloque "Ventas del Día".
+        newCreditsProfit,
+        newCreditsMargin,
         abonosCash: round2(abonosCash),
         abonosConsignacion: round2(abonosConsig),
         abonosConsignacionDetalle: abonosConsigDetalle,

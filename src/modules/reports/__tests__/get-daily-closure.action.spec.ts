@@ -26,6 +26,7 @@ interface Scenario {
   grossCost: number;
   collectedProfit: number;
   orders: { total: number; cost: number };
+  newCredits?: { count: number; total: number; profit: number; cost: number; balance: number };
 }
 
 const BASE_SCENARIO: Scenario = {
@@ -56,6 +57,18 @@ function buildQueryMock(scenario: Scenario): jest.Mock {
     if (/ticket_type = 'ORDER'/.test(sql)) {
       return Promise.resolve([
         { orders_total: scenario.orders.total, orders_cost: scenario.orders.cost },
+      ]);
+    }
+    if (/AS new_credits_total/.test(sql)) {
+      const c = scenario.newCredits;
+      return Promise.resolve([
+        {
+          new_credits_count: c?.count ?? 0,
+          new_credits_total: c?.total ?? 0,
+          pending_balance: c?.balance ?? 0,
+          new_credits_profit: c?.profit ?? 0,
+          new_credits_cost: c?.cost ?? 0,
+        },
       ]);
     }
     return Promise.resolve([]);
@@ -128,6 +141,30 @@ describe('GetDailyClosureAction', () => {
     expect(result.margin).toBe(25);
     // Caja: 400 de contado, sin gastos.
     expect(result.finalTotal).toBe(400);
+  });
+
+  // ─── Créditos del día en el bloque "Ventas del Día" ─────────────────────────
+
+  it('crédito del día: entra a salesProfit/salesRevenue (devengado) y se discrimina; la CAJA no cambia', async () => {
+    includeOrders = false;
+    // Contado 400/300 (util 100) + crédito 200 con ganancia devengada 80.
+    const action = buildAction({
+      ...BASE_SCENARIO,
+      newCredits: { count: 1, total: 200, profit: 80, cost: 120, balance: 200 },
+    });
+    const result = await action.execute(7, '2026-06-15');
+
+    // Bloque "Ventas del Día" = contado (100) + crédito (80) = 180; base 400+200=600.
+    expect(result.salesProfit).toBe(180);
+    expect(result.salesMargin).toBe(30); // 180/600
+    // Créditos del día discriminados.
+    expect(result.creditsBreakdown.newCreditsTotal).toBe(200);
+    expect(result.creditsBreakdown.newCreditsProfit).toBe(80);
+    expect(result.creditsBreakdown.newCreditsMargin).toBe(40); // 80/200
+    // Headline CAJA sin cambios: el crédito no se ha cobrado.
+    expect(result.profit).toBe(100);
+    expect(result.finalTotal).toBe(400);
+    expect(result.creditsBreakdown.abonosTotal).toBe(0);
   });
 
   // ─── Flag ON: el pedido se asume COMPLETO ──────────────────────────────────

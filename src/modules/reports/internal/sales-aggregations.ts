@@ -53,6 +53,9 @@ export interface NewCreditsRow {
   new_credits_count: string | number;
   new_credits_total: number;
   pending_balance: number;
+  // Ganancia/costo DEVENGADOS del crédito generado (proporcional a lo financiado).
+  new_credits_profit: number;
+  new_credits_cost: number;
 }
 
 export interface OrdersBillingRow {
@@ -246,7 +249,13 @@ export async function fetchNewCredits(
       SELECT
         COUNT(*) AS new_credits_count,
         COALESCE(SUM(sc.total_amount), 0)::float AS new_credits_total,
-        COALESCE(SUM(sc.balance), 0)::float AS pending_balance
+        COALESCE(SUM(sc.balance), 0)::float AS pending_balance,
+        -- Ganancia/costo DEVENGADOS del crédito, proporcionales a la fracción
+        -- financiada (sc.total_amount / si.total). Con crédito por el total de la
+        -- venta (sin abono inicial) equivale a si.profit / si.cost. Prorratear
+        -- deja correcto el caso con abono inicial (parte contado, parte crédito).
+        COALESCE(SUM(si.profit * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS new_credits_profit,
+        COALESCE(SUM(si.cost   * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS new_credits_cost
       FROM sale_credits sc
       INNER JOIN sale_invoices si
         ON si.id = sc.sale_invoice_id
@@ -263,6 +272,8 @@ export async function fetchNewCredits(
       new_credits_count: 0,
       new_credits_total: 0,
       pending_balance: 0,
+      new_credits_profit: 0,
+      new_credits_cost: 0,
     }
   );
 }

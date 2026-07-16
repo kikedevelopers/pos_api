@@ -57,6 +57,8 @@ describe('GetExtendedSummaryAction', () => {
       efectivo: 0,
       electronico: 0,
       credito: 0,
+      creditoGanancia: 0,
+      creditoMargen: 0,
       pedidos: 0,
       total: 0,
       ganancia: 0,
@@ -123,15 +125,12 @@ describe('GetExtendedSummaryAction', () => {
     expect(ordersCall).toBeUndefined();
   });
 
-  it('flag OFF (regresión): ganancia = cobrada canónica y margen sobre la base cobrada', async () => {
+  it('flag OFF (regresión): ganancia DEVENGADA de contado = netProfit y margen sobre la base', async () => {
     includeOrders = false;
-    // Contado bruto 400 (sin notas) y utilidad cobrada canónica 100.
+    // Contado bruto 400/300 (sin notas) → netProfit devengado = 100.
     querySpy.mockImplementation((sql: string) => {
       if (/AS gross_sales/.test(sql)) {
         return Promise.resolve([{ gross_sales: 400, gross_cost: 300 }]);
-      }
-      if (/WITH note_agg AS/.test(sql)) {
-        return Promise.resolve([{ amount: 100 }]);
       }
       return Promise.resolve([]);
     });
@@ -141,9 +140,9 @@ describe('GetExtendedSummaryAction', () => {
     expect(result.ventas.pedidos).toBe(0);
     expect(result.ventas.efectivo).toBe(400);
     expect(result.ventas.total).toBe(400);
-    // Ganancia = collectedProfit puro, SIN delta de pedidos.
+    // Ganancia = utilidad devengada de contado (400 − 300), SIN pedidos ni abonos.
     expect(result.ventas.ganancia).toBe(100);
-    // Margen 100/400 = 25%: idéntico al de antes del flag (el total ≡ cobrado).
+    // Margen 100/400 = 25%.
     expect(result.ventas.margen).toBe(25);
     expect(result.gananciaReal).toBe(100);
   });
@@ -163,7 +162,7 @@ describe('GetExtendedSummaryAction', () => {
     // pedidos entra al total…
     expect(result.ventas.pedidos).toBe(40);
     expect(result.ventas.total).toBe(40);
-    // …y su ganancia real (40 - 25) se suma a la cobrada (0 aquí).
+    // …y su ganancia real (40 - 25) se suma a la del bloque (0 aquí).
     expect(result.ventas.ganancia).toBe(15);
     // margen sobre el total, que YA incluye pedidos: 15/40 = 37.5%.
     expect(result.ventas.margen).toBe(37.5);
@@ -175,25 +174,34 @@ describe('GetExtendedSummaryAction', () => {
     expect(result.ventas.credito).toBe(0);
   });
 
-  it('flag ON: la ganancia del pedido se SUMA a la cobrada canónica (no la reemplaza)', async () => {
-    includeOrders = true;
-    // collectedProfit (query canónica de financial-facts) = 100; pedido 40/10 → +30.
+  it('crédito del día: entra a total/ganancia/margen (devengado) y se discrimina', async () => {
+    includeOrders = false;
+    // fetchNewCredits: crédito por 200, ganancia devengada 80 (margen 40%).
     querySpy.mockImplementation((sql: string) => {
-      if (/ticket_type = 'ORDER'/.test(sql)) {
-        return Promise.resolve([{ orders_total: 40, orders_cost: 10 }]);
-      }
-      // Query canónica de utilidad cobrada (financial-facts/collection-facts).
-      if (/WITH note_agg AS/.test(sql)) {
-        return Promise.resolve([{ amount: 100 }]);
+      if (/AS new_credits_total/.test(sql)) {
+        return Promise.resolve([
+          {
+            new_credits_count: 1,
+            new_credits_total: 200,
+            pending_balance: 200,
+            new_credits_profit: 80,
+            new_credits_cost: 120,
+          },
+        ]);
       }
       return Promise.resolve([]);
     });
 
     const result = await action.execute(42, '2026-06-01', '2026-06-30');
 
-    // 100 (cobrada) + 30 (pedido) = 130. NO se toca fetchCollectedProfit.
-    expect(result.ventas.ganancia).toBe(130);
-    expect(result.gananciaReal).toBe(130);
+    // El valor íntegro del crédito entra al total y su ganancia a la del bloque.
+    expect(result.ventas.credito).toBe(200);
+    expect(result.ventas.creditoGanancia).toBe(80);
+    expect(result.ventas.creditoMargen).toBe(40); // 80/200
+    expect(result.ventas.total).toBe(200);
+    expect(result.ventas.ganancia).toBe(80);
+    expect(result.ventas.margen).toBe(40);
+    expect(result.gananciaReal).toBe(80);
   });
 
   it('flag ON con pedido de margen 0: no infla la ganancia (total = costo)', async () => {
