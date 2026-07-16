@@ -246,20 +246,37 @@ export async function fetchNewCredits(
 ): Promise<NewCreditsRow> {
   const rows = await dataSource.query<NewCreditsRow[]>(
     `
+      WITH note_agg AS (
+        SELECT
+          cn.sale_invoice_id,
+          COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN cn.total ELSE -cn.total END), 0) AS total_adj,
+          COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN lc.cost ELSE -lc.cost END), 0) AS cost_adj
+        FROM credit_notes cn
+        LEFT JOIN (
+          SELECT cnl.credit_note_id, SUM(cnl.unit_cost * cnl.quantity) AS cost
+          FROM credit_note_lines cnl
+          WHERE cnl.company_id = $1
+          GROUP BY cnl.credit_note_id
+        ) lc ON lc.credit_note_id = cn.id
+        WHERE cn.company_id = $1
+          AND cn.is_deleted = false
+        GROUP BY cn.sale_invoice_id
+      )
       SELECT
         COUNT(*) AS new_credits_count,
-        COALESCE(SUM(sc.total_amount), 0)::float AS new_credits_total,
+        -- Valor/ganancia/costo DEVENGADOS del crédito, CONSOLIDADOS neto de notas
+        -- (NC resta, ND suma) — una venta a crédito anulada/editada vía notas
+        -- refleja su valor NETO, igual que el Reporte de Ventas. El crédito cuenta
+        -- por el total de la venta (los abonos iniciales van a "Recaudo de cartera").
+        COALESCE(SUM(si.total + COALESCE(na.total_adj, 0)), 0)::float AS new_credits_total,
         COALESCE(SUM(sc.balance), 0)::float AS pending_balance,
-        -- Ganancia/costo DEVENGADOS del crédito, proporcionales a la fracción
-        -- financiada (sc.total_amount / si.total). Con crédito por el total de la
-        -- venta (sin abono inicial) equivale a si.profit / si.cost. Prorratear
-        -- deja correcto el caso con abono inicial (parte contado, parte crédito).
-        COALESCE(SUM(si.profit * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS new_credits_profit,
-        COALESCE(SUM(si.cost   * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS new_credits_cost
+        COALESCE(SUM((si.total + COALESCE(na.total_adj, 0)) - (si.cost + COALESCE(na.cost_adj, 0))), 0)::float AS new_credits_profit,
+        COALESCE(SUM(si.cost + COALESCE(na.cost_adj, 0)), 0)::float AS new_credits_cost
       FROM sale_credits sc
       INNER JOIN sale_invoices si
         ON si.id = sc.sale_invoice_id
        AND si.company_id = $1
+      LEFT JOIN note_agg na ON na.sale_invoice_id = si.id
       WHERE sc.company_id = $1
         AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
         AND si.ticket_type = 'SALE'

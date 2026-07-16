@@ -19,8 +19,8 @@ describe('GetTodayByCashierAction (base ventas, incluye crédito)', () => {
       if (/WITH note_costs AS/.test(sql)) {
         return Promise.resolve([]);
       }
-      // fetchNewCreditsByCashier: cajero 7 generó crédito 200 con ganancia 80.
-      if (/SUM\(si\.profit \* sc\.total_amount/.test(sql)) {
+      // fetchNewCreditsByCashier (consolidado neto de notas): crédito 200, gan 80.
+      if (/AS amount/.test(sql) && /note_agg/.test(sql)) {
         return Promise.resolve([
           { user_id: 7, user_name: 'Ana', count: 1, amount: 200, profit: 80 },
         ]);

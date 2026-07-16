@@ -42,23 +42,9 @@ const BASE_SCENARIO: Scenario = {
  */
 function buildQueryMock(scenario: Scenario): jest.Mock {
   return jest.fn((sql: string) => {
-    // Utilidad cobrada canónica (financial-facts). La variante de ABONOS lleva
-    // además un EXISTS sobre sale_credits; aquí la dejamos en 0.
-    if (/WITH note_agg AS/.test(sql)) {
-      return Promise.resolve(
-        /FROM sale_credits/.test(sql) ? [{ amount: 0 }] : [{ amount: scenario.collectedProfit }],
-      );
-    }
-    if (/AS gross_sales/.test(sql)) {
-      return Promise.resolve([
-        { gross_sales: scenario.grossSales, gross_cost: scenario.grossCost },
-      ]);
-    }
-    if (/ticket_type = 'ORDER'/.test(sql)) {
-      return Promise.resolve([
-        { orders_total: scenario.orders.total, orders_cost: scenario.orders.cost },
-      ]);
-    }
+    // Créditos nuevos del día (fetchNewCredits). Se comprueba ANTES que el
+    // collectedProfit porque ambas queries llevan `WITH note_agg AS`; la de
+    // créditos se distingue por `AS new_credits_total`.
     if (/AS new_credits_total/.test(sql)) {
       const c = scenario.newCredits;
       return Promise.resolve([
@@ -69,6 +55,23 @@ function buildQueryMock(scenario: Scenario): jest.Mock {
           new_credits_profit: c?.profit ?? 0,
           new_credits_cost: c?.cost ?? 0,
         },
+      ]);
+    }
+    // Utilidad cobrada canónica (financial-facts). La variante de ABONOS lleva
+    // además un EXISTS sobre sale_credits; aquí la dejamos en 0.
+    if (/WITH note_agg AS/.test(sql)) {
+      return Promise.resolve(
+        /EXISTS \(\s*SELECT 1 FROM sale_credits/.test(sql) ? [{ amount: 0 }] : [{ amount: scenario.collectedProfit }],
+      );
+    }
+    if (/AS gross_sales/.test(sql)) {
+      return Promise.resolve([
+        { gross_sales: scenario.grossSales, gross_cost: scenario.grossCost },
+      ]);
+    }
+    if (/ticket_type = 'ORDER'/.test(sql)) {
+      return Promise.resolve([
+        { orders_total: scenario.orders.total, orders_cost: scenario.orders.cost },
       ]);
     }
     return Promise.resolve([]);

@@ -377,6 +377,22 @@ export async function fetchNewCreditsByCashier(
 ): Promise<CashierNewCreditsRow[]> {
   return dataSource.query<CashierNewCreditsRow[]>(
     `
+    WITH note_agg AS (
+      SELECT
+        cn.sale_invoice_id,
+        COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN cn.total ELSE -cn.total END), 0) AS total_adj,
+        COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN lc.cost ELSE -lc.cost END), 0) AS cost_adj
+      FROM credit_notes cn
+      LEFT JOIN (
+        SELECT cnl.credit_note_id, SUM(cnl.unit_cost * cnl.quantity) AS cost
+        FROM credit_note_lines cnl
+        WHERE cnl.company_id = $1
+        GROUP BY cnl.credit_note_id
+      ) lc ON lc.credit_note_id = cn.id
+      WHERE cn.company_id = $1
+        AND cn.is_deleted = false
+      GROUP BY cn.sale_invoice_id
+    )
     SELECT
       si.created_by_id::bigint AS user_id,
       COALESCE(
@@ -385,12 +401,14 @@ export async function fetchNewCreditsByCashier(
         'Sin asignar'
       ) AS user_name,
       COUNT(*) AS count,
-      COALESCE(SUM(sc.total_amount), 0)::float AS amount,
-      COALESCE(SUM(si.profit * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS profit
+      -- Valor/ganancia CONSOLIDADOS (neto de notas): coherente con el Reporte de Ventas.
+      COALESCE(SUM(si.total + COALESCE(na.total_adj, 0)), 0)::float AS amount,
+      COALESCE(SUM((si.total + COALESCE(na.total_adj, 0)) - (si.cost + COALESCE(na.cost_adj, 0))), 0)::float AS profit
     FROM sale_credits sc
     INNER JOIN sale_invoices si
       ON si.id = sc.sale_invoice_id
      AND si.company_id = $1
+    LEFT JOIN note_agg na ON na.sale_invoice_id = si.id
     LEFT JOIN users u ON u.id = si.created_by_id
     WHERE sc.company_id = $1
       AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3

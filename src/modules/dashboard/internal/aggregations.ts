@@ -314,13 +314,24 @@ export async function fetchCreditsGeneratedByDay(
 ): Promise<CreditsGeneratedRow[]> {
   return dataSource.query<CreditsGeneratedRow[]>(
     `
+    WITH note_agg AS (
+      SELECT
+        cn.sale_invoice_id,
+        COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN cn.total ELSE -cn.total END), 0) AS total_adj
+      FROM credit_notes cn
+      WHERE cn.company_id = $1
+        AND cn.is_deleted = false
+      GROUP BY cn.sale_invoice_id
+    )
     SELECT
       TO_CHAR(COALESCE(si.sold_at, si.created_at) AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS date,
-      COALESCE(SUM(sc.total_amount), 0)::float AS credits
+      -- Valor CONSOLIDADO del crédito (neto de notas), coherente con el resto.
+      COALESCE(SUM(si.total + COALESCE(na.total_adj, 0)), 0)::float AS credits
     FROM sale_credits sc
     INNER JOIN sale_invoices si
       ON si.id = sc.sale_invoice_id
      AND si.company_id = $1
+    LEFT JOIN note_agg na ON na.sale_invoice_id = si.id
     WHERE sc.company_id = $1
       AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND si.is_deleted = false
@@ -485,14 +496,33 @@ export async function fetchNewCredits(
 ): Promise<NewCreditsRow> {
   const rows = await dataSource.query<NewCreditsRowRaw[]>(
     `
+    WITH note_agg AS (
+      SELECT
+        cn.sale_invoice_id,
+        COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN cn.total ELSE -cn.total END), 0) AS total_adj,
+        COALESCE(SUM(CASE WHEN cn.note_type = 'DEBIT' THEN lc.cost ELSE -lc.cost END), 0) AS cost_adj
+      FROM credit_notes cn
+      LEFT JOIN (
+        SELECT cnl.credit_note_id, SUM(cnl.unit_cost * cnl.quantity) AS cost
+        FROM credit_note_lines cnl
+        WHERE cnl.company_id = $1
+        GROUP BY cnl.credit_note_id
+      ) lc ON lc.credit_note_id = cn.id
+      WHERE cn.company_id = $1
+        AND cn.is_deleted = false
+      GROUP BY cn.sale_invoice_id
+    )
     SELECT
       COUNT(*) AS count,
-      COALESCE(SUM(sc.total_amount), 0)::float AS amount,
-      COALESCE(SUM(si.profit * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS profit
+      -- Valor y ganancia CONSOLIDADOS (neto de notas): un crédito anulado/editado
+      -- vía notas refleja su valor neto, igual que el Reporte de Ventas.
+      COALESCE(SUM(si.total + COALESCE(na.total_adj, 0)), 0)::float AS amount,
+      COALESCE(SUM((si.total + COALESCE(na.total_adj, 0)) - (si.cost + COALESCE(na.cost_adj, 0))), 0)::float AS profit
     FROM sale_credits sc
     INNER JOIN sale_invoices si
       ON si.id = sc.sale_invoice_id
      AND si.company_id = $1
+    LEFT JOIN note_agg na ON na.sale_invoice_id = si.id
     WHERE sc.company_id = $1
       AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
       AND si.ticket_type = 'SALE'
