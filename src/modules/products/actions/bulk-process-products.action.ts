@@ -129,14 +129,23 @@ export class BulkProcessProductsAction {
         return { kind: 'conflict', reason: 'Nombre vacío.' };
       }
 
-      const cost = item.cost ?? 0;
-      const validPrices = buildBulkPrices(item.prices, cost);
-
       const sku = item.sku_code?.trim() || null;
       const bar = item.bar_code?.trim() || null;
-      const tieneCodigo = Boolean(sku || bar);
 
-      const existing = tieneCodigo ? await findExistingByCode(manager, companyId, sku, bar) : null;
+      // Match por SKU → barcode → NOMBRE (find-or-nothing). Un producto SIN
+      // código solo se identifica por nombre; si existe → UPDATE.
+      const existing = await findExistingByCode(manager, companyId, sku, bar, trimmedName);
+
+      // Costo efectivo: si la fila trae costo válido se usa; si se OMITE en un
+      // update (fila que solo actualiza otros campos) se PRESERVA el existente
+      // para no pisarlo a 0. En create sin costo → 0.
+      const cost =
+        item.cost != null && Number.isFinite(item.cost)
+          ? item.cost
+          : existing
+            ? existing.cost
+            : 0;
+      const validPrices = buildBulkPrices(item.prices, cost);
 
       const ctx: ItemContext = { trimmedName, cost, sku, bar, validPrices };
 
@@ -483,6 +492,7 @@ async function findExistingByCode(
   companyId: number,
   sku: string | null,
   bar: string | null,
+  name: string | null,
 ): Promise<ExistingProduct | null> {
   if (sku) {
     const bySku = await findByCodeColumn(manager, companyId, 'sku_code', sku);
@@ -496,45 +506,34 @@ async function findExistingByCode(
       return byBar;
     }
   }
+  // Sin match por código: match por NOMBRE (normalizado acento/case-insensible,
+  // igual que el front). Un producto sin SKU/barcode solo se identifica por
+  // nombre; si existe → UPDATE en vez de intentar crear un duplicado. Aislado
+  // por company (nombres únicos por tenant).
+  const trimmedName = name?.trim();
+  if (trimmedName) {
+    return findByName(manager, companyId, trimmedName);
+  }
   return null;
 }
 
-/**
- * Lookup de un producto activo de la company por una columna de código
- * (`sku_code` o `bar_code`). Devuelve la proyección completa para UPDATE/no-op.
- */
-async function findByCodeColumn(
-  manager: EntityManager,
-  companyId: number,
-  column: 'sku_code' | 'bar_code',
-  value: string,
-): Promise<ExistingProduct | null> {
-  const row = await manager
-    .getRepository(Product)
-    .createQueryBuilder('p')
-    .select([
-      'p.id',
-      'p.name',
-      'p.description',
-      'p.sku_code',
-      'p.bar_code',
-      'p.category_id',
-      'p.parent_id',
-      'p.packaging_id',
-      'p.product_type',
-      'p.show_in_pos',
-      'p.is_purchasable',
-      'p.stock',
-      'p.cost',
-    ])
-    .where('p.company_id = :companyId', { companyId: String(companyId) })
-    .andWhere('p.is_archived = false')
-    .andWhere(`p.${column} = :value`, { value })
-    .getOne();
+const EXISTING_PRODUCT_COLUMNS = [
+  'p.id',
+  'p.name',
+  'p.description',
+  'p.sku_code',
+  'p.bar_code',
+  'p.category_id',
+  'p.parent_id',
+  'p.packaging_id',
+  'p.product_type',
+  'p.show_in_pos',
+  'p.is_purchasable',
+  'p.stock',
+  'p.cost',
+];
 
-  if (!row) {
-    return null;
-  }
+function mapExistingRow(row: Product): ExistingProduct {
   return {
     id: row.id,
     name: row.name,
@@ -550,6 +549,51 @@ async function findByCodeColumn(
     stock: Number(row.stock),
     cost: Number(row.cost),
   };
+}
+
+/**
+ * Lookup de un producto activo de la company por una columna de código
+ * (`sku_code` o `bar_code`). Devuelve la proyección completa para UPDATE/no-op.
+ */
+async function findByCodeColumn(
+  manager: EntityManager,
+  companyId: number,
+  column: 'sku_code' | 'bar_code',
+  value: string,
+): Promise<ExistingProduct | null> {
+  const row = await manager
+    .getRepository(Product)
+    .createQueryBuilder('p')
+    .select(EXISTING_PRODUCT_COLUMNS)
+    .where('p.company_id = :companyId', { companyId: String(companyId) })
+    .andWhere('p.is_archived = false')
+    .andWhere(`p.${column} = :value`, { value })
+    .getOne();
+
+  return row ? mapExistingRow(row) : null;
+}
+
+/**
+ * Lookup de un producto activo de la company por NOMBRE (normalizado
+ * acento/case-insensible con `normalizeNameSql`, igual que el match del front).
+ */
+async function findByName(
+  manager: EntityManager,
+  companyId: number,
+  name: string,
+): Promise<ExistingProduct | null> {
+  const row = await manager
+    .getRepository(Product)
+    .createQueryBuilder('p')
+    .select(EXISTING_PRODUCT_COLUMNS)
+    .where('p.company_id = :companyId', { companyId: String(companyId) })
+    .andWhere('p.is_archived = false')
+    .andWhere(`${normalizeNameSql('p.name')} = ${normalizeNameSql(':name')}`, {
+      name,
+    })
+    .getOne();
+
+  return row ? mapExistingRow(row) : null;
 }
 
 /**

@@ -100,7 +100,7 @@ export class BulkPackagingDto {
  *   - `show_in_pos`: `undefined` → CREATE: `true`; UPDATE: PRESERVAR.
  *   - `is_purchasable`: `undefined` → CREATE: `false`; UPDATE: PRESERVAR.
  *   - `stock`: `undefined` → CREATE: `0`; UPDATE: PRESERVAR.
- *   - `cost`: `undefined` → `0`.
+ *   - `cost`: `undefined` → CREATE: `0`; UPDATE: PRESERVAR (no se pisa a 0).
  */
 export class BulkItemDto {
   @ApiProperty({ example: 'Coca-Cola 2L', maxLength: 150 })

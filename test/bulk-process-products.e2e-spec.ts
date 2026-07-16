@@ -357,10 +357,13 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
     expect(rows[0].pp_sale).toBe(8.0);
   });
 
-  it('nombre duplicado sin código → conflict; el batch no aborta', async () => {
+  it('dos filas sin código y mismo nombre → 1 create + 1 update (last-wins), sin duplicado', async () => {
     if (!ds) {
       return;
     }
+    // Con match por NOMBRE: dos filas sin código y mismo nombre → la 1ª crea, la
+    // 2ª hace MATCH por nombre y ACTUALIZA (como ya pasaba con SKU). No hay
+    // duplicado ni conflict; el estado final es el de la 2ª fila (last-wins).
     const res = await action.execute(
       [
         { name: 'Sin Codigo Dup', cost: 1.0, prices: [{ sale_price: 2.0 }] },
@@ -376,9 +379,90 @@ describe('BulkProcessProductsAction (e2e, pos_db)', () => {
       E2E_ACTOR,
     );
     expect(res.created).toBe(2);
-    expect(res.conflicts).toHaveLength(1);
-    expect(res.conflicts[0].reason).toContain('nombre');
+    expect(res.updated).toBe(1);
+    expect(res.conflicts).toHaveLength(0);
     expect(await getBySku('SKU-TRES')).toHaveLength(1);
+    // Un solo producto "Sin Codigo Dup" con el costo/precio de la 2ª fila.
+    const dup = await ds.query(
+      `SELECT p.cost::float AS cost, pp.sale_price::float AS sale
+       FROM products p LEFT JOIN product_prices pp ON pp.product_id = p.id
+       WHERE p.company_id = $1 AND p.name = 'Sin Codigo Dup' AND p.is_archived = false`,
+      [String(companyId)],
+    );
+    expect(dup).toHaveLength(1);
+    expect(dup[0].cost).toBe(1.5);
+    expect(dup[0].sale).toBe(3.0);
+  });
+
+  it('match por NOMBRE: fila SIN código cuyo nombre ya existe → UPDATE (no duplica)', async () => {
+    if (!ds) {
+      return;
+    }
+    // Sembramos un producto con código.
+    await action.execute(
+      [{ name: 'Miel Sin Sku', sku_code: 'MIEL-1', cost: 1.0, prices: [{ sale_price: 4.0 }] }],
+      companyId,
+      E2E_ACTOR,
+    );
+    // Segunda carga: MISMO nombre pero SIN código y con costo/precio nuevos.
+    const res = await action.execute(
+      [{ name: 'MIEL SIN SKU', cost: 2.0, prices: [{ sale_price: 6.0 }] }],
+      companyId,
+      E2E_ACTOR,
+    );
+    expect(res.created).toBe(0);
+    expect(res.updated).toBe(1);
+    expect(res.conflicts).toHaveLength(0);
+    const rows = await getBySku('MIEL-1'); // sku se preserva (venía omitido)
+    expect(rows).toHaveLength(1);
+    expect(parseFloat(rows[0].cost)).toBe(2.0);
+    expect(rows[0].pp_sale).toBe(6.0);
+  });
+
+  it('match por NOMBRE + costo OMITIDO en update → preserva el costo actual (no lo pisa a 0)', async () => {
+    if (!ds) {
+      return;
+    }
+    await action.execute(
+      [{ name: 'Preserva Costo', sku_code: 'PC-1', cost: 7.5, prices: [{ sale_price: 10.0 }] }],
+      companyId,
+      E2E_ACTOR,
+    );
+    // Update por nombre, SIN costo y SIN precio → se preservan ambos; solo cambia
+    // la descripción.
+    const res = await action.execute(
+      [{ name: 'Preserva Costo', description: 'nueva desc' }],
+      companyId,
+      E2E_ACTOR,
+    );
+    expect(res.updated).toBe(1);
+    expect(res.conflicts).toHaveLength(0);
+    const rows = await getBySku('PC-1');
+    expect(parseFloat(rows[0].cost)).toBe(7.5); // preservado (no 0)
+    expect(rows[0].description).toBe('nueva desc');
+    const prices = await pricesOf(rows[0].id);
+    expect(prices).toHaveLength(1);
+    expect(prices[0].sale).toBe(10.0); // preservado
+  });
+
+  it('match por NOMBRE + stock OMITIDO en update → preserva el stock (no lo pone en 0)', async () => {
+    if (!ds) {
+      return;
+    }
+    await action.execute(
+      [{ name: 'Preserva Stock', sku_code: 'PS-1', stock: 33, cost: 1.0, prices: [{ sale_price: 2.0 }] }],
+      companyId,
+      E2E_ACTOR,
+    );
+    const res = await action.execute(
+      [{ name: 'Preserva Stock', cost: 1.5, prices: [{ sale_price: 3.0 }] }],
+      companyId,
+      E2E_ACTOR,
+    );
+    expect(res.updated).toBe(1);
+    const rows = await getBySku('PS-1');
+    expect(parseFloat(rows[0].stock)).toBe(33); // stock preservado
+    expect(parseFloat(rows[0].cost)).toBe(1.5); // costo sí cambió
   });
 
   it('precio negativo / 0 / sin precios en CREATE → conflict "No tiene precios válidos."', async () => {
