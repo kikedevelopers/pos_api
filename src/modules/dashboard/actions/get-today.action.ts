@@ -56,12 +56,18 @@ export interface TodayResult {
   creditPaymentsTotal: number;
   totalCollected: number;
   ordersTotal: number;
+  // ── Vista VENTAS del día (DEVENGADO, para el bloque "Resumen de ventas del
+  //    día"): una venta a crédito es una venta más. Estos NO tocan la caja
+  //    (totalCollected/profit/surplus/realProfit siguen base caja). ──
+  creditSales: number; // valor íntegro de los créditos generados hoy (= newCredits.total)
+  totalSales: number; // cashSales + transferSales + creditSales (Total Ventas del día)
   profit: number;
   surplus: number;
   expenses: number;
   realProfit: number;
   salesCount: number;
-  newCredits: { count: number; total: number };
+  // `profit` del crédito = ganancia DEVENGADA de los créditos del día (discriminada).
+  newCredits: { count: number; total: number; profit: number };
   purchases: {
     count: number;
     total: number;
@@ -231,6 +237,13 @@ export class GetTodayAction {
       toBig(purchasePaymentsCash).plus(toBig(purchasePaymentsTransfer)).toNumber(),
     );
 
+    // Vista VENTAS del día (devengado): el crédito cuenta como venta. Los abonos
+    // (creditPayments*) quedan en "Recaudo de Cartera", aparte — no entran aquí.
+    const creditSales = round2(newCredits.amount);
+    const totalSales = round2(
+      toBig(cashSales).plus(toBig(transferSales)).plus(toBig(creditSales)).toNumber(),
+    );
+
     return {
       date: today,
       cashSales,
@@ -240,6 +253,8 @@ export class GetTodayAction {
       creditPaymentsTotal,
       totalCollected,
       ordersTotal,
+      creditSales,
+      totalSales,
       profit,
       surplus,
       expenses,
@@ -247,7 +262,8 @@ export class GetTodayAction {
       salesCount,
       newCredits: {
         count: newCredits.count,
-        total: round2(newCredits.amount),
+        total: creditSales,
+        profit: round2(newCredits.profit),
       },
       purchases: {
         count: purchasesToday.count,

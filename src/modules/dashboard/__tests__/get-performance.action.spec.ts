@@ -92,4 +92,15 @@ describe('GetPerformanceAction', () => {
     // 7 días = 6 días atrás + hoy.
     expect(result.series.length).toBe(7);
   });
+
+  it('ventas por día son DEVENGADAS (incluyen crédito) y NO descomponen abonos', async () => {
+    await action.execute(42, '2026-05-01', '2026-05-07');
+    const calls = allCalls();
+    // La query de ventas por día YA no excluye créditos (base devengado).
+    const salesByDay = calls.find((c) => /SUM\(si\.total\), 0\)::float AS sales/.test(c.sql));
+    expect(salesByDay).toBeDefined();
+    expect(salesByDay?.sql).not.toMatch(/NOT EXISTS\s*\(\s*SELECT 1 FROM sale_credits/i);
+    // No se emite la descomposición proporcional de abonos (base caja) a ventas.
+    expect(calls.some((c) => /AS amount_paid/.test(c.sql))).toBe(false);
+  });
 });

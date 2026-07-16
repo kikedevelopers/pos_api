@@ -63,11 +63,14 @@ interface AmountRow {
 interface NewCreditsRowRaw {
   count: string | number;
   amount: number;
+  profit: number;
 }
 
 export interface NewCreditsRow {
   count: number;
   amount: number;
+  // Ganancia DEVENGADA del crédito generado (proporcional a lo financiado).
+  profit: number;
 }
 
 /**
@@ -484,7 +487,8 @@ export async function fetchNewCredits(
     `
     SELECT
       COUNT(*) AS count,
-      COALESCE(SUM(sc.total_amount), 0)::float AS amount
+      COALESCE(SUM(sc.total_amount), 0)::float AS amount,
+      COALESCE(SUM(si.profit * sc.total_amount / NULLIF(si.total, 0)), 0)::float AS profit
     FROM sale_credits sc
     INNER JOIN sale_invoices si
       ON si.id = sc.sale_invoice_id
@@ -496,7 +500,11 @@ export async function fetchNewCredits(
     `,
     [String(companyId), dateStart, dateEnd],
   );
-  return { count: Number(rows[0]?.count ?? 0), amount: Number(rows[0]?.amount ?? 0) };
+  return {
+    count: Number(rows[0]?.count ?? 0),
+    amount: Number(rows[0]?.amount ?? 0),
+    profit: Number(rows[0]?.profit ?? 0),
+  };
 }
 
 /**

@@ -5,7 +5,6 @@ import { DataSource } from 'typeorm';
 import { toBig } from '@/common/utils/precision';
 
 import {
-  fetchCreditPaymentsBreakdownByDay,
   fetchCreditsGeneratedByDay,
   fetchExpensesByDay,
   fetchNotesByDay,
@@ -90,23 +89,20 @@ export class GetPerformanceAction {
     const includeOrders = await this.getIncludeOrdersInReports.execute(companyId);
 
     // Paralelizamos los reads — son SELECTs independientes contra la misma DB.
-    const [
-      salesRows,
-      notesRows,
-      expensesRows,
-      creditPaymentRows,
-      creditsGeneratedRows,
-      ordersRows,
-    ] = await Promise.all([
-      fetchSalesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchNotesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchExpensesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchCreditPaymentsBreakdownByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchCreditsGeneratedByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      includeOrders.enabled
-        ? fetchOrdersByDay(this.dataSource, String(companyId), range.dateStart, range.dateEnd)
-        : Promise.resolve([]),
-    ]);
+    const [salesRows, notesRows, expensesRows, creditsGeneratedRows, ordersRows] =
+      await Promise.all([
+        // Ventas DEVENGADAS: incluyen el crédito por su valor íntegro el día de la
+        // venta (una venta a crédito es una venta). NO se suma el share de abonos
+        // (base caja) para no doble-contar. Los créditos generados van en la serie
+        // discriminada `credits`.
+        fetchSalesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd, true),
+        fetchNotesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd, true),
+        fetchExpensesByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        fetchCreditsGeneratedByDay(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        includeOrders.enabled
+          ? fetchOrdersByDay(this.dataSource, String(companyId), range.dateStart, range.dateEnd)
+          : Promise.resolve([]),
+      ]);
 
     interface Bucket {
       sales: Big;
@@ -160,13 +156,6 @@ export class GetPerformanceAction {
     for (const row of expensesRows) {
       const b = ensure(row.date);
       b.expenses = b.expenses.plus(toBig(row.expenses));
-    }
-
-    for (const row of creditPaymentRows) {
-      const b = ensure(row.date);
-      b.sales = b.sales.plus(toBig(row.sales_share));
-      b.cost = b.cost.plus(toBig(row.cost_share));
-      b.profit = b.profit.plus(toBig(row.profit_share));
     }
 
     for (const row of creditsGeneratedRows) {
