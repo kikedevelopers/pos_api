@@ -71,15 +71,31 @@ export interface NewCreditsRow {
 }
 
 /**
- * Ventas regulares (no crédito) agrupadas por día.
+ * Ventas agrupadas por día (devengado, por `COALESCE(sold_at, created_at)`).
  * Filtro multi-tenant: `si.company_id = $1`.
+ *
+ * `includeCredit`:
+ *   - `false` (default, base CAJA): excluye las ventas a crédito — solo suman
+ *     al recaudo cuando se cobran (abonos). Es lo que usa el dashboard
+ *     (recaudo/impacto de gastos).
+ *   - `true` (base DEVENGADO): incluye las ventas a crédito por su valor
+ *     íntegro el día de la venta, como una venta más. Lo usa la Comparativa
+ *     (una venta a crédito es una venta).
  */
 export async function fetchSalesByDay(
   dataSource: DataSource,
   companyId: number,
   dateStart: Date,
   dateEnd: Date,
+  includeCredit = false,
 ): Promise<SalesByDayRow[]> {
+  const creditFilter = includeCredit
+    ? ''
+    : `AND NOT EXISTS (
+        SELECT 1 FROM sale_credits sc
+        WHERE sc.sale_invoice_id = si.id
+          AND sc.company_id = $1
+      )`;
   return dataSource.query<SalesByDayRow[]>(
     `
     SELECT
@@ -92,11 +108,7 @@ export async function fetchSalesByDay(
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
       AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
-      AND NOT EXISTS (
-        SELECT 1 FROM sale_credits sc
-        WHERE sc.sale_invoice_id = si.id
-          AND sc.company_id = $1
-      )
+      ${creditFilter}
     GROUP BY 1
     `,
     [String(companyId), dateStart, dateEnd],
@@ -104,15 +116,27 @@ export async function fetchSalesByDay(
 }
 
 /**
- * Notas (CREDIT/DEBIT) aplicadas a ventas regulares, agrupadas por día y tipo.
+ * Notas (CREDIT/DEBIT) aplicadas a ventas, agrupadas por día y tipo.
  * Filtro multi-tenant: `cn.company_id = $1` Y `si.company_id = $1`.
+ *
+ * `includeCredit` (idéntico a `fetchSalesByDay`): con `false` (default) solo
+ * netea notas de ventas de contado; con `true` también las de ventas a crédito,
+ * para que el neto devengado de la Comparativa sea coherente con sus ventas.
  */
 export async function fetchNotesByDay(
   dataSource: DataSource,
   companyId: number,
   dateStart: Date,
   dateEnd: Date,
+  includeCredit = false,
 ): Promise<NotesByDayRow[]> {
+  const creditFilter = includeCredit
+    ? ''
+    : `AND NOT EXISTS (
+        SELECT 1 FROM sale_credits sc
+        WHERE sc.sale_invoice_id = si.id
+          AND sc.company_id = $1
+      )`;
   return dataSource.query<NotesByDayRow[]>(
     `
     WITH note_costs AS (
@@ -142,11 +166,7 @@ export async function fetchNotesByDay(
     WHERE si.is_deleted = false
       AND si.ticket_type = 'SALE'
       AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
-      AND NOT EXISTS (
-        SELECT 1 FROM sale_credits sc
-        WHERE sc.sale_invoice_id = si.id
-          AND sc.company_id = $1
-      )
+      ${creditFilter}
     GROUP BY 1, 2
     `,
     [String(companyId), dateStart, dateEnd],

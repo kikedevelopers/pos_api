@@ -3,22 +3,22 @@ import type { DataSource } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
 import {
-  fetchCreditPaymentsBreakdownByDay,
   fetchNotesByDay,
   fetchSalesByDay,
   round2,
 } from '@/modules/dashboard/internal/aggregations';
 
 /**
- * Métricas por-día del Informe Comparativo. FUENTE DE VERDAD = misma lógica de
- * `GET /dashboard/performance` (`get-performance.action.ts`): se combinan
- * `fetchSalesByDay` + `fetchNotesByDay` + `fetchCreditPaymentsBreakdownByDay`
- * exactamente igual, para que los totales coincidan con el dashboard cloud ya
- * validado por el usuario.
+ * Métricas por-día del Informe Comparativo. Base **DEVENGADA**: una venta a
+ * crédito es una venta más, así que suma su valor y ganancia ÍNTEGROS el día en
+ * que se hace (`COALESCE(sold_at, created_at)`), igual que una de contado.
  *
- * A diferencia de performance, NO incluimos `expenses` ni `credits` generados:
- * el comparativo solo expone ventas/costo/ganancia/margen. La combinación de
- * sales/cost/profit es byte-idéntica a performance.
+ * Ventas/costo/ganancia = TODAS las ventas del día (contado + crédito,
+ * `fetchSalesByDay(..., includeCredit=true)`) netas de notas
+ * (`fetchNotesByDay(..., includeCredit=true)`). **NO** se suma el share de
+ * abonos: en base devengada el crédito ya se reconoce al vender, así que
+ * contarlo también al cobrarse lo doble-contaría. (El dashboard de recaudo sí
+ * usa el share de abonos porque su base es caja.)
  */
 
 export interface DayMetrics {
@@ -47,10 +47,9 @@ export async function fetchDayMetricsMap(
   dateStart: Date,
   dateEnd: Date,
 ): Promise<Map<string, DayMetrics>> {
-  const [salesRows, notesRows, creditPaymentRows] = await Promise.all([
-    fetchSalesByDay(dataSource, companyId, dateStart, dateEnd),
-    fetchNotesByDay(dataSource, companyId, dateStart, dateEnd),
-    fetchCreditPaymentsBreakdownByDay(dataSource, companyId, dateStart, dateEnd),
+  const [salesRows, notesRows] = await Promise.all([
+    fetchSalesByDay(dataSource, companyId, dateStart, dateEnd, true),
+    fetchNotesByDay(dataSource, companyId, dateStart, dateEnd, true),
   ]);
 
   const byDate = new Map<string, DayMetrics>();
@@ -64,7 +63,7 @@ export async function fetchDayMetricsMap(
     return fresh;
   };
 
-  // 1. Ventas regulares (excl. créditos).
+  // 1. Ventas del día (contado + crédito), por su valor íntegro devengado.
   for (const row of salesRows) {
     const b = ensure(row.date);
     b.sales = b.sales.plus(toBig(row.sales));
@@ -72,7 +71,7 @@ export async function fetchDayMetricsMap(
     b.profit = b.profit.plus(toBig(row.profit));
   }
 
-  // 2. Notas: CREDIT resta, DEBIT suma (idéntico a performance).
+  // 2. Notas (sobre todas las ventas, incl. crédito): CREDIT resta, DEBIT suma.
   for (const row of notesRows) {
     const b = ensure(row.date);
     const notesTotal = toBig(row.notes_total);
@@ -89,14 +88,7 @@ export async function fetchDayMetricsMap(
     }
   }
 
-  // 3. Share proporcional de abonos a invoices a crédito.
-  for (const row of creditPaymentRows) {
-    const b = ensure(row.date);
-    b.sales = b.sales.plus(toBig(row.sales_share));
-    b.cost = b.cost.plus(toBig(row.cost_share));
-    b.profit = b.profit.plus(toBig(row.profit_share));
-  }
-
+  // (Sin paso de abonos: en base devengada el crédito ya se reconoció al vender.)
   return byDate;
 }
 
