@@ -18,7 +18,10 @@ import {
 import { fetchCashAccounts, type CashAccountsResult } from '../internal/cash-accounts';
 import { parseDateRange, todayUtc } from '../internal/date-range';
 import { computeTodayTotals } from '../internal/today-orders';
-import { fetchCollectedProfit } from '@/modules/financial-facts/internal/collection-facts';
+import {
+  fetchAbonoCollectedProfit,
+  fetchCollectedProfit,
+} from '@/modules/financial-facts/internal/collection-facts';
 import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import {
   computeOrdersProfit,
@@ -56,15 +59,20 @@ export interface TodayResult {
   creditPaymentsTotal: number;
   totalCollected: number;
   ordersTotal: number;
-  // ── Vista VENTAS del día (DEVENGADO, para el bloque "Resumen de ventas del
-  //    día"): una venta a crédito es una venta más. Estos NO tocan la caja
-  //    (totalCollected/profit/surplus/realProfit siguen base caja). ──
+  // ── Vista VENTAS del día (DEVENGADO): una venta a crédito es una venta más.
+  //    Alimenta "Resumen de ventas del día", "Descomposición patrimonial" y las
+  //    tarjetas de Finanzas (Ganancia real/Excedente). NO tocan la caja
+  //    (totalCollected/profit/surplus/realProfit siguen base caja para Meta del
+  //    mes y el contrato canónico). ──
   creditSales: number; // valor íntegro de los créditos generados hoy (= newCredits.total)
-  totalSales: number; // cashSales + transferSales + creditSales (Total Ventas del día)
-  profit: number;
-  surplus: number;
+  totalSales: number; // cashSales + transferSales + creditSales + ordersTotal (Total Ventas del día)
+  salesProfit: number; // ganancia DEVENGADA del día = contado + crédito + pedidos
+  salesSurplus: number; // totalSales − salesProfit (excedente/reinversión devengado)
+  salesRealProfit: number; // salesProfit − gastos (ganancia real devengada)
+  profit: number; // CAJA (cobrada): la usa la Meta del mes / patrimonio en caja
+  surplus: number; // CAJA
   expenses: number;
-  realProfit: number;
+  realProfit: number; // CAJA
   salesCount: number;
   // `profit` del crédito = ganancia DEVENGADA de los créditos del día (discriminada).
   newCredits: { count: number; total: number; profit: number };
@@ -117,6 +125,7 @@ export class GetTodayAction {
       todayCreditsBalance,
       cashAccounts,
       collectedProfitValue,
+      abonoCollectedProfitValue,
     ] = await Promise.all([
       fetchPaymentsTotal(this.dataSource, companyId, 'CASH', false, range.dateStart, range.dateEnd),
       fetchPaymentsTotal(
@@ -190,6 +199,9 @@ export class GetTodayAction {
       fetchTodayCreditsBalance(this.dataSource, companyId, range.dateStart, range.dateEnd),
       fetchCashAccounts(this.dataSource, companyId),
       fetchCollectedProfit(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      // Utilidad cobrada SOLO de abonos (para aislar la utilidad de CONTADO:
+      // collected − abonos = contado). Se usa en la ganancia DEVENGADA del día.
+      fetchAbonoCollectedProfit(this.dataSource, companyId, range.dateStart, range.dateEnd),
     ]);
 
     const cashSales = round2(toBig(salesCash).minus(toBig(ncCash)).plus(toBig(ndCash)).toNumber());
@@ -237,12 +249,32 @@ export class GetTodayAction {
       toBig(purchasePaymentsCash).plus(toBig(purchasePaymentsTransfer)).toNumber(),
     );
 
-    // Vista VENTAS del día (devengado): el crédito cuenta como venta. Los abonos
-    // (creditPayments*) quedan en "Recaudo de Cartera", aparte — no entran aquí.
+    // ── Vista VENTAS del día (DEVENGADO) ──────────────────────────────────────
+    // Una venta a crédito es una venta más: su valor y ganancia íntegros entran
+    // el día de la venta. Estos números alimentan el "Resumen de ventas del día",
+    // la "Descomposición patrimonial" y las tarjetas de Finanzas (Ganancia real /
+    // Excedente). Los abonos ("Recaudo de Cartera") quedan APARTE (no entran).
+    // La CAJA (totalCollected/profit/surplus/realProfit) NO cambia: la usa la
+    // "Meta del mes" (dinero real) y el contrato canónico.
     const creditSales = round2(newCredits.amount);
+    const newCreditsProfit = round2(newCredits.profit);
     const totalSales = round2(
-      toBig(cashSales).plus(toBig(transferSales)).plus(toBig(creditSales)).toNumber(),
+      toBig(cashSales)
+        .plus(toBig(transferSales))
+        .plus(toBig(creditSales))
+        .plus(toBig(ordersTotal))
+        .toNumber(),
     );
+    // Utilidad de CONTADO (cobrada de contado, sin abonos) = collected − abonos.
+    const contadoProfit = round2(
+      toBig(collectedProfitValue).minus(toBig(abonoCollectedProfitValue)).toNumber(),
+    );
+    // Ganancia DEVENGADA del día = contado + crédito íntegro + pedidos.
+    const salesProfit = round2(
+      toBig(contadoProfit).plus(toBig(newCreditsProfit)).plus(toBig(ordersProfit)).toNumber(),
+    );
+    const salesSurplus = round2(toBig(totalSales).minus(toBig(salesProfit)).toNumber());
+    const salesRealProfit = round2(toBig(salesProfit).minus(toBig(expenses)).toNumber());
 
     return {
       date: today,
@@ -255,6 +287,9 @@ export class GetTodayAction {
       ordersTotal,
       creditSales,
       totalSales,
+      salesProfit,
+      salesSurplus,
+      salesRealProfit,
       profit,
       surplus,
       expenses,
@@ -263,7 +298,7 @@ export class GetTodayAction {
       newCredits: {
         count: newCredits.count,
         total: creditSales,
-        profit: round2(newCredits.profit),
+        profit: newCreditsProfit,
       },
       purchases: {
         count: purchasesToday.count,
