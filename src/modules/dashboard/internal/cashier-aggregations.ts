@@ -27,7 +27,10 @@ export interface CashierSalesRow {
 
 export interface CashierProfitRow {
   user_id: number | null;
-  profit_total: number;
+  // Utilidad de contado DEVENGADA, PRORRATEADA por método de pago de la venta
+  // (para el desglose Efectivo/Consignación con su ganancia). cash+transfer = si.profit.
+  cash_profit: number;
+  transfer_profit: number;
 }
 
 export interface CashierNotesRow {
@@ -36,7 +39,9 @@ export interface CashierNotesRow {
   note_type: 'CREDIT' | 'DEBIT';
   cash_total: number;
   transfer_total: number;
-  profit_total: number;
+  // Utilidad de la nota PRORRATEADA por método (para el desglose por método).
+  cash_profit: number;
+  transfer_profit: number;
 }
 
 export interface CashierAbonosRow {
@@ -120,8 +125,16 @@ export async function fetchSalesByCashier(
 }
 
 /**
- * Profit de la V por cajero, sin JOIN a payments para no duplicar profit
- * cuando una V tiene múltiples pagos. Solo invoices NO-crédito.
+ * Utilidad de contado por cajero, PRORRATEADA por método de pago de cada venta
+ * (Efectivo/Consignación) para poder mostrar la ganancia y el margen de cada
+ * método en el desglose del cajero. Solo invoices NO-crédito.
+ *
+ * La utilidad íntegra de cada venta (`si.profit`) se reparte entre los métodos
+ * en proporción a lo pagado con cada uno (`cash_amt/total_paid`,
+ * `transfer_amt/total_paid`), igual que se prorratean las notas. La suma
+ * `cash_profit + transfer_profit` = `si.profit` de la venta (cuando se pagó con
+ * contado, sin anticipos). No hay JOIN directo a payments en el SELECT de
+ * `si.profit` (el split va en un CTE agregado por factura) para no duplicar.
  */
 export async function fetchSalesProfitByCashier(
   dataSource: DataSource,
@@ -131,10 +144,26 @@ export async function fetchSalesProfitByCashier(
 ): Promise<CashierProfitRow[]> {
   return dataSource.query<CashierProfitRow[]>(
     `
+    WITH payment_split AS (
+      SELECT
+        sp.sale_invoice_id,
+        SUM(CASE WHEN sp.payment_method = 'CASH' THEN LEAST(sp.amount, si.total) ELSE 0 END) AS cash_amt,
+        SUM(CASE WHEN sp.payment_method = 'TRANSFER' THEN LEAST(sp.amount, si.total) ELSE 0 END) AS transfer_amt,
+        NULLIF(SUM(LEAST(sp.amount, si.total)), 0) AS total_paid
+      FROM sale_payments sp
+      INNER JOIN sale_invoices si
+        ON si.id = sp.sale_invoice_id
+       AND si.company_id = $1
+      WHERE sp.company_id = $1
+        AND sp.is_voided = false
+      GROUP BY sp.sale_invoice_id
+    )
     SELECT
       si.created_by_id::bigint AS user_id,
-      COALESCE(SUM(si.profit), 0)::float AS profit_total
+      COALESCE(SUM(si.profit * COALESCE(ps.cash_amt / ps.total_paid, 0)), 0)::float AS cash_profit,
+      COALESCE(SUM(si.profit * COALESCE(ps.transfer_amt / ps.total_paid, 0)), 0)::float AS transfer_profit
     FROM sale_invoices si
+    LEFT JOIN payment_split ps ON ps.sale_invoice_id = si.id
     WHERE si.company_id = $1
       AND si.ticket_type = 'SALE'
       AND si.is_deleted = false
@@ -203,7 +232,8 @@ export async function fetchNotesByCashier(
       nc.note_type::text AS note_type,
       COALESCE(SUM(nc.total * COALESCE(ps.cash_amt / ps.total_paid, 0)), 0)::float AS cash_total,
       COALESCE(SUM(nc.total * COALESCE(ps.transfer_amt / ps.total_paid, 0)), 0)::float AS transfer_total,
-      COALESCE(SUM(nc.total - nc.total_cost), 0)::float AS profit_total
+      COALESCE(SUM((nc.total - nc.total_cost) * COALESCE(ps.cash_amt / ps.total_paid, 0)), 0)::float AS cash_profit,
+      COALESCE(SUM((nc.total - nc.total_cost) * COALESCE(ps.transfer_amt / ps.total_paid, 0)), 0)::float AS transfer_profit
     FROM note_costs nc
     INNER JOIN sale_invoices si
       ON si.id = nc.sale_invoice_id

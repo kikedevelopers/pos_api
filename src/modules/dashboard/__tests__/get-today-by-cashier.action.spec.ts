@@ -25,9 +25,10 @@ describe('GetTodayByCashierAction (base ventas, incluye crédito)', () => {
           { user_id: 7, user_name: 'Ana', count: 1, amount: 200, profit: 80 },
         ]);
       }
-      // fetchSalesProfitByCashier: utilidad de contado 40.
-      if (/SUM\(si\.profit\), 0\)::float AS profit_total/.test(sql)) {
-        return Promise.resolve([{ user_id: 7, profit_total: 40 }]);
+      // fetchSalesProfitByCashier (CTE payment_split): utilidad de contado 40
+      // (todo en efectivo).
+      if (/WITH payment_split AS/.test(sql)) {
+        return Promise.resolve([{ user_id: 7, cash_profit: 40, transfer_profit: 0 }]);
       }
       // fetchSalesCountByCashier.
       if (/COUNT\(\*\)::int AS count/.test(sql)) {
@@ -64,6 +65,12 @@ describe('GetTodayByCashierAction (base ventas, incluye crédito)', () => {
     expect(c.profit).toBe(120);
     expect(c.margin).toBe(40); // 120/300
     expect(c.surplus).toBe(180); // 300 - 120
+    // Ganancia y margen POR MÉTODO en el desglose.
+    expect(c.cashProfit).toBe(40);
+    expect(c.cashMargin).toBe(40); // 40/100
+    expect(c.transferProfit).toBe(0);
+    expect(c.creditProfit).toBe(80);
+    expect(c.creditMargin).toBe(40); // 80/200
     // Abonos (Recaudo de cartera) discriminados, NO en totalSales.
     expect(c.creditPaymentsCash).toBe(30);
     expect(c.creditPaymentsTotal).toBe(30);

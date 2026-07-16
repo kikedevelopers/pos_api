@@ -40,6 +40,15 @@ export interface CashierSummary {
   cashSales: number;
   transferSales: number;
   creditSales: number;
+  // Ganancia y margen POR MÉTODO (para el desglose): la ganancia de contado se
+  // prorratea por método; la del crédito es su ganancia devengada. La suma
+  // cashProfit + transferProfit + creditProfit = profit.
+  cashProfit: number;
+  cashMargin: number;
+  transferProfit: number;
+  transferMargin: number;
+  creditProfit: number;
+  creditMargin: number;
   creditPaymentsCash: number;
   creditPaymentsTransfer: number;
   creditPaymentsTotal: number;
@@ -81,7 +90,9 @@ interface Bucket {
   userName: string;
   cashSales: Big;
   transferSales: Big;
-  profitSales: Big;
+  // Ganancia de contado prorrateada por método (para el desglose).
+  cashProfit: Big;
+  transferProfit: Big;
   creditSales: Big;
   profitCreditSales: Big;
   creditPaymentsCash: Big;
@@ -139,7 +150,8 @@ export class GetTodayByCashierAction {
         userName: userName || 'Sin asignar',
         cashSales: new Big(0),
         transferSales: new Big(0),
-        profitSales: new Big(0),
+        cashProfit: new Big(0),
+        transferProfit: new Big(0),
         creditSales: new Big(0),
         profitCreditSales: new Big(0),
         creditPaymentsCash: new Big(0),
@@ -160,22 +172,26 @@ export class GetTodayByCashierAction {
 
     for (const row of salesProfitRows) {
       const b = ensure(row.user_id, '');
-      b.profitSales = b.profitSales.plus(toBig(row.profit_total));
+      b.cashProfit = b.cashProfit.plus(toBig(row.cash_profit));
+      b.transferProfit = b.transferProfit.plus(toBig(row.transfer_profit));
     }
 
     for (const row of notesRows) {
       const b = ensure(row.user_id, row.user_name);
       const cash = toBig(row.cash_total);
       const transfer = toBig(row.transfer_total);
-      const profit = toBig(row.profit_total);
+      const cashProfit = toBig(row.cash_profit);
+      const transferProfit = toBig(row.transfer_profit);
       if (row.note_type === 'CREDIT') {
         b.cashSales = b.cashSales.minus(cash);
         b.transferSales = b.transferSales.minus(transfer);
-        b.profitSales = b.profitSales.minus(profit);
+        b.cashProfit = b.cashProfit.minus(cashProfit);
+        b.transferProfit = b.transferProfit.minus(transferProfit);
       } else {
         b.cashSales = b.cashSales.plus(cash);
         b.transferSales = b.transferSales.plus(transfer);
-        b.profitSales = b.profitSales.plus(profit);
+        b.cashProfit = b.cashProfit.plus(cashProfit);
+        b.transferProfit = b.transferProfit.plus(transferProfit);
       }
     }
 
@@ -213,6 +229,9 @@ export class GetTodayByCashierAction {
         const cashSales = round2(b.cashSales.toNumber());
         const transferSales = round2(b.transferSales.toNumber());
         const creditSales = round2(b.creditSales.toNumber());
+        const cashProfit = round2(b.cashProfit.toNumber());
+        const transferProfit = round2(b.transferProfit.toNumber());
+        const creditProfit = round2(b.profitCreditSales.toNumber());
         const creditPaymentsCash = round2(b.creditPaymentsCash.toNumber());
         const creditPaymentsTransfer = round2(b.creditPaymentsTransfer.toNumber());
         const creditPaymentsTotal = round2(
@@ -223,23 +242,31 @@ export class GetTodayByCashierAction {
         const totalSales = round2(
           b.cashSales.plus(b.transferSales).plus(b.creditSales).toNumber(),
         );
-        // Ganancia DEVENGADA de las ventas del cajero (contado + crédito íntegro).
-        const profit = round2(b.profitSales.plus(b.profitCreditSales).toNumber());
+        // Ganancia DEVENGADA = suma de la ganancia por método (contado + crédito).
+        const profit = round2(
+          b.cashProfit.plus(b.transferProfit).plus(b.profitCreditSales).toNumber(),
+        );
         const surplus = round2(toBig(totalSales).minus(toBig(profit)).toNumber());
-        const margin =
-          totalSales > 0 ? round2(toBig(profit).div(toBig(totalSales)).times(100).toNumber()) : 0;
+        const pctMargin = (prof: number, base: number): number =>
+          base > 0 ? round2(toBig(prof).div(toBig(base)).times(100).toNumber()) : 0;
         return {
           userId: b.userId,
           userName: b.userName,
           cashSales,
           transferSales,
           creditSales,
+          cashProfit,
+          cashMargin: pctMargin(cashProfit, cashSales),
+          transferProfit,
+          transferMargin: pctMargin(transferProfit, transferSales),
+          creditProfit,
+          creditMargin: pctMargin(creditProfit, creditSales),
           creditPaymentsCash,
           creditPaymentsTransfer,
           creditPaymentsTotal,
           totalSales,
           profit,
-          margin,
+          margin: pctMargin(profit, totalSales),
           surplus,
           salesCount: b.salesCount,
           newCredits: {
