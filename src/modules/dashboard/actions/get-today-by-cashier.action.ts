@@ -6,7 +6,6 @@ import { toBig } from '@/common/utils/precision';
 
 import {
   fetchAbonosByCashier,
-  fetchCreditPaymentsProfitShareByCashier,
   fetchNewCreditsByCashier,
   fetchNotesByCashier,
   fetchSalesByCashier,
@@ -17,30 +16,34 @@ import { round2 } from '../internal/aggregations';
 import { parseDateRange, todayUtc } from '../internal/date-range';
 
 /**
- * Resumen del día agregado por cajero. Espejo PlacePos byte-por-byte:
+ * Resumen del día agregado por cajero. Base VENTAS (una venta a crédito es una
+ * venta más):
  *
- *   - `cashSales` / `transferSales`: ventas regulares (no crédito) por
- *     método, ajustadas por NC/ND prorrateadas según los pagos.
- *   - `creditPaymentsCash` / `creditPaymentsTransfer`: abonos a invoices a
- *     crédito atribuidos al cajero que firmó el PAGO (no el de la venta).
- *   - `creditPaymentsTotal`: suma de los dos anteriores.
- *   - `totalCollected`: cashSales + transferSales + creditPayments*.
- *   - `profit`: profit propio de las V regulares (con NC/ND aplicadas) +
- *     share proporcional del profit de las V-credit a través de los abonos.
- *   - `margin`: profit / totalCollected * 100. 0 si no hay recaudo.
- *   - `surplus`: totalCollected - profit (excedente, NO es ganancia).
+ *   - `cashSales` / `transferSales`: ventas de contado por método, ajustadas por
+ *     NC/ND prorrateadas según los pagos.
+ *   - `creditSales`: valor DEVENGADO de los créditos generados por el cajero
+ *     (una venta a crédito cuenta el día en que se hace). Discriminado.
+ *   - `totalSales`: cashSales + transferSales + creditSales (Total Ventas).
+ *   - `profit`: utilidad DEVENGADA de las ventas del cajero — contado (con NC/ND)
+ *     + crédito íntegro. NO incluye la utilidad de abonos (eso es cartera).
+ *   - `margin`: profit / totalSales * 100. 0 si no hay ventas.
+ *   - `surplus`: totalSales - profit (excedente/reinversión).
  *   - `salesCount`: número de tickets V emitidos por el cajero.
- *   - `newCredits`: { count, total } de créditos generados.
+ *   - `newCredits`: { count, total } de créditos generados (= creditSales.total).
+ *   - `creditPaymentsCash` / `creditPaymentsTransfer` / `creditPaymentsTotal`:
+ *     abonos a créditos recibidos por el cajero (Recaudo de Cartera, dinero real).
+ *     Se muestran discriminados, aparte de las ventas — NO entran a totalSales.
  */
 export interface CashierSummary {
   userId: number;
   userName: string;
   cashSales: number;
   transferSales: number;
+  creditSales: number;
   creditPaymentsCash: number;
   creditPaymentsTransfer: number;
   creditPaymentsTotal: number;
-  totalCollected: number;
+  totalSales: number;
   profit: number;
   margin: number;
   surplus: number;
@@ -59,10 +62,11 @@ export interface TodayByCashierResult {
   totals: {
     cashSales: number;
     transferSales: number;
+    creditSales: number;
     creditPaymentsCash: number;
     creditPaymentsTransfer: number;
     creditPaymentsTotal: number;
-    totalCollected: number;
+    totalSales: number;
     profit: number;
     margin: number;
     surplus: number;
@@ -78,9 +82,10 @@ interface Bucket {
   cashSales: Big;
   transferSales: Big;
   profitSales: Big;
+  creditSales: Big;
+  profitCreditSales: Big;
   creditPaymentsCash: Big;
   creditPaymentsTransfer: Big;
-  profitCredits: Big;
   salesCount: number;
   newCreditsCount: number;
   newCreditsTotal: Big;
@@ -103,28 +108,15 @@ export class GetTodayByCashierAction {
     // parseDateRange con from=to valida formato y descarta fechas inválidas.
     const range = parseDateRange(today, today);
 
-    const [
-      salesRows,
-      salesProfitRows,
-      notesRows,
-      abonosRows,
-      abonosProfitShare,
-      newCreditsRows,
-      salesCountByUser,
-    ] = await Promise.all([
-      fetchSalesByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchSalesProfitByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchNotesByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchAbonosByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchCreditPaymentsProfitShareByCashier(
-        this.dataSource,
-        companyId,
-        range.dateStart,
-        range.dateEnd,
-      ),
-      fetchNewCreditsByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
-      fetchSalesCountByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
-    ]);
+    const [salesRows, salesProfitRows, notesRows, abonosRows, newCreditsRows, salesCountByUser] =
+      await Promise.all([
+        fetchSalesByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        fetchSalesProfitByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        fetchNotesByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        fetchAbonosByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        fetchNewCreditsByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
+        fetchSalesCountByCashier(this.dataSource, companyId, range.dateStart, range.dateEnd),
+      ]);
 
     const byUser = new Map<number, Bucket>();
     const ensure = (userId: number | null, userName: string): Bucket => {
@@ -148,9 +140,10 @@ export class GetTodayByCashierAction {
         cashSales: new Big(0),
         transferSales: new Big(0),
         profitSales: new Big(0),
+        creditSales: new Big(0),
+        profitCreditSales: new Big(0),
         creditPaymentsCash: new Big(0),
         creditPaymentsTransfer: new Big(0),
-        profitCredits: new Big(0),
         salesCount: 0,
         newCreditsCount: 0,
         newCreditsTotal: new Big(0),
@@ -192,15 +185,13 @@ export class GetTodayByCashierAction {
       b.creditPaymentsTransfer = b.creditPaymentsTransfer.plus(toBig(row.transfer_total));
     }
 
-    for (const [userId, profitShare] of abonosProfitShare.entries()) {
-      const b = ensure(userId, '');
-      b.profitCredits = b.profitCredits.plus(profitShare);
-    }
-
     for (const row of newCreditsRows) {
       const b = ensure(row.user_id, row.user_name);
       b.newCreditsCount += Number(row.count);
       b.newCreditsTotal = b.newCreditsTotal.plus(toBig(row.amount));
+      // Créditos como VENTA del cajero (devengado): valor y ganancia íntegros.
+      b.creditSales = b.creditSales.plus(toBig(row.amount));
+      b.profitCreditSales = b.profitCreditSales.plus(toBig(row.profit));
     }
 
     for (const [userId, count] of salesCountByUser.entries()) {
@@ -221,33 +212,32 @@ export class GetTodayByCashierAction {
       .map((b) => {
         const cashSales = round2(b.cashSales.toNumber());
         const transferSales = round2(b.transferSales.toNumber());
+        const creditSales = round2(b.creditSales.toNumber());
         const creditPaymentsCash = round2(b.creditPaymentsCash.toNumber());
         const creditPaymentsTransfer = round2(b.creditPaymentsTransfer.toNumber());
         const creditPaymentsTotal = round2(
           b.creditPaymentsCash.plus(b.creditPaymentsTransfer).toNumber(),
         );
-        const totalCollected = round2(
-          b.cashSales
-            .plus(b.transferSales)
-            .plus(b.creditPaymentsCash)
-            .plus(b.creditPaymentsTransfer)
-            .toNumber(),
+        // Total VENTAS del cajero (DEVENGADO) = contado + consignación + crédito.
+        // Los abonos (Recaudo de cartera) NO entran aquí — van discriminados aparte.
+        const totalSales = round2(
+          b.cashSales.plus(b.transferSales).plus(b.creditSales).toNumber(),
         );
-        const profit = round2(b.profitSales.plus(b.profitCredits).toNumber());
-        const surplus = round2(toBig(totalCollected).minus(toBig(profit)).toNumber());
+        // Ganancia DEVENGADA de las ventas del cajero (contado + crédito íntegro).
+        const profit = round2(b.profitSales.plus(b.profitCreditSales).toNumber());
+        const surplus = round2(toBig(totalSales).minus(toBig(profit)).toNumber());
         const margin =
-          totalCollected > 0
-            ? round2(toBig(profit).div(toBig(totalCollected)).times(100).toNumber())
-            : 0;
+          totalSales > 0 ? round2(toBig(profit).div(toBig(totalSales)).times(100).toNumber()) : 0;
         return {
           userId: b.userId,
           userName: b.userName,
           cashSales,
           transferSales,
+          creditSales,
           creditPaymentsCash,
           creditPaymentsTransfer,
           creditPaymentsTotal,
-          totalCollected,
+          totalSales,
           profit,
           margin,
           surplus,
@@ -258,15 +248,16 @@ export class GetTodayByCashierAction {
           },
         };
       })
-      .sort((a, b) => b.totalCollected - a.totalCollected);
+      .sort((a, b) => b.totalSales - a.totalSales);
 
     const totalsAcc = cashiers.reduce(
       (acc, c) => ({
         cashSales: acc.cashSales.plus(c.cashSales),
         transferSales: acc.transferSales.plus(c.transferSales),
+        creditSales: acc.creditSales.plus(c.creditSales),
         creditPaymentsCash: acc.creditPaymentsCash.plus(c.creditPaymentsCash),
         creditPaymentsTransfer: acc.creditPaymentsTransfer.plus(c.creditPaymentsTransfer),
-        totalCollected: acc.totalCollected.plus(c.totalCollected),
+        totalSales: acc.totalSales.plus(c.totalSales),
         profit: acc.profit.plus(c.profit),
         salesCount: acc.salesCount + c.salesCount,
         newCreditsCount: acc.newCreditsCount + c.newCredits.count,
@@ -275,9 +266,10 @@ export class GetTodayByCashierAction {
       {
         cashSales: new Big(0),
         transferSales: new Big(0),
+        creditSales: new Big(0),
         creditPaymentsCash: new Big(0),
         creditPaymentsTransfer: new Big(0),
-        totalCollected: new Big(0),
+        totalSales: new Big(0),
         profit: new Big(0),
         salesCount: 0,
         newCreditsCount: 0,
@@ -285,11 +277,11 @@ export class GetTodayByCashierAction {
       },
     );
 
-    const totalCollectedAll = round2(totalsAcc.totalCollected.toNumber());
+    const totalSalesAll = round2(totalsAcc.totalSales.toNumber());
     const profitAll = round2(totalsAcc.profit.toNumber());
     const marginAll =
-      totalCollectedAll > 0
-        ? round2(toBig(profitAll).div(toBig(totalCollectedAll)).times(100).toNumber())
+      totalSalesAll > 0
+        ? round2(toBig(profitAll).div(toBig(totalSalesAll)).times(100).toNumber())
         : 0;
 
     return {
@@ -298,15 +290,16 @@ export class GetTodayByCashierAction {
       totals: {
         cashSales: round2(totalsAcc.cashSales.toNumber()),
         transferSales: round2(totalsAcc.transferSales.toNumber()),
+        creditSales: round2(totalsAcc.creditSales.toNumber()),
         creditPaymentsCash: round2(totalsAcc.creditPaymentsCash.toNumber()),
         creditPaymentsTransfer: round2(totalsAcc.creditPaymentsTransfer.toNumber()),
         creditPaymentsTotal: round2(
           totalsAcc.creditPaymentsCash.plus(totalsAcc.creditPaymentsTransfer).toNumber(),
         ),
-        totalCollected: totalCollectedAll,
+        totalSales: totalSalesAll,
         profit: profitAll,
         margin: marginAll,
-        surplus: round2(toBig(totalCollectedAll).minus(toBig(profitAll)).toNumber()),
+        surplus: round2(toBig(totalSalesAll).minus(toBig(profitAll)).toNumber()),
         salesCount: totalsAcc.salesCount,
         newCreditsCount: totalsAcc.newCreditsCount,
         newCreditsTotal: round2(totalsAcc.newCreditsTotal.toNumber()),
