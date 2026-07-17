@@ -26,6 +26,7 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     packaging__id: '5',
     packaging__name: 'Caja x 12',
     packaging__value: '12.0000',
+    packaging__is_auto: false,
     prices: [{ id: 100, sale_price: 10.5, profit: 8, margin: 76.1905 }],
     ...over,
   };
@@ -52,7 +53,7 @@ describe('GetItemsAction (SQL crudo)', () => {
         sku_code: 'SKU-1',
         parent_id: null,
         packaging_id: 5,
-        packaging: { id: 5, name: 'Caja x 12', value: 12 },
+        packaging: { id: 5, name: 'Caja x 12', value: 12, is_auto: false },
         prices: [{ id: 100, sale_price: 10.5, profit: 8, margin: 76.1905 }],
         stock: 0, // placeholder Fase 11.5 — NO se toca.
         parent: null,
@@ -69,6 +70,7 @@ describe('GetItemsAction (SQL crudo)', () => {
         packaging__id: null,
         packaging__name: null,
         packaging__value: null,
+        packaging__is_auto: null,
         packaging_id: null,
         prices: [],
       }),
@@ -76,6 +78,47 @@ describe('GetItemsAction (SQL crudo)', () => {
     const [item] = await action.execute(42);
     expect(item.packaging).toBeNull();
     expect(item.prices).toEqual([]);
+  });
+
+  /**
+   * Los empaques "auto" (peso/monto variable) llevan un UUID como `name`. El POS
+   * necesita `is_auto` para mostrar "Peso variable" en vez del UUID, así que la
+   * bandera tiene que sobrevivir el mapeo. Datos reales del producto
+   * "FENOGRECO MOLIDO PQ. $2 000" (packaging auto, value 44.44).
+   */
+  describe('packaging.is_auto', () => {
+    it('propaga is_auto=true de un empaque auto junto a su value', async () => {
+      const action = makeAction([
+        rawRow({
+          packaging__id: '2965',
+          packaging__name: '56afeb68-a57e-424d-82d1-5f01ad2cb0b6',
+          packaging__value: '44.4400',
+          packaging__is_auto: true,
+        }),
+      ]);
+      const [item] = await action.execute(42);
+
+      expect(item.packaging).toEqual({
+        id: 2965,
+        name: '56afeb68-a57e-424d-82d1-5f01ad2cb0b6',
+        value: 44.44,
+        is_auto: true,
+      });
+    });
+
+    it('normaliza is_auto ausente/null a false (empaque manual)', async () => {
+      const action = makeAction([rawRow({ packaging__is_auto: null })]);
+      const [item] = await action.execute(42);
+
+      expect(item.packaging?.is_auto).toBe(false);
+    });
+
+    it('nunca devuelve is_auto undefined cuando hay empaque', async () => {
+      const action = makeAction([rawRow({ packaging__is_auto: undefined })]);
+      const [item] = await action.execute(42);
+
+      expect(item.packaging?.is_auto).toBe(false);
+    });
   });
 
   it('coloca hijos visibles tras el padre y deriva su parent', async () => {

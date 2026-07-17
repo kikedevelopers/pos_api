@@ -16,7 +16,7 @@ export interface PosItem {
   sku_code: string;
   parent_id: number | null;
   packaging_id: number | null;
-  packaging: { id: number; name: string; value: number } | null;
+  packaging: { id: number; name: string; value: number; is_auto: boolean } | null;
   prices: { id: number; sale_price: number; profit: number; margin: number }[];
   parent: { id: number; name: string; cost: number } | null;
   /** Placeholder: stock real depende de columna ausente; TODO Fase 11.5. */
@@ -62,6 +62,7 @@ interface RawPosItemRow {
   packaging__id: string | null;
   packaging__name: string | null;
   packaging__value: string | number | null;
+  packaging__is_auto: boolean | null;
   show_in_pos: boolean;
   created_at: Date | string;
   /** stock real del producto (placeholder; el post-proceso usa 0). */
@@ -105,6 +106,7 @@ export class GetItemsAction {
         pk.id           AS packaging__id,
         pk.name         AS packaging__name,
         pk.value        AS packaging__value,
+        pk.is_auto      AS packaging__is_auto,
         COALESCE(pr.prices, '[]'::jsonb) AS prices
       FROM products p
       LEFT JOIN packagings pk ON pk.id = p.packaging_id
@@ -139,6 +141,10 @@ export class GetItemsAction {
               id: Number(p.packaging__id),
               name: p.packaging__name as string,
               value: Number(p.packaging__value),
+              // Los empaques "auto" (peso/monto variable) tienen nombre UUID
+              // interno: el POS necesita la bandera para mostrar una etiqueta
+              // genérica en vez del UUID.
+              is_auto: p.packaging__is_auto === true,
             }
           : null,
       show_in_pos: p.show_in_pos,
