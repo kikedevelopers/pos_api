@@ -20,6 +20,22 @@ import { GetDailyClosureAction } from '../actions/get-daily-closure.action';
  * Además: aislamiento multi-tenant (company_id = $1 en toda query).
  */
 
+/**
+ * Recaudo de cartera discriminado por edad del crédito. Los abonos GLOBALES
+ * (`globalCash`/`globalTransfer`/`globalProfit`) deben ser la suma de los grupos
+ * para que reconcilien con `abonosByCreditAge` (así lo garantiza el `GROUP BY`
+ * real; aquí lo emulamos coherente en el mock).
+ */
+interface AbonosScenario {
+  cash: { previous: number; today: number };
+  transfer: { previous: number; today: number };
+  profit: { previous: number; today: number };
+  consigDetalle?: { is_today: boolean; bank_name: string; amount: number }[];
+  globalCash: number;
+  globalTransfer: number;
+  globalProfit: number;
+}
+
 /** Escenario base de queries: contado bruto 400/costo 300, utilidad cobrada 100. */
 interface Scenario {
   grossSales: number;
@@ -27,6 +43,7 @@ interface Scenario {
   collectedProfit: number;
   orders: { total: number; cost: number };
   newCredits?: { count: number; total: number; profit: number; cost: number; balance: number };
+  abonos?: AbonosScenario;
 }
 
 const BASE_SCENARIO: Scenario = {
@@ -38,10 +55,35 @@ const BASE_SCENARIO: Scenario = {
 
 /**
  * Router de queries por SQL. Devuelve la fila que corresponde a cada agregado;
- * lo no cubierto → `[]` (COALESCE a 0 en el action).
+ * lo no cubierto → `[]` (COALESCE a 0 en el action). Las queries DISCRIMINADAS
+ * por edad del crédito se distinguen por la columna `AS is_today`.
  */
 function buildQueryMock(scenario: Scenario): jest.Mock {
-  return jest.fn((sql: string) => {
+  const ab = scenario.abonos;
+  return jest.fn((sql: string, params?: unknown[]) => {
+    const method = params?.[3];
+    // ── Queries DISCRIMINADAS por edad del crédito (llevan `AS is_today`) ──
+    if (/AS is_today/.test(sql)) {
+      // Utilidad cobrada de abonos por grupo (proporcional, lleva note_agg).
+      if (/WITH note_agg AS/.test(sql)) {
+        return Promise.resolve([
+          { is_today: false, amount: ab?.profit.previous ?? 0 },
+          { is_today: true, amount: ab?.profit.today ?? 0 },
+        ]);
+      }
+      // Detalle de consignación por banco y grupo.
+      if (/bank_name/.test(sql)) {
+        return Promise.resolve(ab?.consigDetalle ?? []);
+      }
+      // Monto de abonos por método ($4) y grupo.
+      if (/abonos_total/.test(sql)) {
+        const g = method === 'TRANSFER' ? ab?.transfer : ab?.cash;
+        return Promise.resolve([
+          { is_today: false, abonos_total: g?.previous ?? 0 },
+          { is_today: true, abonos_total: g?.today ?? 0 },
+        ]);
+      }
+    }
     // Créditos nuevos del día (fetchNewCredits). Se comprueba ANTES que el
     // collectedProfit porque ambas queries llevan `WITH note_agg AS`; la de
     // créditos se distingue por `AS new_credits_total`.
@@ -57,12 +99,13 @@ function buildQueryMock(scenario: Scenario): jest.Mock {
         },
       ]);
     }
-    // Utilidad cobrada canónica (financial-facts). La variante de ABONOS lleva
-    // además un EXISTS sobre sale_credits; aquí la dejamos en 0.
+    // Utilidad cobrada canónica (financial-facts) SIN agrupar. La variante de
+    // ABONOS lleva además un EXISTS sobre sale_credits.
     if (/WITH note_agg AS/.test(sql)) {
-      return Promise.resolve(
-        /EXISTS \(\s*SELECT 1 FROM sale_credits/.test(sql) ? [{ amount: 0 }] : [{ amount: scenario.collectedProfit }],
-      );
+      const isAbono = /EXISTS \(\s*SELECT 1 FROM sale_credits/.test(sql);
+      return Promise.resolve([
+        { amount: isAbono ? (ab?.globalProfit ?? 0) : scenario.collectedProfit },
+      ]);
     }
     if (/AS gross_sales/.test(sql)) {
       return Promise.resolve([
@@ -73,6 +116,11 @@ function buildQueryMock(scenario: Scenario): jest.Mock {
       return Promise.resolve([
         { orders_total: scenario.orders.total, orders_cost: scenario.orders.cost },
       ]);
+    }
+    // Abonos GLOBALES sin agrupar (`AS abonos_total`, sin is_today), por método.
+    if (/AS abonos_total/.test(sql)) {
+      const total = method === 'TRANSFER' ? (ab?.globalTransfer ?? 0) : (ab?.globalCash ?? 0);
+      return Promise.resolve([{ abonos_total: total }]);
     }
     return Promise.resolve([]);
   });
@@ -139,6 +187,10 @@ describe('GetDailyClosureAction', () => {
     expect(result.cashSalesTotal).toBe(400);
     expect(result.salesProfit).toBe(100);
     expect(result.salesMargin).toBe(25);
+    // Venta directa discriminada: sin crédito ≡ el total del bloque.
+    expect(result.directSalesTotal).toBe(400);
+    expect(result.directSalesProfit).toBe(100);
+    expect(result.directSalesMargin).toBe(25);
     // Headline = utilidad COBRADA canónica pura (100), margen sobre recaudo 400.
     expect(result.profit).toBe(100);
     expect(result.margin).toBe(25);
@@ -160,10 +212,19 @@ describe('GetDailyClosureAction', () => {
     // Bloque "Ventas del Día" = contado (100) + crédito (80) = 180; base 400+200=600.
     expect(result.salesProfit).toBe(180);
     expect(result.salesMargin).toBe(30); // 180/600
+    // Venta directa (contado) discriminada, ANTES del crédito.
+    expect(result.directSalesTotal).toBe(400);
+    expect(result.directSalesProfit).toBe(100);
+    expect(result.directSalesMargin).toBe(25); // 100/400
     // Créditos del día discriminados.
     expect(result.creditsBreakdown.newCreditsTotal).toBe(200);
     expect(result.creditsBreakdown.newCreditsProfit).toBe(80);
     expect(result.creditsBreakdown.newCreditsMargin).toBe(40); // 80/200
+    // La descomposición cuadra: venta directa + crédito = total del bloque.
+    expect(result.directSalesTotal + result.creditsBreakdown.newCreditsTotal).toBe(600);
+    expect(result.directSalesProfit + result.creditsBreakdown.newCreditsProfit).toBe(
+      result.salesProfit,
+    );
     // Headline CAJA sin cambios: el crédito no se ha cobrado.
     expect(result.profit).toBe(100);
     expect(result.finalTotal).toBe(400);
@@ -182,6 +243,10 @@ describe('GetDailyClosureAction', () => {
     // salesProfit = 100 (contado) + 60 (pedido); denominador 400 + 200 = 600.
     expect(result.salesProfit).toBe(160);
     expect(result.salesMargin).toBe(26.67);
+    // El pedido es venta directa (no crédito): entra a la venta directa discriminada.
+    expect(result.directSalesTotal).toBe(600);
+    expect(result.directSalesProfit).toBe(160);
+    expect(result.directSalesMargin).toBe(26.67);
     // Headline = 100 (cobrada canónica) + 60 (pedido); recaudo 400 + pedido 200.
     expect(result.profit).toBe(160);
     expect(result.margin).toBe(26.67);
@@ -263,5 +328,90 @@ describe('GetDailyClosureAction', () => {
     expect(ordersCall?.[0]).toMatch(/SUM\(si\.total\)/);
     expect(ordersCall?.[0]).toMatch(/SUM\(si\.cost\)/);
     expect(ordersCall?.[1]?.[0]).toBe('42');
+  });
+
+  // ─── Recaudo de cartera discriminado por edad del crédito ──────────────────
+  describe('abonosByCreditAge (días anteriores vs del día)', () => {
+    const ABONOS_SCENARIO: Scenario = {
+      ...BASE_SCENARIO,
+      abonos: {
+        // Días anteriores: 30.000 efectivo + 10.000 consignación (Nequi), util 8.000.
+        // Del día: 5.000 efectivo, util 1.200.
+        cash: { previous: 30000, today: 5000 },
+        transfer: { previous: 10000, today: 0 },
+        profit: { previous: 8000, today: 1200 },
+        consigDetalle: [{ is_today: false, bank_name: 'Nequi', amount: 10000 }],
+        globalCash: 35000,
+        globalTransfer: 10000,
+        globalProfit: 9200,
+      },
+    };
+
+    it('discrimina cada grupo con su dinero, ganancia y margen', async () => {
+      const action = buildAction(ABONOS_SCENARIO);
+      const result = await action.execute(7, '2026-06-15');
+      const { previous, today } = result.creditsBreakdown.abonosByCreditAge;
+
+      // Días anteriores.
+      expect(previous.cash).toBe(30000);
+      expect(previous.consignacion).toBe(10000);
+      expect(previous.total).toBe(40000);
+      expect(previous.profit).toBe(8000);
+      expect(previous.margin).toBe(20); // 8.000 / 40.000
+      expect(previous.consignacionDetalle).toEqual([{ bankName: 'Nequi', amount: 10000 }]);
+      // Del día.
+      expect(today.cash).toBe(5000);
+      expect(today.consignacion).toBe(0);
+      expect(today.total).toBe(5000);
+      expect(today.profit).toBe(1200);
+      expect(today.margin).toBe(24); // 1.200 / 5.000
+      expect(today.consignacionDetalle).toEqual([]);
+    });
+
+    it('reconcilia con los globales: previous + today = abonos totales y creditsProfit', async () => {
+      const action = buildAction(ABONOS_SCENARIO);
+      const result = await action.execute(7, '2026-06-15');
+      const { previous, today } = result.creditsBreakdown.abonosByCreditAge;
+
+      expect(result.creditsBreakdown.abonosCash).toBe(35000);
+      expect(result.creditsBreakdown.abonosConsignacion).toBe(10000);
+      expect(result.creditsBreakdown.abonosTotal).toBe(45000);
+      expect(previous.total + today.total).toBe(result.creditsBreakdown.abonosTotal);
+      // creditsProfit (RENTABILIDAD global del recaudo) = suma de los grupos.
+      expect(result.creditsProfit).toBe(9200);
+      expect(previous.profit + today.profit).toBe(result.creditsProfit);
+    });
+
+    it('día sin recaudo: ambos grupos en cero, sin dividir por cero', async () => {
+      const action = buildAction(BASE_SCENARIO);
+      const result = await action.execute(7, '2026-06-15');
+      const { previous, today } = result.creditsBreakdown.abonosByCreditAge;
+
+      expect(previous).toEqual({
+        cash: 0,
+        consignacion: 0,
+        consignacionDetalle: [],
+        total: 0,
+        profit: 0,
+        margin: 0,
+      });
+      expect(today.margin).toBe(0);
+      expect(result.creditsBreakdown.abonosTotal).toBe(0);
+    });
+
+    it('multi-tenant: las queries por edad filtran company_id=$1 y agrupan por is_today', async () => {
+      const action = buildAction(ABONOS_SCENARIO);
+      await action.execute(42, '2026-06-15');
+
+      const byAgeCalls = querySpy.mock.calls.filter(([sql]) =>
+        /AS is_today/.test(sql as string),
+      ) as [string, unknown[]][];
+      expect(byAgeCalls.length).toBeGreaterThan(0);
+      for (const [sql, params] of byAgeCalls) {
+        expect(sql).toMatch(/company_id\s*=\s*\$1/);
+        expect(sql).toMatch(/GROUP BY is_today/);
+        expect(params[0]).toBe('42');
+      }
+    });
   });
 });

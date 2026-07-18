@@ -20,11 +20,30 @@ interface AmountRow {
   amount: number;
 }
 
+/** Filtro de pagos que son abonos a una venta A CRÉDITO. */
+const ABONO_PAYMENT_FILTER = `AND EXISTS (
+        SELECT 1 FROM sale_credits sc
+        WHERE sc.sale_invoice_id = si.id
+          AND sc.company_id = $1
+      )`;
+
+/**
+ * Antigüedad del crédito al que se abona: TRUE si la venta a crédito nació HOY
+ * (dentro del rango `$2..$3`), FALSE si es de días anteriores. El dinero del
+ * abono siempre entró hoy (`sp.created_at`); esto discrimina POR EDAD DEL CRÉDITO.
+ */
+const CREDIT_IS_TODAY = `(COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3)`;
+
 /**
  * SQL de utilidad cobrada proporcional. `paymentFilter` restringe el conjunto de
  * pagos (p.ej. solo abonos a crédito); vacío = todos (contado + abonos).
+ * `groupByCreditAge` añade la columna `is_today` (edad del crédito) y agrupa por
+ * ella: el `SUM` por-factura se PARTICIONA, así que la suma de los grupos es
+ * EXACTAMENTE el total sin agrupar.
  */
-function collectedProfitSql(paymentFilter: string): string {
+function collectedProfitSql(paymentFilter: string, groupByCreditAge = false): string {
+  const ageColumn = groupByCreditAge ? `${CREDIT_IS_TODAY} AS is_today,` : '';
+  const ageGroupBy = groupByCreditAge ? 'GROUP BY is_today' : '';
   return `
     WITH note_agg AS (
       SELECT
@@ -42,9 +61,11 @@ function collectedProfitSql(paymentFilter: string): string {
         AND cn.is_deleted = false
       GROUP BY cn.sale_invoice_id
     )
-    SELECT COALESCE(SUM(
-      LEAST(sp.amount, cons.total) * (cons.total - cons.cost) / NULLIF(cons.total, 0)
-    ), 0)::float AS amount
+    SELECT
+      ${ageColumn}
+      COALESCE(SUM(
+        LEAST(sp.amount, cons.total) * (cons.total - cons.cost) / NULLIF(cons.total, 0)
+      ), 0)::float AS amount
     FROM sale_payments sp
     INNER JOIN sale_invoices si
       ON sp.sale_invoice_id = si.id
@@ -61,6 +82,7 @@ function collectedProfitSql(paymentFilter: string): string {
       AND si.is_deleted = false
       AND sp.created_at BETWEEN $2 AND $3
       ${paymentFilter}
+    ${ageGroupBy}
   `;
 }
 
@@ -92,15 +114,44 @@ export async function fetchAbonoCollectedProfit(
   dateStart: Date,
   dateEnd: Date,
 ): Promise<number> {
-  const rows = await dataSource.query<AmountRow[]>(
-    collectedProfitSql(
-      `AND EXISTS (
-        SELECT 1 FROM sale_credits sc
-        WHERE sc.sale_invoice_id = si.id
-          AND sc.company_id = $1
-      )`,
-    ),
+  const rows = await dataSource.query<AmountRow[]>(collectedProfitSql(ABONO_PAYMENT_FILTER), [
+    String(companyId),
+    dateStart,
+    dateEnd,
+  ]);
+  return Number(rows[0]?.amount ?? 0);
+}
+
+/** Utilidad cobrada de abonos discriminada por edad del crédito. */
+export interface AbonoCollectedProfitByAge {
+  /** Abonos a créditos de DÍAS ANTERIORES (nacidos antes de hoy). */
+  previous: number;
+  /** Abonos a créditos DEL DÍA (nacidos hoy). */
+  today: number;
+}
+
+/**
+ * Utilidad COBRADA de abonos a crédito (proporcional) DISCRIMINADA por edad del
+ * crédito: días anteriores vs del día. `previous + today` ≡ `fetchAbonoCollectedProfit`
+ * (misma SQL, solo particionada por `is_today`).
+ */
+export async function fetchAbonoCollectedProfitByCreditAge(
+  dataSource: DataSource,
+  companyId: number,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<AbonoCollectedProfitByAge> {
+  const rows = await dataSource.query<{ is_today: boolean; amount: number }[]>(
+    collectedProfitSql(ABONO_PAYMENT_FILTER, true),
     [String(companyId), dateStart, dateEnd],
   );
-  return Number(rows[0]?.amount ?? 0);
+  const result: AbonoCollectedProfitByAge = { previous: 0, today: 0 };
+  for (const row of rows) {
+    if (row.is_today) {
+      result.today = Number(row.amount ?? 0);
+    } else {
+      result.previous = Number(row.amount ?? 0);
+    }
+  }
+  return result;
 }

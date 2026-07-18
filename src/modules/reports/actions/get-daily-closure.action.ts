@@ -5,6 +5,7 @@ import { DataSource } from 'typeorm';
 import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import {
   fetchAbonoCollectedProfit,
+  fetchAbonoCollectedProfitByCreditAge,
   fetchCollectedProfit,
 } from '@/modules/financial-facts/internal/collection-facts';
 
@@ -44,6 +45,19 @@ interface AdjustmentNoteRow {
   customer_name: string;
 }
 
+/**
+ * Grupo de recaudo de cartera (abonos) discriminado por edad del crédito. El
+ * dinero entró hoy; se agrupa según si el crédito abonado nació hoy o antes.
+ */
+export interface AbonoAgeGroup {
+  cash: number;
+  consignacion: number;
+  consignacionDetalle: { bankName: string; amount: number }[];
+  total: number;
+  profit: number;
+  margin: number;
+}
+
 export interface DailyClosureResult {
   date: string;
   cashSalesTotal: number;
@@ -66,6 +80,14 @@ export interface DailyClosureResult {
    * abonos quedan idénticos (un pedido no cobrado no entra a caja).
    */
   ordersTotal: number;
+  /**
+   * Venta directa (contado) discriminada: total, ganancia y margen ANTES del
+   * crédito (contado neto + consignaciones + pedidos). Sumada con el crédito
+   * del día da `salesProfit`/`salesMargin` (el total del bloque Ventas del Día).
+   */
+  directSalesTotal: number;
+  directSalesProfit: number;
+  directSalesMargin: number;
   creditsBreakdown: {
     newCreditsCount: number;
     newCreditsTotal: number;
@@ -77,6 +99,16 @@ export interface DailyClosureResult {
     abonosConsignacion: number;
     abonosConsignacionDetalle: { bankName: string; amount: number }[];
     abonosTotal: number;
+    /**
+     * Recaudo de cartera del día DISCRIMINADO por edad del crédito al que se
+     * abona: `previous` = abonos a créditos de días anteriores; `today` = abonos
+     * a créditos nacidos hoy. `previous + today` reconcilia con abonosCash/
+     * abonosConsignacion/abonosTotal y con creditsProfit (el global no cambia).
+     */
+    abonosByCreditAge: {
+      previous: AbonoAgeGroup;
+      today: AbonoAgeGroup;
+    };
     pendingBalance: number;
   };
   expensesTotal: number;
@@ -219,19 +251,34 @@ export class GetDailyClosureAction {
       amount: round2(r.amount),
     }));
 
-    const [abonosCashData, abonosConsigData, abonosConsigDetalleRows, abonosProfit, ordersData] =
-      await Promise.all([
-        this.fetchAbonos(cid, 'CASH', dateStart, dateEnd),
-        this.fetchAbonos(cid, 'TRANSFER', dateStart, dateEnd),
-        this.fetchAbonosConsigDetalle(cid, dateStart, dateEnd),
-        // Utilidad cobrada de abonos por modelo PROPORCIONAL (canónico), no
-        // cascada. Ver financial-facts/contracts/metrics-spec.md.
-        fetchAbonoCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
-        // Facturación de pedidos: solo con el flag ON (OFF → fila neutra, sin query).
-        includeOrdersConfig.enabled
-          ? fetchOrdersBilling(this.dataSource, cid, dateStart, dateEnd)
-          : Promise.resolve(EMPTY_ORDERS_BILLING),
-      ]);
+    const [
+      abonosCashData,
+      abonosConsigData,
+      abonosConsigDetalleRows,
+      abonosProfit,
+      ordersData,
+      abonosCashByAge,
+      abonosConsigByAge,
+      abonosConsigDetalleByAge,
+      abonoProfitByAge,
+    ] = await Promise.all([
+      this.fetchAbonos(cid, 'CASH', dateStart, dateEnd),
+      this.fetchAbonos(cid, 'TRANSFER', dateStart, dateEnd),
+      this.fetchAbonosConsigDetalle(cid, dateStart, dateEnd),
+      // Utilidad cobrada de abonos por modelo PROPORCIONAL (canónico), no
+      // cascada. Ver financial-facts/contracts/metrics-spec.md.
+      fetchAbonoCollectedProfit(this.dataSource, companyId, dateStart, dateEnd),
+      // Facturación de pedidos: solo con el flag ON (OFF → fila neutra, sin query).
+      includeOrdersConfig.enabled
+        ? fetchOrdersBilling(this.dataSource, cid, dateStart, dateEnd)
+        : Promise.resolve(EMPTY_ORDERS_BILLING),
+      // Recaudo de cartera discriminado por edad del crédito (días anteriores vs
+      // del día). Aditivo: NO altera los globales de arriba.
+      this.fetchAbonosByAge(cid, 'CASH', dateStart, dateEnd),
+      this.fetchAbonosByAge(cid, 'TRANSFER', dateStart, dateEnd),
+      this.fetchAbonosConsigDetalleByAge(cid, dateStart, dateEnd),
+      fetchAbonoCollectedProfitByCreditAge(this.dataSource, companyId, dateStart, dateEnd),
+    ]);
 
     // Pedidos del día (0 con el flag OFF). `ordersProfit` es la ganancia REAL
     // del pedido (total - costo): con el flag ON se asume COMPLETO.
@@ -245,6 +292,28 @@ export class GetDailyClosureAction {
       bankName: r.bank_name,
       amount: round2(r.amount),
     }));
+
+    // Recaudo de cartera del día discriminado por edad del crédito. `total` es el
+    // dinero (efectivo + consignación) y `margin` la utilidad cobrada sobre ese
+    // dinero, igual criterio que el global de la card. previous+today reconcilia
+    // con los globales (abonosCash/abonosConsig/abonosTotal, creditsProfit).
+    const buildAbonoGroup = (which: 'previous' | 'today'): AbonoAgeGroup => {
+      const cash = round2(abonosCashByAge[which]);
+      const consignacion = round2(abonosConsigByAge[which]);
+      const consignacionDetalle = abonosConsigDetalleByAge[which].map((r) => ({
+        bankName: r.bank_name,
+        amount: round2(r.amount),
+      }));
+      const total = round2(toBig(cash).plus(toBig(consignacion)).toNumber());
+      const profit = round2(abonoProfitByAge[which]);
+      const margin =
+        total > 0 ? round2(toBig(profit).div(total).times(100).toNumber()) : 0;
+      return { cash, consignacion, consignacionDetalle, total, profit, margin };
+    };
+    const abonosByCreditAge = {
+      previous: buildAbonoGroup('previous'),
+      today: buildAbonoGroup('today'),
+    };
 
     const finalTotal = round2(
       toBig(netSales)
@@ -297,6 +366,20 @@ export class GetDailyClosureAction {
     const newCreditsMargin =
       newCreditsTotal > 0
         ? round2(toBig(newCreditsProfit).div(newCreditsTotal).times(100).toNumber())
+        : 0;
+
+    // Venta directa (contado) discriminada = contado neto + consignaciones +
+    // pedidos, SIN crédito. Su propio total, ganancia y margen; sumada con el
+    // crédito del día da el total del bloque (salesProfit/salesMargin).
+    const directSalesTotal = round2(
+      toBig(netSales).plus(toBig(consignacionesVentas)).plus(toBig(ordersTotal)).toNumber(),
+    );
+    const directSalesProfit = round2(
+      toBig(netProfit).plus(toBig(consignacionesProfit)).plus(toBig(ordersProfit)).toNumber(),
+    );
+    const directSalesMargin =
+      directSalesTotal > 0
+        ? round2(toBig(directSalesProfit).div(directSalesTotal).times(100).toNumber())
         : 0;
 
     // Bloque VENTAS DEL DÍA = contado (neto NC/ND) + consignaciones + CRÉDITOS +
@@ -364,6 +447,9 @@ export class GetDailyClosureAction {
       consignacionesVentas: round2(consignacionesVentas),
       consignacionesDetalle,
       ordersTotal,
+      directSalesTotal,
+      directSalesProfit,
+      directSalesMargin,
       creditsBreakdown: {
         newCreditsCount: Number(newCreditsData.new_credits_count),
         newCreditsTotal,
@@ -375,6 +461,7 @@ export class GetDailyClosureAction {
         abonosConsignacion: round2(abonosConsig),
         abonosConsignacionDetalle: abonosConsigDetalle,
         abonosTotal,
+        abonosByCreditAge,
         pendingBalance: round2(newCreditsData.pending_balance),
       },
       expensesTotal: round2(expensesTotal),
@@ -451,6 +538,92 @@ export class GetDailyClosureAction {
       `,
       [cid, dateStart, dateEnd],
     );
+  }
+
+  /**
+   * Recaudo de abonos (por método) discriminado por edad del crédito abonado:
+   * `today` = crédito nacido hoy, `previous` = crédito de días anteriores. El
+   * pago entró hoy en ambos casos (`sp.created_at`). La suma de los dos grupos
+   * es EXACTAMENTE el total (misma query, particionada por `is_today`).
+   */
+  private async fetchAbonosByAge(
+    cid: string,
+    method: 'CASH' | 'TRANSFER',
+    dateStart: Date,
+    dateEnd: Date,
+  ): Promise<{ previous: number; today: number }> {
+    const rows = await this.dataSource.query<{ is_today: boolean; abonos_total: number }[]>(
+      `
+      SELECT
+        (COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3) AS is_today,
+        COALESCE(SUM(sp.amount), 0)::float AS abonos_total
+      FROM sale_payments sp
+      INNER JOIN sale_invoices si
+        ON si.id = sp.sale_invoice_id
+       AND si.company_id = $1
+      WHERE sp.company_id = $1
+        AND sp.is_voided = false
+        AND sp.created_at BETWEEN $2 AND $3
+        AND sp.payment_method = $4::payment_method
+        AND EXISTS (
+          SELECT 1 FROM sale_credits sc
+          WHERE sc.sale_invoice_id = sp.sale_invoice_id
+            AND sc.company_id = $1
+        )
+      GROUP BY is_today
+      `,
+      [cid, dateStart, dateEnd, method],
+    );
+    const out = { previous: 0, today: 0 };
+    for (const row of rows) {
+      if (row.is_today) out.today = Number(row.abonos_total ?? 0);
+      else out.previous = Number(row.abonos_total ?? 0);
+    }
+    return out;
+  }
+
+  /** Detalle de abonos por consignación (banco) discriminado por edad del crédito. */
+  private async fetchAbonosConsigDetalleByAge(
+    cid: string,
+    dateStart: Date,
+    dateEnd: Date,
+  ): Promise<{ previous: ConsigDetalleRow[]; today: ConsigDetalleRow[] }> {
+    const rows = await this.dataSource.query<
+      { is_today: boolean; bank_name: string; amount: number }[]
+    >(
+      `
+      SELECT
+        (COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3) AS is_today,
+        COALESCE(sp.bank_name, 'Sin especificar') AS bank_name,
+        COALESCE(SUM(sp.amount), 0)::float AS amount
+      FROM sale_payments sp
+      INNER JOIN sale_invoices si
+        ON si.id = sp.sale_invoice_id
+       AND si.company_id = $1
+      WHERE sp.company_id = $1
+        AND sp.is_voided = false
+        AND sp.created_at BETWEEN $2 AND $3
+        AND sp.payment_method = 'TRANSFER'
+        AND EXISTS (
+          SELECT 1 FROM sale_credits sc
+          WHERE sc.sale_invoice_id = sp.sale_invoice_id
+            AND sc.company_id = $1
+        )
+      GROUP BY is_today, sp.bank_name
+      ORDER BY amount DESC
+      `,
+      [cid, dateStart, dateEnd],
+    );
+    const out: { previous: ConsigDetalleRow[]; today: ConsigDetalleRow[] } = {
+      previous: [],
+      today: [],
+    };
+    for (const row of rows) {
+      const record = { bank_name: row.bank_name, amount: row.amount };
+      if (row.is_today) out.today.push(record);
+      else out.previous.push(record);
+    }
+    return out;
   }
 
   private async fetchAdjustmentNotes(
