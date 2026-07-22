@@ -9,6 +9,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -68,8 +69,16 @@ export class CreateSupplierDto {
   @MaxLength(30)
   doc_number?: string;
 
+  /**
+   * El correo es OPCIONAL: crear un proveedor solo con la razón social es
+   * válido. Se usa `@ValidateIf` (no solo `@IsOptional()`): `IsOptional`
+   * únicamente salta `null`/`undefined`, así que la cadena vacía que manda el
+   * formulario llegaba a `@IsEmail` y tumbaba el create ENTERO con un 400.
+   * Con `@ValidateIf` el `''` pasa la validación y el action lo persiste como
+   * `null`. Mismo patrón que `UpdateCompanyDto`.
+   */
   @ApiPropertyOptional({ example: 'contacto@distcaracas.com', maxLength: 255, nullable: true })
-  @IsOptional()
+  @ValidateIf((o: CreateSupplierDto) => o.email !== undefined && o.email !== null && o.email !== '')
   @IsEmail({}, { message: 'email debe ser una dirección de correo válida' })
   @MaxLength(255)
   email?: string;
