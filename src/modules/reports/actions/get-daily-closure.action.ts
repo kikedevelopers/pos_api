@@ -17,6 +17,7 @@ import {
   computeNetCashSales,
   computeOrdersProfit,
   EMPTY_ORDERS_BILLING,
+  fetchCarrierPaymentsTotal,
   fetchCashNotes,
   fetchCashSales,
   fetchExpensesDetail,
@@ -113,6 +114,12 @@ export interface DailyClosureResult {
   };
   expensesTotal: number;
   expensesDetail: { concept: string; source: string | null; amount: number }[];
+  /**
+   * Abonos a transportistas del día (`carrier_payments`, por fecha del pago).
+   * SALIDA de caja informativa: NO resta de la ganancia (el flete ya está en el
+   * costo del producto). 0 si no hay pagos a transportistas hoy.
+   */
+  carrierPaymentsTotal: number;
   fixedExpensePaymentsTotal: number;
   fixedExpensePayments: {
     concept: string;
@@ -195,6 +202,7 @@ export class GetDailyClosureAction {
       debitNotesData,
       consigData,
       expensesTotal,
+      carrierPaymentsTotal,
       expensesDetailRows,
       fixedExpensePaymentRows,
       includeOrdersConfig,
@@ -204,6 +212,7 @@ export class GetDailyClosureAction {
       fetchCashNotes(this.dataSource, cid, 'DEBIT', dateStart, dateEnd),
       fetchTransferSales(this.dataSource, cid, dateStart, dateEnd),
       fetchExpensesTotal(this.dataSource, cid, dateStart, dateEnd),
+      fetchCarrierPaymentsTotal(this.dataSource, cid, dateStart, dateEnd),
       fetchExpensesDetail(this.dataSource, cid, dateStart, dateEnd),
       fetchFixedExpensePaymentsDetail(this.dataSource, cid, dateStart, dateEnd),
       this.getIncludeOrdersInReports.execute(companyId),
@@ -466,6 +475,9 @@ export class GetDailyClosureAction {
       },
       expensesTotal: round2(expensesTotal),
       expensesDetail,
+      // Abonos a transportistas del día (SALIDA de caja informativa; NO resta de
+      // la ganancia — el flete ya está capitalizado en el costo del producto).
+      carrierPaymentsTotal: round2(carrierPaymentsTotal),
       fixedExpensePaymentsTotal,
       fixedExpensePayments,
       finalTotal,

@@ -44,6 +44,8 @@ interface Scenario {
   orders: { total: number; cost: number };
   newCredits?: { count: number; total: number; profit: number; cost: number; balance: number };
   abonos?: AbonosScenario;
+  /** Abonos a transportistas del día (`carrier_payments`). Default 0. */
+  carrierPayments?: number;
 }
 
 const BASE_SCENARIO: Scenario = {
@@ -121,6 +123,10 @@ function buildQueryMock(scenario: Scenario): jest.Mock {
     if (/AS abonos_total/.test(sql)) {
       const total = method === 'TRANSFER' ? (ab?.globalTransfer ?? 0) : (ab?.globalCash ?? 0);
       return Promise.resolve([{ abonos_total: total }]);
+    }
+    // Abonos a transportistas del día (carrier_payments).
+    if (/FROM carrier_payments/.test(sql)) {
+      return Promise.resolve([{ abonos: scenario.carrierPayments ?? 0 }]);
     }
     return Promise.resolve([]);
   });
@@ -328,6 +334,41 @@ describe('GetDailyClosureAction', () => {
     expect(ordersCall?.[0]).toMatch(/SUM\(si\.total\)/);
     expect(ordersCall?.[0]).toMatch(/SUM\(si\.cost\)/);
     expect(ordersCall?.[1]?.[0]).toBe('42');
+  });
+
+  // ─── Abonos a transportistas del día (SALIDA de caja informativa) ──────────
+  describe('carrierPaymentsTotal', () => {
+    it('expone los abonos a transportistas del día', async () => {
+      const action = buildAction({ ...BASE_SCENARIO, carrierPayments: 15000 });
+      const result = await action.execute(7, '2026-06-15');
+      expect(result.carrierPaymentsTotal).toBe(15000);
+    });
+
+    it('NO resta de la ganancia ni toca la caja (el flete ya está en el costo)', async () => {
+      const action = buildAction({ ...BASE_SCENARIO, carrierPayments: 15000 });
+      const result = await action.execute(7, '2026-06-15');
+      // Idénticos al escenario base sin transportistas: profit/caja intactos.
+      expect(result.profit).toBe(100);
+      expect(result.salesProfit).toBe(100);
+      expect(result.finalTotal).toBe(400);
+    });
+
+    it('día sin pagos a transportistas: 0', async () => {
+      const action = buildAction(BASE_SCENARIO);
+      const result = await action.execute(7, '2026-06-15');
+      expect(result.carrierPaymentsTotal).toBe(0);
+    });
+
+    it('multi-tenant: la query de carrier_payments filtra company_id=$1', async () => {
+      const action = buildAction({ ...BASE_SCENARIO, carrierPayments: 15000 });
+      await action.execute(42, '2026-06-15');
+      const call = querySpy.mock.calls.find(([sql]) =>
+        /FROM carrier_payments/.test(sql as string),
+      ) as [string, unknown[]] | undefined;
+      expect(call).toBeDefined();
+      expect(call?.[0]).toMatch(/cp\.company_id\s*=\s*\$1/);
+      expect(call?.[1]?.[0]).toBe('42');
+    });
   });
 
   // ─── Recaudo de cartera discriminado por edad del crédito ──────────────────

@@ -408,6 +408,30 @@ export async function fetchExpensesTotal(
   return Number(rows[0]?.expenses_total ?? 0);
 }
 
+/**
+ * Abonos a transportistas del día (tabla `carrier_payments`, por fecha del pago).
+ * Solo informativo como SALIDA de caja: NO resta de la ganancia (el flete ya está
+ * capitalizado en el COSTO del producto; restarlo aquí lo doble-contaría, igual
+ * que los abonos a compras). Misma query que usa `extended-summary`.
+ */
+export async function fetchCarrierPaymentsTotal(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<number> {
+  const rows = await dataSource.query<{ abonos: number }[]>(
+    `
+      SELECT COALESCE(SUM(cp.amount), 0)::float AS abonos
+      FROM carrier_payments cp
+      WHERE cp.company_id = $1
+        AND cp.created_at BETWEEN $2 AND $3
+      `,
+    [cid, dateStart, dateEnd],
+  );
+  return Number(rows[0]?.abonos ?? 0);
+}
+
 /** Fila cruda del detalle discriminado de gastos del día. */
 export interface ExpenseDetailRow {
   concept: string;
