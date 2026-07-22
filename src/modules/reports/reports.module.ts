@@ -6,6 +6,7 @@ import { GetCreditsReportAction } from './actions/get-credits-report.action';
 import { GetCustomersRfmAction } from './actions/get-customers-rfm.action';
 import { GetCustomersRfmDayTicketsAction } from './actions/get-customers-rfm-day-tickets.action';
 import { GetDailyClosureAction } from './actions/get-daily-closure.action';
+import { GetSalesByHourAction } from './actions/get-sales-by-hour.action';
 import { GetExtendedSummaryAction } from './actions/get-extended-summary.action';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -24,6 +25,7 @@ import { ReportsService } from './reports.service';
   providers: [
     ReportsService,
     GetDailyClosureAction,
+    GetSalesByHourAction,
     GetExtendedSummaryAction,
     GetCreditsReportAction,
     GetCustomersRfmAction,

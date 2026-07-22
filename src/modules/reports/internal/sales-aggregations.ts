@@ -432,6 +432,52 @@ export async function fetchCarrierPaymentsTotal(
   return Number(rows[0]?.abonos ?? 0);
 }
 
+/** Fila cruda de venta agregada por hora del día (hora Colombia). */
+export interface SalesByHourRow {
+  hour: number;
+  total: number;
+  count: number;
+}
+
+/**
+ * Venta del día agregada por HORA (0–23) en zona `America/Bogota`. Suma el total
+ * de las facturas de venta (`ticket_type = 'SALE'`, incluye contado y crédito;
+ * el crédito es una venta) por la hora local en que se hicieron. Devuelve solo
+ * las horas CON ventas (dispersa); el zero-fill a 24 horas lo hace la acción.
+ *
+ * La hora se extrae convirtiendo el `timestamptz` a hora local colombiana
+ * (`AT TIME ZONE 'America/Bogota'`), no UTC, para que el pico de ventas coincida
+ * con la hora de pared del negocio.
+ */
+export async function fetchSalesByHour(
+  dataSource: DataSource,
+  cid: string,
+  dateStart: Date,
+  dateEnd: Date,
+): Promise<SalesByHourRow[]> {
+  const rows = await dataSource.query<SalesByHourRow[]>(
+    `
+      SELECT
+        EXTRACT(HOUR FROM (COALESCE(si.sold_at, si.created_at) AT TIME ZONE 'America/Bogota'))::int AS hour,
+        COALESCE(SUM(si.total), 0)::float AS total,
+        COUNT(*)::int AS count
+      FROM sale_invoices si
+      WHERE si.company_id = $1
+        AND si.is_deleted = false
+        AND si.ticket_type = 'SALE'
+        AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
+      GROUP BY hour
+      ORDER BY hour
+      `,
+    [cid, dateStart, dateEnd],
+  );
+  return rows.map((r) => ({
+    hour: Number(r.hour),
+    total: Number(r.total),
+    count: Number(r.count),
+  }));
+}
+
 /** Fila cruda del detalle discriminado de gastos del día. */
 export interface ExpenseDetailRow {
   concept: string;

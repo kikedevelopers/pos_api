@@ -16,6 +16,10 @@ import {
 } from './actions/get-customers-rfm-day-tickets.action';
 import { GetDailyClosureAction, type DailyClosureResult } from './actions/get-daily-closure.action';
 import {
+  GetSalesByHourAction,
+  type SalesByHourResult,
+} from './actions/get-sales-by-hour.action';
+import {
   GetExtendedSummaryAction,
   type ExtendedSummaryResult,
 } from './actions/get-extended-summary.action';
@@ -28,6 +32,7 @@ export type {
   CustomersRfmResult,
   DailyClosureResult,
   ExtendedSummaryResult,
+  SalesByHourResult,
 };
 
 /**
@@ -41,10 +46,15 @@ export class ReportsService {
     private readonly creditsReport: GetCreditsReportAction,
     private readonly customersRfm: GetCustomersRfmAction,
     private readonly customersRfmDayTickets: GetCustomersRfmDayTicketsAction,
+    private readonly salesByHour: GetSalesByHourAction,
   ) {}
 
   getDailyClosure(companyId: number, date?: string): Promise<DailyClosureResult> {
     return this.dailyClosure.execute(companyId, date);
+  }
+
+  getSalesByHour(companyId: number, date?: string): Promise<SalesByHourResult> {
+    return this.salesByHour.execute(companyId, date);
   }
 
   getExtendedSummary(

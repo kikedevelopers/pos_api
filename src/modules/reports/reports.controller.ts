@@ -18,6 +18,7 @@ import type {
   CustomersRfmResult,
   DailyClosureResult,
   ExtendedSummaryResult,
+  SalesByHourResult,
 } from './reports.service';
 
 /**
@@ -53,6 +54,20 @@ export class ReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<DailyClosureResult> {
     return this.reportsService.getDailyClosure(companyId, query.date);
+  }
+
+  @Get('sales-by-hour')
+  @Roles('owner', 'manager')
+  @RequirePermission('canAccessDailyClosureReport')
+  @ApiOperation({
+    summary: 'Venta del día por hora (0–23, hora Colombia) para el gráfico de venta por horas.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  salesByHour(
+    @Query() query: DailyClosureQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<SalesByHourResult> {
+    return this.reportsService.getSalesByHour(companyId, query.date);
   }
 
   @Get('extended-summary')
