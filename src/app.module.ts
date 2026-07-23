@@ -41,6 +41,7 @@ import { DeliveriesModule } from './modules/deliveries/deliveries.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
+import { TreasuryModule } from './modules/treasury/treasury.module';
 import { FixedExpensesModule } from './modules/fixed-expenses/fixed-expenses.module';
 import { MigrationImportModule } from './modules/migration-import/migration-import.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
@@ -195,6 +196,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CarriersModule,
     // Fase 5 — Cuentas y caja.
     FinancialMovementsModule,
+    TreasuryModule,
     BanksModule,
     WalletsModule,
     CashRegisterModule,
