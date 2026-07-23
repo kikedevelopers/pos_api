@@ -49,6 +49,16 @@ export interface ConsigDetalleRow {
   amount: number;
 }
 
+/**
+ * Ajuste por notas (NC/ND) de consignaciones, prorrateado por banco. `adj` ya
+ * viene con signo (NC resta, ND suma) sobre la venta; `cost_adj` sobre el costo.
+ */
+export interface TransferNoteRow {
+  bank_name: string;
+  adj: number;
+  cost_adj: number;
+}
+
 export interface NewCreditsRow {
   new_credits_count: string | number;
   new_credits_total: number;
@@ -175,14 +185,56 @@ export async function fetchCashNotes(
  * una factura con varios pagos o método mixto duplique su `si.cost` (una vez
  * por rama de pago). Ver la nota extensa en `fetchCashSales`.
  */
+/**
+ * Combina consignaciones BRUTAS con el ajuste por notas (NC/ND) → NETO: total,
+ * costo y detalle por banco. Función PURA (testeable sin DB). El ajuste ya viene
+ * con signo y prorrateado por banco desde la query. Los bancos que quedan en ~0
+ * (venta totalmente anulada por NC) se omiten del detalle.
+ */
+export function computeNetConsignaciones(
+  grossTotals: ConsigRow,
+  grossDetalle: ConsigDetalleRow[],
+  noteRows: TransferNoteRow[],
+): { totals: ConsigRow; detalle: ConsigDetalleRow[] } {
+  const totalAdj = noteRows.reduce((acc, r) => acc.plus(toBig(r.adj)), toBig(0));
+  const costAdj = noteRows.reduce((acc, r) => acc.plus(toBig(r.cost_adj)), toBig(0));
+
+  const consig_total = round2(toBig(grossTotals.consig_total).plus(totalAdj).toNumber());
+  const consig_cost = round2(toBig(grossTotals.consig_cost).plus(costAdj).toNumber());
+
+  const byBank = new Map<string, ReturnType<typeof toBig>>();
+  for (const d of grossDetalle) byBank.set(d.bank_name, toBig(d.amount));
+  for (const r of noteRows) {
+    byBank.set(r.bank_name, (byBank.get(r.bank_name) ?? toBig(0)).plus(toBig(r.adj)));
+  }
+
+  const detalle: ConsigDetalleRow[] = [...byBank.entries()]
+    .map(([bank_name, amt]) => ({ bank_name, amount: round2(amt.toNumber()) }))
+    .filter((d) => Math.abs(d.amount) >= 0.005)
+    .sort((a, b) => b.amount - a.amount);
+
+  return { totals: { consig_total, consig_cost }, detalle };
+}
+
+/**
+ * Consignaciones (ventas TRANSFER) del rango, NETAS de notas de ajuste (NC/ND).
+ *
+ * Bruto (`consig_total`/`consig_cost`/detalle por banco) igual que antes. Las
+ * notas se netean SOLO para facturas SIN pago en efectivo (las que tienen algún
+ * pago CASH las netea `fetchCashNotes` → evita doble conteo entre métodos; una
+ * factura mixta cuenta su nota en efectivo, y el total contado queda correcto).
+ * El ajuste se prorratea por banco según lo pagado a cada uno. NC resta, ND suma
+ * — mismo criterio que el path de efectivo.
+ */
 export async function fetchTransferSales(
   dataSource: DataSource,
   cid: string,
   dateStart: Date,
   dateEnd: Date,
 ): Promise<{ totals: ConsigRow; detalle: ConsigDetalleRow[] }> {
-  const totals = await dataSource.query<ConsigRow[]>(
-    `
+  const [totals, detalle, noteRows] = await Promise.all([
+    dataSource.query<ConsigRow[]>(
+      `
       SELECT
         COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS consig_total,
         COALESCE(SUM(si.cost * LEAST(sp.amount, si.total) / NULLIF(si.total, 0)), 0)::float AS consig_cost
@@ -202,11 +254,10 @@ export async function fetchTransferSales(
             AND sc.company_id = $1
         )
       `,
-    [cid, dateStart, dateEnd],
-  );
-
-  const detalle = await dataSource.query<ConsigDetalleRow[]>(
-    `
+      [cid, dateStart, dateEnd],
+    ),
+    dataSource.query<ConsigDetalleRow[]>(
+      `
       SELECT
         COALESCE(sp.bank_name, 'Sin especificar') AS bank_name,
         COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS amount
@@ -228,10 +279,76 @@ export async function fetchTransferSales(
       GROUP BY sp.bank_name
       ORDER BY amount DESC
       `,
-    [cid, dateStart, dateEnd],
-  );
+      [cid, dateStart, dateEnd],
+    ),
+    dataSource.query<TransferNoteRow[]>(
+      `
+      WITH tp AS (
+        SELECT
+          si.id AS invoice_id,
+          COALESCE(sp.bank_name, 'Sin especificar') AS bank_name,
+          SUM(sp.amount) AS bank_amt
+        FROM sale_payments sp
+        INNER JOIN sale_invoices si
+          ON sp.sale_invoice_id = si.id
+         AND si.company_id = $1
+        WHERE sp.company_id = $1
+          AND sp.is_voided = false
+          AND si.ticket_type = 'SALE'
+          AND si.is_deleted = false
+          AND sp.payment_method = 'TRANSFER'
+          AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
+          AND NOT EXISTS (
+            SELECT 1 FROM sale_credits sc
+            WHERE sc.sale_invoice_id = si.id AND sc.company_id = $1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM sale_payments spc
+            WHERE spc.sale_invoice_id = si.id AND spc.company_id = $1
+              AND spc.is_voided = false AND spc.payment_method = 'CASH'
+          )
+        GROUP BY si.id, COALESCE(sp.bank_name, 'Sin especificar')
+      ),
+      na AS (
+        SELECT
+          cn.sale_invoice_id AS invoice_id,
+          SUM(CASE WHEN cn.note_type = 'DEBIT' THEN cn.total ELSE -cn.total END) AS total_adj,
+          SUM(CASE WHEN cn.note_type = 'DEBIT' THEN COALESCE(lc.cost, 0) ELSE -COALESCE(lc.cost, 0) END) AS cost_adj
+        FROM credit_notes cn
+        LEFT JOIN (
+          SELECT cnl.credit_note_id, SUM(cnl.unit_cost * cnl.quantity) AS cost
+          FROM credit_note_lines cnl
+          WHERE cnl.company_id = $1
+          GROUP BY cnl.credit_note_id
+        ) lc ON lc.credit_note_id = cn.id
+        WHERE cn.company_id = $1
+          AND cn.is_deleted = false
+        GROUP BY cn.sale_invoice_id
+      ),
+      tp_share AS (
+        SELECT
+          tp.invoice_id,
+          tp.bank_name,
+          tp.bank_amt / NULLIF(SUM(tp.bank_amt) OVER (PARTITION BY tp.invoice_id), 0) AS share
+        FROM tp
+      )
+      SELECT
+        tp_share.bank_name,
+        COALESCE(SUM(na.total_adj * tp_share.share), 0)::float AS adj,
+        COALESCE(SUM(na.cost_adj * tp_share.share), 0)::float AS cost_adj
+      FROM tp_share
+      INNER JOIN na ON na.invoice_id = tp_share.invoice_id
+      GROUP BY tp_share.bank_name
+      `,
+      [cid, dateStart, dateEnd],
+    ),
+  ]);
 
-  return { totals: totals[0] ?? { consig_total: 0, consig_cost: 0 }, detalle };
+  return computeNetConsignaciones(
+    totals[0] ?? { consig_total: 0, consig_cost: 0 },
+    detalle,
+    noteRows,
+  );
 }
 
 /**
