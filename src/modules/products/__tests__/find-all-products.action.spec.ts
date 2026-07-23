@@ -96,6 +96,8 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       prices: [
         { id: 100, name: 'Detal', sale_price: 10.5, profit: 8, margin: 76.1905, iva_percentage: 0 },
       ],
+      // El fixture no trae last_purchase_date → null (el front cae a created_at).
+      last_purchase_date: null,
       // FASE 2 (COMPARTIR): el fixture no trae company_id → owner = company activa
       // (42), producto propio → is_shared false.
       is_shared: false,
@@ -103,6 +105,20 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       // SUCURSALES (CLONAR): fixture sin cloned_from_company_id → no es copia.
       is_clone: false,
     });
+  });
+
+  it('last_purchase_date: Date del SQL → ISO en el DTO; ausente → null', async () => {
+    // Con última compra recibida (el driver devuelve Date).
+    const withPurchase = makeAction([
+      rawRow({ last_purchase_date: new Date('2026-07-20T14:30:00.000Z') }),
+    ]);
+    const [p1] = await withPurchase.execute(42, {});
+    expect(toProductResponseDto(p1, null).last_purchase_date).toBe('2026-07-20T14:30:00.000Z');
+
+    // Sin compras recibidas (subquery → null).
+    const noPurchase = makeAction([rawRow({ last_purchase_date: null })]);
+    const [p2] = await noPurchase.execute(42, {});
+    expect(toProductResponseDto(p2, null).last_purchase_date).toBeNull();
   });
 
   it('packaging/category null cuando no hay join; prices vacío con COALESCE', async () => {

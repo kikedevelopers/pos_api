@@ -158,6 +158,15 @@ export class ProductResponseDto {
   prices!: ProductPriceNestedDto[];
 
   /**
+   * Fecha (ISO) de la última compra RECIBIDA que incluyó el producto. `null` si
+   * nunca se ha recibido una compra con él (el front cae a `created_at`). Solo
+   * la puebla el listado (`FindAllProductsAction`); en respuestas de un solo
+   * producto va `null`.
+   */
+  @ApiPropertyOptional({ example: '2026-07-20T14:30:00.000Z', nullable: true })
+  last_purchase_date!: string | null;
+
+  /**
    * FASE 2 (COMPARTIR): `true` si el producto NO es de la company activa sino
    * compartido por el principal. El front lo trata como SOLO LECTURA (no editar,
    * no cambiar precio, no comprar). `false`/ausente para productos propios.
@@ -238,6 +247,10 @@ export function toProductResponseDto(
         }
       : null,
     prices: (p.prices ?? []).map(mapPriceNested),
+    // Solo el listado adjunta `last_purchase_date` al POJO; en un solo producto
+    // (entidad real) va null.
+    last_purchase_date:
+      (p as unknown as { last_purchase_date?: string | null }).last_purchase_date ?? null,
     // FASE 2: `is_shared`/`owner_company_id` los adjunta FindAllProductsAction al
     // POJO. Para entidades propias normales (sin el campo) → no compartido.
     is_shared: (p as ProductWithSharing).is_shared === true,

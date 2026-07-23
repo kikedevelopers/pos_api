@@ -86,6 +86,19 @@ export class FindAllProductsAction {
         p.updated_at      AS updated_at,
         p.company_id      AS company_id,
         p.cloned_from_company_id AS cloned_from_company_id,
+        -- Última compra RECIBIDA (ingresada al inventario) que incluyó el producto.
+        -- Solo compras RECEIVED (no PENDING) y no borradas. Los purchase_lines se
+        -- registran contra el producto BASE. null si nunca se recibió una compra
+        -- con él (el front cae a created_at).
+        (
+          SELECT MAX(pur.received_at)
+          FROM purchase_lines pl
+          JOIN purchases pur ON pur.id = pl.purchase_id
+          WHERE pl.product_id = p.id
+            AND pur.company_id = p.company_id
+            AND pur.is_deleted = false
+            AND pur.status = 'RECEIVED'
+        ) AS last_purchase_date,
         pk.id             AS packaging__id,
         pk.name           AS packaging__name,
         pk.value          AS packaging__value,
@@ -147,6 +160,7 @@ interface RawProductRow {
   updated_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  last_purchase_date: Date | string | null;
   packaging__id: string | null;
   packaging__name: string | null;
   packaging__value: string | number | null;
@@ -210,6 +224,13 @@ function mapRawToProduct(r: RawProductRow, activeCompanyId: number): Product {
     updated_by: r.updated_by,
     created_at: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
     updated_at: r.updated_at instanceof Date ? r.updated_at : new Date(r.updated_at),
+    last_purchase_date:
+      r.last_purchase_date == null
+        ? null
+        : (r.last_purchase_date instanceof Date
+            ? r.last_purchase_date
+            : new Date(r.last_purchase_date)
+          ).toISOString(),
     packaging:
       r.packaging__id !== null
         ? {
