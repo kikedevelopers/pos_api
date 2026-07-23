@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -13,6 +14,7 @@ import {
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiHeader,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -28,6 +30,8 @@ import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import type { AdjustEmployeeCashResult, SetEmployeeCashBaseResult } from './employees.service';
+import type { CloseCashResult } from '@/modules/pos-data/actions/close-cash.action';
+import { CloseCashDto } from '@/modules/pos-data/dto/close-cash.dto';
 import { AdjustCashDto } from './dto/adjust-cash.dto';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import {
@@ -305,6 +309,44 @@ export class EmployeesController {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
     });
+  }
+
+  @Post(':id/cash-register/close')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'El admin cierra la caja de un empleado (simple o conciliación).',
+    description:
+      'Reutiliza el cierre de caja del POS pero contra la caja del empleado: modo simple ' +
+      '(traslada amount_to_transfer) o conciliación (counted_amount, deja la caja en base, ' +
+      'marca sobrante/faltante). created_by = el admin que ejecuta. Header Idempotency-Key opcional.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: CloseCashDto })
+  @ApiHeader({ name: 'Idempotency-Key', required: false, description: 'UUID v4 opcional.' })
+  @ApiResponse({ status: HttpStatus.OK, description: '{ message, moved_amount, difference, new_balance }' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Empleado no encontrado' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'EMPLOYEE_HAS_NO_CASH_REGISTER u otros errores de negocio del cierre',
+  })
+  async closeCash(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CloseCashDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<CloseCashResult> {
+    return this.employeesService.closeCash(
+      id,
+      companyId,
+      dto,
+      {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      },
+      idempotencyKey ?? null,
+    );
   }
 
   // VER MÁRGENES Y GANANCIAS: permiso por-empleado y sus subpermisos del

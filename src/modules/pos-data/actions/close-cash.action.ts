@@ -156,9 +156,14 @@ export class CloseCashAction {
     companyId: number,
     actor: CloseCashActor,
     idempotencyKey: string | null = null,
+    // Cierre de la caja de OTRO usuario (admin cierra la de un empleado). Por
+    // defecto se cierra la caja del propio actor. `created_by` sigue siendo el
+    // actor (quien ejecuta); solo cambian el register objetivo y su etiqueta.
+    options: { targetUserId?: number; targetLabel?: string } = {},
   ): Promise<CloseCashResult> {
     const reconcile = dto.reconcile === true;
     const target = this.validateAndNarrowDestination(dto, reconcile);
+    const targetUserId = options.targetUserId ?? actor.id;
 
     // Fast-path idempotencia: si el cliente envió `Idempotency-Key` y ya hay
     // un cierre previo con esa key, reconstruimos el resultado a partir de
@@ -185,10 +190,10 @@ export class CloseCashAction {
     // dos veces (write-skew). PG aborta con 40001 si detecta anomalía;
     // reintentamos hasta 2 veces.
     return runSerializableWithRetry<CloseCashResult>(this.dataSource, async (manager) => {
-      const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
+      const register = await getOrCreateCashRegisterForUser(manager, companyId, targetUserId);
       const systemBalanceBig = toBig(register.balance);
       const baseBig = toBig(register.base_amount);
-      const sourceLabel = `Caja de ${actor.fullName}`.trim();
+      const sourceLabel = (options.targetLabel ?? `Caja de ${actor.fullName}`).trim();
 
       const result = reconcile
         ? await this.reconcileMode({

@@ -3,8 +3,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+import { PosDataModule } from '@/modules/pos-data/pos-data.module';
 
 import { AdjustEmployeeCashAction } from './actions/adjust-employee-cash.action';
+import { CloseEmployeeCashAction } from './actions/close-employee-cash.action';
 import { ArchiveEmployeeAction } from './actions/archive-employee.action';
 import { CreateEmployeeAction } from './actions/create-employee.action';
 import { FindAllEmployeesAction } from './actions/find-all-employees.action';
@@ -38,10 +40,18 @@ import { Employee } from './entities/employee.entity';
  *     en el flujo de adjust.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Employee]), CashRegisterModule, FinancialMovementsModule],
+  imports: [
+    TypeOrmModule.forFeature([Employee]),
+    CashRegisterModule,
+    FinancialMovementsModule,
+    // Reutiliza CloseCashAction (cierre de caja) para el cierre de la caja de un
+    // empleado desde el admin, sin duplicar la lógica de dinero.
+    PosDataModule,
+  ],
   controllers: [EmployeesController],
   providers: [
     EmployeesService,
+    CloseEmployeeCashAction,
     FindAllEmployeesAction,
     FindEmployeeByIdAction,
     FindEmployeeByUsernameAction,

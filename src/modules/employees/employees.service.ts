@@ -5,6 +5,12 @@ import {
   type AdjustEmployeeCashActor,
   type AdjustEmployeeCashResult,
 } from './actions/adjust-employee-cash.action';
+import { CloseEmployeeCashAction } from './actions/close-employee-cash.action';
+import type {
+  CloseCashActor,
+  CloseCashResult,
+} from '@/modules/pos-data/actions/close-cash.action';
+import type { CloseCashDto } from '@/modules/pos-data/dto/close-cash.dto';
 import { ArchiveEmployeeAction } from './actions/archive-employee.action';
 import { CreateEmployeeAction, type EmployeeCreator } from './actions/create-employee.action';
 import {
@@ -67,6 +73,7 @@ export class EmployeesService {
     private readonly setEmployeeCashVisibilityAction: SetEmployeeCashVisibilityAction,
     private readonly getEmployeeCashLogsAction: GetEmployeeCashLogsAction,
     private readonly adjustEmployeeCashAction: AdjustEmployeeCashAction,
+    private readonly closeEmployeeCashAction: CloseEmployeeCashAction,
     private readonly archiveEmployeeAction: ArchiveEmployeeAction,
     private readonly restoreEmployeeAction: RestoreEmployeeAction,
   ) {}
@@ -136,6 +143,16 @@ export class EmployeesService {
     actor: AdjustEmployeeCashActor,
   ): Promise<AdjustEmployeeCashResult> {
     return this.adjustEmployeeCashAction.execute(id, companyId, targetBalance, reason, actor);
+  }
+
+  closeCash(
+    id: number,
+    companyId: number,
+    dto: CloseCashDto,
+    actor: CloseCashActor,
+    idempotencyKey: string | null = null,
+  ): Promise<CloseCashResult> {
+    return this.closeEmployeeCashAction.execute(id, companyId, dto, actor, idempotencyKey);
   }
 
   archive(id: number, companyId: number, actorId: number): Promise<Employee> {
