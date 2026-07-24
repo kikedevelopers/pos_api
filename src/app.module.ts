@@ -24,6 +24,7 @@ import { AlertConfigsModule } from './modules/alert-configs/alert-configs.module
 import { AppAlertsModule } from './modules/app-alerts/app-alerts.module';
 import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AgreementsModule } from './modules/agreements/agreements.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { BackupRestoreModule } from './modules/backup-restore/backup-restore.module';
 import { BanksModule } from './modules/banks/banks.module';
@@ -197,6 +198,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // Fase 5 — Cuentas y caja.
     FinancialMovementsModule,
     TreasuryModule,
+    AgreementsModule,
     BanksModule,
     WalletsModule,
     CashRegisterModule,
