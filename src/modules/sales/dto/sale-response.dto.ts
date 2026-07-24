@@ -261,6 +261,17 @@ export class SaleResponseDto {
   customerName!: string;
 
   @ApiPropertyOptional({
+    type: 'integer',
+    nullable: true,
+    example: 42,
+    description:
+      'Id del cliente de la venta (null si es de mostrador). Lo usa el ' +
+      'TicketViewer para resolver el teléfono y habilitar el envío del ticket ' +
+      'por WhatsApp. Paridad PlacePos `getTicketById`.',
+  })
+  customerId!: number | null;
+
+  @ApiPropertyOptional({
     type: 'string',
     nullable: true,
     example: 'Pago en efectivo + transferencia.',
@@ -540,6 +551,7 @@ export function toSaleResponseDto(
     profit: Number(sale.profit),
     margin: Number(sale.margin),
     customerName: sale.customer_name || 'CONSUMIDOR FINAL',
+    customerId: sale.customer_id != null ? Number(sale.customer_id) : null,
     notes: sale.notes ?? null,
     createdBy: sale.created_by,
     synced: true,
