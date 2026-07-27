@@ -83,4 +83,22 @@ export const validationSchema = Joi.object({
   // anti-replay dedicada (más corta: cubre el borrado total de tenant).
   SUPERADMIN_SIGNING_PUBLIC_KEY: Joi.string().allow('').default(''),
   SUPERADMIN_SIGNATURE_MAX_SKEW_MS: Joi.number().integer().min(1000).default(120000),
+
+  // Respaldos de la BD hacia Google Cloud Storage (módulo /backups/*). Sin
+  // bucket el módulo queda deshabilitado (503). Las credenciales admiten JSON
+  // en línea o ruta a archivo; vacías = credenciales por defecto del entorno.
+  GCS_BACKUP_BUCKET: Joi.string().allow('').default(''),
+  GCS_BACKUP_PREFIX: Joi.string().allow('').default('backups'),
+  GCS_CREDENTIALS_JSON: Joi.string().allow('').default(''),
+  GCS_CREDENTIALS_FILE: Joi.string().allow('').default(''),
+  GCS_PROJECT_ID: Joi.string().allow('').default(''),
+  // auto = ADC en producción (identidad de la VM), archivo/JSON en local.
+  GCS_CREDENTIALS_MODE: Joi.string().valid('auto', 'adc', 'file', 'json').default('auto'),
+  // Respaldo automático diario (medianoche, hora Colombia). 'false' lo apaga.
+  BACKUP_CRON_ENABLED: Joi.boolean().default(true),
+  // Ruta del binario pg_dump; vacío = se busca en el PATH del proceso.
+  PG_DUMP_BIN: Joi.string().allow('').default(''),
+  BACKUP_TIMEOUT_MS: Joi.number().integer().min(10000).default(600000),
+  // Retención: nunca puede haber más de este número de respaldos en el bucket.
+  BACKUP_MAX_FILES: Joi.number().integer().min(1).max(365).default(7),
 });

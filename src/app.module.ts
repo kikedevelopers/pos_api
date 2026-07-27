@@ -58,6 +58,7 @@ import { RolesModule } from './modules/roles/roles.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { SubscriptionGuard } from './modules/subscriptions/subscription.guard';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { BackupsModule } from './modules/backups/backups.module';
 import { SuperadminModule } from './modules/superadmin/superadmin.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { TicketSettingsModule } from './modules/ticket-settings/ticket-settings.module';
@@ -252,6 +253,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // listar/ver/ajustar-suscripción/borrar tenants. Importa UsersModule para
     // reutilizar `ListOwnersAction`.
     SuperadminModule,
+    BackupsModule,
     // Restore de backup NATIVO de placepos para el owner autenticado
     // (`POST /backup/restore`). Reutiliza `ImportZipAction` de
     // MigrationImportModule. Protegido por JWT + @Roles('owner') + Subscription.

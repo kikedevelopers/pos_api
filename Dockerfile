@@ -45,7 +45,10 @@ ENV NODE_ENV=production \
 
 # tini = init mínimo para PID 1 (forwarding de señales, reaping de zombies).
 # wget = healthcheck. dumb-init no es necesario porque tini cumple.
-RUN apk add --no-cache wget tini \
+# postgresql18-client = `pg_dump` para el módulo /backups/*. La MAYOR debe ser
+# >= la del servidor (PostgreSQL 18): un cliente más viejo se niega a volcar.
+# Si algún día el servidor sube de major, hay que subir este paquete también.
+RUN apk add --no-cache wget tini postgresql18-client \
     && addgroup -S nodejs -g 1001 \
     && adduser -S nestjs -u 1001 -G nodejs
 
