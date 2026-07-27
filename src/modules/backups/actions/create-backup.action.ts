@@ -50,6 +50,29 @@ const MAX_STDERR = 4000;
 const PG_DUMP_MAGIC = 'PGDMP';
 
 /**
+ * Traduce los errores crípticos de Google a algo accionable. El más habitual al
+ * estrenar una VM: la instancia trae el scope `devstorage.read_only` por
+ * defecto, con el que se puede LISTAR pero no escribir ni borrar.
+ */
+function explainStorageError(message: string): string | null {
+  if (/scope/i.test(message)) {
+    return (
+      'Google rechazó la escritura por los permisos (scopes) de la máquina: con el scope por ' +
+      'defecto solo se pueden leer objetos. Dale a la VM el scope cloud-platform (o ' +
+      'devstorage.read_write) y reiníciala, o configura GCS_CREDENTIALS_MODE=json con la clave ' +
+      'de una service account.'
+    );
+  }
+  if (/permission|forbidden|does not have storage|403/i.test(message)) {
+    return (
+      'Google rechazó la escritura por falta de permisos sobre el bucket: la cuenta de servicio ' +
+      'necesita el rol Storage Object Admin (crear y borrar objetos).'
+    );
+  }
+  return null;
+}
+
+/**
  * Genera un respaldo de la base de datos con `pg_dump` y lo sube a Google Cloud
  * Storage.
  *
@@ -244,11 +267,12 @@ export class CreateBackupAction {
       await this.storage.remove(objectName);
       const message = (e as Error).message;
       this.logger.error(`Respaldo fallido (${objectName}): ${message}`);
+      const storageHint = explainStorageError(message);
       throw new InternalServerErrorException(
         message.includes('ENOENT')
           ? `No se encontró pg_dump (${this.pgDumpBin}). Instálalo en el servidor de la API o ` +
               'define PG_DUMP_BIN con su ruta.'
-          : `No se pudo generar el respaldo: ${message}`,
+          : (storageHint ?? `No se pudo generar el respaldo: ${message}`),
       );
     } finally {
       clearTimeout(timeout);

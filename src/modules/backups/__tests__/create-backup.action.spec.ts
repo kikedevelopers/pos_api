@@ -75,7 +75,7 @@ const existing = (count: number) =>
 
 function buildAction(
   options: {
-    uploadFails?: boolean;
+    uploadFails?: boolean | string;
     existingCount?: number;
     head?: string;
     size?: string;
@@ -89,7 +89,7 @@ function buildAction(
   const writeStream = new Writable({
     write(chunk: Buffer, _enc, cb) {
       if (options.uploadFails) {
-        cb(new Error('GCS caído'));
+        cb(new Error(typeof options.uploadFails === 'string' ? options.uploadFails : 'GCS caído'));
         return;
       }
       written.push(chunk);
@@ -407,6 +407,26 @@ describe('CreateBackupAction', () => {
 
     const [command] = dumpCall();
     expect(command).toBe('pg_dump');
+  });
+
+  it('traduce el error de scopes de Google a algo accionable', async () => {
+    const { action } = buildAction({ uploadFails: 'Provided scope(s) are not authorized' });
+
+    const promise = action.execute();
+    await tick();
+    child.stdout.write(Buffer.from('datos'));
+    await expect(promise).rejects.toThrow(/scope cloud-platform|devstorage\.read_write/);
+  });
+
+  it('traduce el error de permisos sobre el bucket', async () => {
+    const { action } = buildAction({
+      uploadFails: 'user does not have storage.objects.create access',
+    });
+
+    const promise = action.execute();
+    await tick();
+    child.stdout.write(Buffer.from('datos'));
+    await expect(promise).rejects.toThrow(/Storage Object Admin/);
   });
 
   it('avisa claramente cuando pg_dump no está instalado', async () => {
