@@ -16,6 +16,21 @@ export class BackupDto {
 
   @ApiProperty({ description: 'Content-Type del objeto', nullable: true })
   contentType!: string | null;
+
+  @ApiProperty({ description: 'Quién lo generó; null en respaldos antiguos', nullable: true })
+  createdBy!: string | null;
+
+  @ApiProperty({ description: '"manual" o "cron"', nullable: true })
+  trigger!: string | null;
+
+  @ApiProperty({ description: 'Entorno donde se generó (prod/dev)', nullable: true })
+  environment!: string | null;
+
+  @ApiProperty({ description: 'Versión del PostgreSQL volcado', nullable: true })
+  serverVersion!: string | null;
+
+  @ApiProperty({ description: 'Versión de pg_dump que generó el archivo', nullable: true })
+  pgDumpVersion!: string | null;
 }
 
 /** Listado de respaldos + estado de la configuración. */
@@ -37,4 +52,7 @@ export class BackupsListDto {
 export class CreatedBackupDto extends BackupDto {
   @ApiProperty({ description: 'Cuánto tardó el volcado + subida (ms)' })
   durationMs!: number;
+
+  @ApiProperty({ description: 'Respaldos antiguos borrados por retención' })
+  prunedCount!: number;
 }

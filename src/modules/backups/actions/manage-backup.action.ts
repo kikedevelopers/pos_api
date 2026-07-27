@@ -6,13 +6,15 @@ import type { BackupsConfig } from '@/config/backups.config';
 import { GcsStorageService } from '../gcs-storage.service';
 
 /**
- * Nombres de respaldo aceptados: `placepos-YYYYMMDD-HHMMSS.dump`.
+ * Nombres de respaldo aceptados: `[entorno-]placepos-YYYYMMDD-HHMMSS.dump`.
+ * El prefijo de entorno es opcional para poder seguir gestionando los respaldos
+ * anteriores a esa convención.
  *
  * Es una allowlist a propósito, no un saneado: el nombre llega del cliente y se
  * usa para construir la ruta del objeto. Cualquier cosa fuera de este molde
  * (rutas con `/`, `..`, otros prefijos) se rechaza antes de tocar el bucket.
  */
-const BACKUP_NAME_RE = /^placepos-\d{8}-\d{6}\.dump$/;
+const BACKUP_NAME_RE = /^(?:[a-z]{2,10}-)?placepos-\d{8}-\d{6}\.dump$/;
 
 export interface BackupDownloadLink {
   fileName: string;

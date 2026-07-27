@@ -3,6 +3,8 @@ import { pipeline } from 'node:stream/promises';
 
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import type { FileMetadata } from '@google-cloud/storage';
 
 import { dayjs, nowBogota } from '@/common/utils/dayjs';
@@ -20,7 +22,26 @@ export interface CreatedBackup {
   durationMs: number;
   /** Respaldos antiguos borrados para respetar el tope de retención. */
   prunedCount: number;
+  /** Quién lo generó (nombre del admin, o "Automático" si fue el cron). */
+  createdBy: string;
+  /** Entorno donde se generó: `prod` / `dev` / `staging`. */
+  environment: string;
+  /** Versión del servidor del que se volcó (ej. `18.1`). */
+  serverVersion: string | null;
+  /** Versión de la herramienta que lo generó (ej. `18.4`). */
+  pgDumpVersion: string | null;
 }
+
+/** Quién pide el respaldo. Sin autor conocido se registra como automático. */
+export interface BackupActor {
+  /** Nombre del admin que pulsó el botón; vacío = automático. */
+  createdBy?: string;
+  /** `manual` (panel) o `cron` (respaldo programado). */
+  trigger?: 'manual' | 'cron';
+}
+
+/** Etiqueta de autoría cuando nadie firma el respaldo (cron, o body sin autor). */
+export const AUTOMATIC_AUTHOR = 'Automático';
 
 /** Cuántos bytes de stderr de `pg_dump` se conservan para el mensaje de error. */
 const MAX_STDERR = 4000;
@@ -46,12 +67,32 @@ export class CreateBackupAction {
   private readonly db: DatabaseConfig;
   private readonly backups: BackupsConfig;
 
+  /** `pg_dump --version` no cambia mientras viva el proceso: se cachea. */
+  private pgDumpVersionCache: string | null = null;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly storage: GcsStorageService,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {
     this.db = this.configService.getOrThrow<DatabaseConfig>('database');
     this.backups = this.configService.getOrThrow<BackupsConfig>('backups');
+  }
+
+  /**
+   * Etiqueta corta del entorno para el nombre del archivo. Distingue de un
+   * vistazo un respaldo de producción de uno hecho desde una máquina de
+   * desarrollo, que conviven en el mismo bucket.
+   */
+  private get environmentTag(): string {
+    if (this.backups.nodeEnv === 'production') {
+      return 'prod';
+    }
+    if (this.backups.nodeEnv === 'staging') {
+      return 'staging';
+    }
+    return 'dev';
   }
 
   /** Binario a ejecutar: el configurado, o `pg_dump` del PATH. */
@@ -60,17 +101,62 @@ export class CreateBackupAction {
   }
 
   /**
-   * `backups/placepos-20260727-115405.dump`: fecha y hora de COLOMBIA en 24h
-   * (las 13:54:05 son `135405`, no `015405`). El formato es ordenable
-   * alfabéticamente, así que el nombre basta para saber cuál es el más viejo.
+   * `backups/prod-placepos-20260727-115405.dump`: entorno + fecha y hora de
+   * COLOMBIA en 24h (las 13:54:05 son `135405`, no `015405`). El formato es
+   * ordenable alfabéticamente dentro de cada entorno, así que el nombre basta
+   * para saber cuál es el más viejo.
    */
   private buildObjectName(now: dayjs.Dayjs = nowBogota()): string {
     const stamp = now.format('YYYYMMDD-HHmmss');
-    return `${this.backups.prefix}/placepos-${stamp}.dump`;
+    return `${this.backups.prefix}/${this.environmentTag}-placepos-${stamp}.dump`;
   }
 
-  async execute(): Promise<CreatedBackup> {
+  /**
+   * Versión del servidor del que se vuelca. Se guarda en los metadatos porque
+   * restaurar exige herramientas de versión >= la del origen: sin este dato hay
+   * que adivinarlo el día que haga falta recuperar.
+   */
+  private async getServerVersion(): Promise<string | null> {
+    try {
+      const rows = await this.dataSource.query<{ server_version: string }[]>('SHOW server_version');
+      // Postgres devuelve cosas como "18.1 (Debian 18.1-1.pgdg13+2)".
+      return rows[0]?.server_version?.split(' ')[0] ?? null;
+    } catch (e) {
+      this.logger.warn(`No se pudo leer la versión del servidor: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Versión del `pg_dump` que genera el archivo. */
+  private async getPgDumpVersion(): Promise<string | null> {
+    if (this.pgDumpVersionCache) {
+      return this.pgDumpVersionCache;
+    }
+    try {
+      const output = await new Promise<string>((resolve, reject) => {
+        const probe = spawn(this.pgDumpBin, ['--version']);
+        let out = '';
+        probe.stdout.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
+        probe.once('error', reject);
+        probe.once('close', () => resolve(out));
+      });
+      // "pg_dump (PostgreSQL) 18.4" → "18.4"
+      const version = /(\d+(?:\.\d+)*)\s*$/.exec(output.trim())?.[1] ?? null;
+      this.pgDumpVersionCache = version;
+      return version;
+    } catch {
+      return null;
+    }
+  }
+
+  async execute(actor: BackupActor = {}): Promise<CreatedBackup> {
     const startedAt = Date.now();
+    const createdBy = actor.createdBy?.trim() || AUTOMATIC_AUTHOR;
+    const trigger = actor.trigger ?? (actor.createdBy?.trim() ? 'manual' : 'cron');
+    const [serverVersion, pgDumpVersion] = await Promise.all([
+      this.getServerVersion(),
+      this.getPgDumpVersion(),
+    ]);
     const objectName = this.buildObjectName();
     const file = this.storage.getBucket().file(objectName);
 
@@ -131,7 +217,22 @@ export class CreateBackupAction {
     try {
       await pipeline(
         child.stdout,
-        file.createWriteStream({ contentType: 'application/octet-stream', resumable: false }),
+        file.createWriteStream({
+          contentType: 'application/octet-stream',
+          resumable: false,
+          // Autoría en los METADATOS del objeto: evita una tabla y un flujo de
+          // BD solo para saber quién generó cada respaldo.
+          metadata: {
+            metadata: {
+              createdBy,
+              trigger,
+              environment: this.environmentTag,
+              // Para restaurar sin sorpresas: pg_restore debe ser >= serverVersion.
+              ...(serverVersion ? { serverVersion } : {}),
+              ...(pgDumpVersion ? { pgDumpVersion } : {}),
+            },
+          },
+        }),
       );
       const code = await exited;
       if (code !== 0) {
@@ -171,6 +272,10 @@ export class CreateBackupAction {
       contentType: metadata.contentType ?? null,
       durationMs,
       prunedCount: pruned,
+      createdBy,
+      environment: this.environmentTag,
+      serverVersion,
+      pgDumpVersion,
     };
   }
 

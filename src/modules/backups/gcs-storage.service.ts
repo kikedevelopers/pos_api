@@ -13,6 +13,21 @@ export interface StoredBackup {
   sizeBytes: number;
   createdAt: string;
   contentType: string | null;
+  /** Autor del respaldo, leído de los metadatos del objeto. */
+  createdBy: string | null;
+  /** `manual` o `cron`; null en respaldos anteriores a esta información. */
+  trigger: string | null;
+  /** Entorno donde se generó (`prod`/`dev`), del metadato o del nombre. */
+  environment: string | null;
+  /** Versión del servidor volcado y de la herramienta que lo generó. */
+  serverVersion: string | null;
+  pgDumpVersion: string | null;
+}
+
+/** `prod-placepos-…` → `prod`. Respaldos antiguos (sin prefijo) → null. */
+function environmentFromName(fileName: string): string | null {
+  const match = /^([a-z]+)-placepos-/.exec(fileName);
+  return match ? match[1] : null;
 }
 
 /**
@@ -130,13 +145,22 @@ export class GcsStorageService {
 
     return files
       .filter((file) => !file.name.endsWith('/'))
-      .map((file) => ({
-        name: file.name,
-        fileName: file.name.split('/').pop() ?? file.name,
-        sizeBytes: Number(file.metadata.size ?? 0),
-        createdAt: String(file.metadata.timeCreated ?? ''),
-        contentType: file.metadata.contentType ?? null,
-      }))
+      .map((file) => {
+        const fileName = file.name.split('/').pop() ?? file.name;
+        const custom = file.metadata.metadata ?? {};
+        return {
+          name: file.name,
+          fileName,
+          sizeBytes: Number(file.metadata.size ?? 0),
+          createdAt: String(file.metadata.timeCreated ?? ''),
+          contentType: file.metadata.contentType ?? null,
+          createdBy: (custom.createdBy as string | undefined) ?? null,
+          trigger: (custom.trigger as string | undefined) ?? null,
+          environment: (custom.environment as string | undefined) ?? environmentFromName(fileName),
+          serverVersion: (custom.serverVersion as string | undefined) ?? null,
+          pgDumpVersion: (custom.pgDumpVersion as string | undefined) ?? null,
+        };
+      })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 

@@ -3,7 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ManageBackupAction } from '../actions/manage-backup.action';
 
 const BACKUPS = { bucket: 'my-bucket', prefix: 'backups' };
-const VALID = 'placepos-20260727-135405.dump';
+const VALID = 'prod-placepos-20260727-135405.dump';
 
 function buildAction(options: { exists?: boolean } = {}) {
   const file = {
@@ -39,10 +39,19 @@ describe('ManageBackupAction · borrar', () => {
     expect(file.delete).not.toHaveBeenCalled();
   });
 
+  it('acepta también los respaldos antiguos, sin prefijo de entorno', async () => {
+    const { action, bucketFile } = buildAction();
+
+    await action.remove('placepos-20260727-135405.dump');
+
+    expect(bucketFile).toHaveBeenCalledWith('backups/placepos-20260727-135405.dump');
+  });
+
   it.each([
     ['../../etc/passwd', 'traversal'],
-    ['backups/placepos-20260727-135405.dump', 'ruta con carpeta'],
+    ['backups/prod-placepos-20260727-135405.dump', 'ruta con carpeta'],
     ['otro-archivo.dump', 'prefijo distinto'],
+    ['prod-otracosa-20260727-135405.dump', 'entorno válido pero nombre ajeno'],
     ['placepos-2026-07-27.dump', 'formato de fecha inválido'],
     ['placepos-20260727-135405.sql', 'extensión distinta'],
     ['placepos-20260727-1354.dump', 'hora incompleta'],

@@ -3,6 +3,16 @@ import { PassThrough, Writable } from 'node:stream';
 
 import { InternalServerErrorException } from '@nestjs/common';
 
+/** (binario, argumentos, opciones) con los que se invocó `spawn`. */
+type SpawnCall = [string, string[], { env: Record<string, string> }];
+
+/** Opciones con las que el action abre el stream de subida a GCS. */
+type WriteStreamOptions = {
+  metadata?: { metadata?: Record<string, string> };
+  resumable?: boolean;
+  contentType?: string;
+};
+
 const spawnMock = jest.fn();
 jest.mock('node:child_process', () => ({
   spawn: (...args: unknown[]) => spawnMock(...args) as unknown,
@@ -45,13 +55,19 @@ const DB = {
   password: 's3cret',
   database: 'pos_db',
 };
-const BACKUPS = { bucket: 'my-bucket', prefix: 'backups', timeoutMs: 600000, maxBackups: 7 };
+const BACKUPS = {
+  bucket: 'my-bucket',
+  prefix: 'backups',
+  timeoutMs: 600000,
+  maxBackups: 7,
+  nodeEnv: 'development',
+};
 
 /** Respaldos ya existentes en el bucket, del más nuevo al más viejo. */
 const existing = (count: number) =>
   Array.from({ length: count }, (_, i) => ({
-    name: `backups/placepos-2026072${7 - i}-120000.dump`,
-    fileName: `placepos-2026072${7 - i}-120000.dump`,
+    name: `backups/dev-placepos-2026072${7 - i}-120000.dump`,
+    fileName: `dev-placepos-2026072${7 - i}-120000.dump`,
     sizeBytes: 100,
     createdAt: `2026-07-2${7 - i}T12:00:00.000Z`,
     contentType: 'application/octet-stream',
@@ -64,6 +80,7 @@ function buildAction(
     head?: string;
     size?: string;
     pgDumpBin?: string;
+    nodeEnv?: string;
   } = {},
 ) {
   const written: Buffer[] = [];
@@ -81,7 +98,7 @@ function buildAction(
   });
 
   const file = {
-    createWriteStream: jest.fn(() => writeStream),
+    createWriteStream: jest.fn<Writable, [WriteStreamOptions]>(() => writeStream),
     getMetadata: jest.fn(() =>
       Promise.resolve([
         {
@@ -106,11 +123,26 @@ function buildAction(
 
   const configService = {
     getOrThrow: (key: string) =>
-      key === 'database' ? DB : { ...BACKUPS, pgDumpBin: options.pgDumpBin ?? '' },
+      key === 'database'
+        ? DB
+        : {
+            ...BACKUPS,
+            pgDumpBin: options.pgDumpBin ?? '',
+            nodeEnv: options.nodeEnv ?? 'development',
+          },
   };
 
-  const action = new CreateBackupAction(configService as never, storage as never);
-  return { action, file, storage, written, removed };
+  // `SHOW server_version` para los metadatos.
+  const dataSource = {
+    query: jest.fn(() => Promise.resolve([{ server_version: '18.1 (Debian 18.1-1.pgdg13+2)' }])),
+  };
+
+  const action = new CreateBackupAction(
+    configService as never,
+    storage as never,
+    dataSource as never,
+  );
+  return { action, file, storage, written, removed, dataSource };
 }
 
 /** Invoca el nombrado privado con un instante concreto (en UTC). */
@@ -127,8 +159,30 @@ describe('CreateBackupAction', () => {
   beforeEach(() => {
     spawnMock.mockReset();
     child = new FakeChild();
-    spawnMock.mockImplementation(() => child);
+    // El action lanza dos procesos: uno para `--version` (metadatos) y el del
+    // volcado. El primero responde solo; el segundo lo controla cada test.
+    spawnMock.mockImplementation((_bin: string, args: string[]): FakeChild => {
+      if (args.includes('--version')) {
+        const probe = new FakeChild();
+        setImmediate(() => {
+          probe.stdout.write('pg_dump (PostgreSQL) 18.4\n');
+          probe.finish(0);
+        });
+        return probe;
+      }
+      return child;
+    });
   });
+
+  /** Argumentos del spawn del VOLCADO (ignora la sonda de `--version`). */
+  const dumpCall = (): SpawnCall => {
+    const calls = spawnMock.mock.calls as unknown as SpawnCall[];
+    const call = calls.find((c) => !c[1].includes('--version'));
+    if (!call) {
+      throw new Error('no se lanzó el volcado');
+    }
+    return call;
+  };
 
   it('sube el volcado y devuelve los datos del respaldo', async () => {
     const { action, written } = buildAction();
@@ -153,7 +207,7 @@ describe('CreateBackupAction', () => {
     child.finish(0);
     const result = await promise;
 
-    expect(result.fileName).toMatch(/^placepos-\d{8}-\d{6}\.dump$/);
+    expect(result.fileName).toMatch(/^dev-placepos-\d{8}-\d{6}\.dump$/);
     expect(result.name).toBe(`backups/${result.fileName}`);
   });
 
@@ -162,7 +216,7 @@ describe('CreateBackupAction', () => {
     // 18:54:05 UTC = 13:54:05 en Bogotá (UTC-5) → "135405", no "015405".
     const name = buildName(action, '2026-07-27T18:54:05.000Z');
 
-    expect(name).toBe('backups/placepos-20260727-135405.dump');
+    expect(name).toBe('backups/dev-placepos-20260727-135405.dump');
   });
 
   it('la noche de Bogotá sigue siendo el día anterior aunque en UTC ya cambió', () => {
@@ -170,7 +224,7 @@ describe('CreateBackupAction', () => {
     // 04:30 UTC del 28 = 23:30 del 27 en Bogotá.
     const name = buildName(action, '2026-07-28T04:30:00.000Z');
 
-    expect(name).toBe('backups/placepos-20260727-233000.dump');
+    expect(name).toBe('backups/dev-placepos-20260727-233000.dump');
   });
 
   it('rellena con ceros las horas de un dígito', () => {
@@ -178,7 +232,7 @@ describe('CreateBackupAction', () => {
     // 13:05:07 UTC = 08:05:07 en Bogotá.
     const name = buildName(action, '2026-01-05T13:05:07.000Z');
 
-    expect(name).toBe('backups/placepos-20260105-080507.dump');
+    expect(name).toBe('backups/dev-placepos-20260105-080507.dump');
   });
 
   it('invoca pg_dump en formato custom contra la BD configurada', async () => {
@@ -189,11 +243,7 @@ describe('CreateBackupAction', () => {
     child.finish(0);
     await promise;
 
-    const [command, args, opts] = spawnMock.mock.calls[0] as [
-      string,
-      string[],
-      { env: Record<string, string> },
-    ];
+    const [command, args, opts] = dumpCall();
     expect(command).toBe('pg_dump');
     expect(args).toEqual(expect.arrayContaining(['--format=custom', '--dbname', 'pos_db']));
     expect(args).toEqual(expect.arrayContaining(['--host', 'db', '--username', 'pos_user']));
@@ -224,7 +274,7 @@ describe('CreateBackupAction', () => {
     await expect(promise).rejects.toBeInstanceOf(InternalServerErrorException);
 
     expect(storage.remove).toHaveBeenCalledTimes(1);
-    expect(removed[0]).toMatch(/^backups\/placepos-/);
+    expect(removed[0]).toMatch(/^backups\/dev-placepos-/);
   });
 
   it('incluye el mensaje real de pg_dump en el error', async () => {
@@ -236,6 +286,105 @@ describe('CreateBackupAction', () => {
     await expect(promise).rejects.toThrow(/autenticación password falló/);
   });
 
+  it('en producción el nombre empieza por prod-', async () => {
+    const { action } = buildAction({ nodeEnv: 'production' });
+
+    const promise = action.execute();
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    expect(result.fileName).toMatch(/^prod-placepos-/);
+    expect(result.environment).toBe('prod');
+  });
+
+  it('en staging el nombre empieza por staging-', async () => {
+    const { action } = buildAction({ nodeEnv: 'staging' });
+
+    const promise = action.execute();
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    expect(result.fileName).toMatch(/^staging-placepos-/);
+  });
+
+  it('guarda el autor en los metadatos del objeto', async () => {
+    const { action, file } = buildAction();
+
+    const promise = action.execute({ createdBy: 'Kike Dev', trigger: 'manual' });
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    const options = file.createWriteStream.mock.calls[0][0];
+    expect(options.metadata?.metadata).toMatchObject({
+      createdBy: 'Kike Dev',
+      trigger: 'manual',
+      environment: 'dev',
+    });
+    expect(result.createdBy).toBe('Kike Dev');
+  });
+
+  it('sin autor el respaldo queda como Automático (cron)', async () => {
+    const { action, file } = buildAction();
+
+    const promise = action.execute({ trigger: 'cron' });
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    const options = file.createWriteStream.mock.calls[0][0];
+    expect(options.metadata?.metadata).toMatchObject({
+      createdBy: 'Automático',
+      trigger: 'cron',
+      environment: 'dev',
+    });
+    expect(result.createdBy).toBe('Automático');
+  });
+
+  it('un autor en blanco cuenta como automático', async () => {
+    const { action } = buildAction();
+
+    const promise = action.execute({ createdBy: '   ' });
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    expect(result.createdBy).toBe('Automático');
+  });
+
+  it('guarda en los metadatos la versión del servidor y la de pg_dump', async () => {
+    const { action, file, dataSource } = buildAction();
+
+    const promise = action.execute({ createdBy: 'Kike Dev' });
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    expect(dataSource.query).toHaveBeenCalledWith('SHOW server_version');
+    const options = file.createWriteStream.mock.calls[0][0];
+    expect(options.metadata?.metadata).toMatchObject({
+      serverVersion: '18.1',
+      pgDumpVersion: '18.4',
+    });
+    expect(result.serverVersion).toBe('18.1');
+    expect(result.pgDumpVersion).toBe('18.4');
+  });
+
+  it('si no se puede leer la versión del servidor, el respaldo igual se hace', async () => {
+    const { action, dataSource } = buildAction();
+    dataSource.query.mockRejectedValueOnce(new Error('sin conexión'));
+
+    const promise = action.execute();
+    await tick();
+    child.finish(0);
+    const result = await promise;
+
+    expect(result.serverVersion).toBeNull();
+    expect(result.sizeBytes).toBe(2048);
+  });
+
   it('usa el binario de PG_DUMP_BIN cuando está configurado', async () => {
     const { action } = buildAction({ pgDumpBin: '/opt/homebrew/opt/libpq/bin/pg_dump' });
 
@@ -244,7 +393,7 @@ describe('CreateBackupAction', () => {
     child.finish(0);
     await promise;
 
-    const [command] = spawnMock.mock.calls[0] as [string];
+    const [command] = dumpCall();
     expect(command).toBe('/opt/homebrew/opt/libpq/bin/pg_dump');
   });
 
@@ -256,7 +405,7 @@ describe('CreateBackupAction', () => {
     child.finish(0);
     await promise;
 
-    const [command] = spawnMock.mock.calls[0] as [string];
+    const [command] = dumpCall();
     expect(command).toBe('pg_dump');
   });
 
@@ -290,7 +439,7 @@ describe('CreateBackupAction', () => {
     const result = await promise;
 
     // Se poda hasta dejar 6, para que con el nuevo queden exactamente 7.
-    expect(removed).toEqual(['backups/placepos-20260721-120000.dump']);
+    expect(removed).toEqual(['backups/dev-placepos-20260721-120000.dump']);
     expect(result.prunedCount).toBe(1);
     expect(storage.list).toHaveBeenCalled();
   });
@@ -329,8 +478,9 @@ describe('CreateBackupAction', () => {
     await promise;
 
     const listOrder = (storage.list as jest.Mock).mock.invocationCallOrder[0];
-    const spawnOrder = spawnMock.mock.invocationCallOrder[0];
-    expect(listOrder).toBeLessThan(spawnOrder);
+    const calls = spawnMock.mock.calls as unknown as SpawnCall[];
+    const dumpIndex = calls.findIndex((c) => !c[1].includes('--version'));
+    expect(listOrder).toBeLessThan(spawnMock.mock.invocationCallOrder[dumpIndex]);
   });
 
   it('verifica que el objeto quedó en el bucket', async () => {

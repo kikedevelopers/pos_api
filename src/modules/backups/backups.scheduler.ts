@@ -61,7 +61,8 @@ export class BackupsScheduler {
 
     this.running = true;
     try {
-      const result = await this.createBackupAction.execute();
+      // Sin autor: el respaldo queda registrado como "Automático".
+      const result = await this.createBackupAction.execute({ trigger: 'cron' });
       this.logger.log(
         `Respaldo ${trigger} completado: ${result.fileName} ` +
           `(${result.sizeBytes} bytes, ${result.durationMs} ms, ${result.prunedCount} podado(s)).`,

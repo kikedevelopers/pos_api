@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -18,6 +19,7 @@ import { SuperadminSignatureGuard } from '@/modules/superadmin/guards/superadmin
 import { CreateBackupAction } from './actions/create-backup.action';
 import { ManageBackupAction, type BackupDownloadLink } from './actions/manage-backup.action';
 import { BackupDto, BackupsListDto, CreatedBackupDto } from './dto/backup.dto';
+import { CreateBackupDto } from './dto/create-backup.dto';
 import { GcsStorageService } from './gcs-storage.service';
 
 /**
@@ -78,15 +80,20 @@ export class BackupsController {
     summary: 'Generar un respaldo de la base de datos y subirlo al bucket.',
     description:
       'Ejecuta `pg_dump --format=custom` y lo sube EN STREAMING a GCS (no toca disco). ' +
+      'El nombre lleva el entorno delante (prod-/dev-) y el autor queda en los metadatos. ' +
       'Responde cuando el archivo ya está en el bucket. 503 si el módulo no está configurado; ' +
       '500 con el error real de pg_dump si el volcado falla (el objeto a medias se elimina).',
   })
   @ApiResponse({ status: HttpStatus.CREATED, type: CreatedBackupDto })
   @ApiResponse({ status: HttpStatus.SERVICE_UNAVAILABLE, description: 'Respaldos no configurados' })
-  async create(@Req() req: Request): Promise<CreatedBackupDto> {
+  async create(@Body() dto: CreateBackupDto, @Req() req: Request): Promise<CreatedBackupDto> {
     const keyId = req.header('x-kdevs-key-id') ?? 'unknown';
-    this.logger.log({ event: 'backups.create.request', keyId });
-    return this.createBackupAction.execute();
+    this.logger.log({ event: 'backups.create.request', keyId, createdBy: dto.createdBy });
+    const created = await this.createBackupAction.execute({
+      createdBy: dto.createdBy,
+      trigger: 'manual',
+    });
+    return { ...created, trigger: 'manual' };
   }
 
   // --------------------------------------------------------------------------
