@@ -71,6 +71,23 @@ services:
       ADMIN_SIGNATURE_MAX_SKEW_MS: ${ADMIN_SIGNATURE_MAX_SKEW_MS:-300000}
       SUPERADMIN_SIGNING_PUBLIC_KEY: ${SUPERADMIN_SIGNING_PUBLIC_KEY:-}
       SUPERADMIN_SIGNATURE_MAX_SKEW_MS: ${SUPERADMIN_SIGNATURE_MAX_SKEW_MS:-120000}
+      # Respaldos de la BD → Google Cloud Storage. Sin GCS_BACKUP_BUCKET el
+      # módulo queda deshabilitado (el panel lo avisa). En esta VM NO hacen
+      # falta credenciales: con GCS_CREDENTIALS_MODE=auto y NODE_ENV=production
+      # el SDK usa la identidad de la propia máquina (ADC). Las variables
+      # GCS_CREDENTIALS_* solo se rellenan si la VM no tiene service account.
+      GCS_BACKUP_BUCKET: ${GCS_BACKUP_BUCKET:-}
+      GCS_BACKUP_PREFIX: ${GCS_BACKUP_PREFIX:-backups}
+      GCS_CREDENTIALS_MODE: ${GCS_CREDENTIALS_MODE:-auto}
+      GCS_CREDENTIALS_JSON: ${GCS_CREDENTIALS_JSON:-}
+      GCS_CREDENTIALS_FILE: ${GCS_CREDENTIALS_FILE:-}
+      GCS_PROJECT_ID: ${GCS_PROJECT_ID:-}
+      # Retención, cron diario (medianoche Colombia) y tope del volcado.
+      BACKUP_MAX_FILES: ${BACKUP_MAX_FILES:-7}
+      BACKUP_CRON_ENABLED: ${BACKUP_CRON_ENABLED:-true}
+      BACKUP_TIMEOUT_MS: ${BACKUP_TIMEOUT_MS:-600000}
+      # Vacío = pg_dump del PATH (la imagen ya trae postgresql18-client).
+      PG_DUMP_BIN: ${PG_DUMP_BIN:-}
     # Sin `ports:` — el acceso externo solo va por nginx (80/443).
     expose:
       - '${PORT:-3010}'
