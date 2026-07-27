@@ -22,10 +22,12 @@ import { UpdateCompanyDto } from '@/modules/companies/dto/update-company.dto';
 import { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
 import { UpdateMeDto } from '@/modules/users/dto/update-me.dto';
 
+import { ClearTenantInventoryAction } from './actions/clear-tenant-inventory.action';
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
+import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
@@ -48,6 +50,12 @@ import {
   toSuperadminSubscriptionResponseDto,
 } from './dto/superadmin-subscription-response.dto';
 import { SuperadminTenantDetailDto } from './dto/superadmin-tenant-detail.dto';
+import {
+  SuperadminClearInventoryResponseDto,
+  SuperadminTenantInventoryDto,
+  toSuperadminClearInventoryResponseDto,
+  toSuperadminTenantInventoryDto,
+} from './dto/superadmin-tenant-inventory.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
@@ -85,6 +93,8 @@ export class SuperadminController {
     private readonly updateTenantCompanyAction: UpdateTenantCompanyAction,
     private readonly exportTenantAction: ExportTenantAction,
     private readonly importTenantAction: ImportTenantAction,
+    private readonly getTenantInventoryAction: GetTenantInventoryAction,
+    private readonly clearTenantInventoryAction: ClearTenantInventoryAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -315,6 +325,56 @@ export class SuperadminController {
       rowCount: dto.meta?.rowCount,
     });
     return this.importTenantAction.execute(companyId, dto as unknown as TenantBackup);
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /superadmin/tenants/:companyId/inventory
+  // --------------------------------------------------------------------------
+
+  @Get('tenants/:companyId/inventory')
+  @ApiOperation({
+    summary:
+      'Resumen del inventario del tenant (cuántos productos tiene y qué pasaría al vaciarlo).',
+    description:
+      'Solo lectura. Devuelve productos activos, bases/presentaciones, archivados, valor a costo y ' +
+      'el reparto entre los que se BORRARÍAN y los que se ARCHIVARÍAN si se vacía el inventario.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminTenantInventoryDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  async getTenantInventory(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ): Promise<SuperadminTenantInventoryDto> {
+    return toSuperadminTenantInventoryDto(await this.getTenantInventoryAction.execute(companyId));
+  }
+
+  // --------------------------------------------------------------------------
+  // DELETE /superadmin/tenants/:companyId/inventory
+  // --------------------------------------------------------------------------
+
+  @Delete('tenants/:companyId/inventory')
+  @ApiOperation({
+    summary: 'Vaciar el inventario del tenant (irreversible en su parte destructiva).',
+    description:
+      'Los productos SIN historial de negocio se borran; los que tienen ventas, compras, notas o ' +
+      'movimientos —o pertenecen a un árbol que los tiene— se archivan para no romper el histórico. ' +
+      'En ambos casos el inventario del cliente queda en cero. Categorías y empaques no se tocan.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminClearInventoryResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  async clearTenantInventory(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Req() req: Request,
+  ): Promise<SuperadminClearInventoryResponseDto> {
+    const keyId = req.header('x-kdevs-key-id') ?? 'unknown';
+    this.logger.warn({
+      event: 'superadmin.tenant.inventory.clear',
+      companyId,
+      keyId,
+      message: 'Vaciado de inventario solicitado (borra productos sin historial).',
+    });
+    return toSuperadminClearInventoryResponseDto(
+      await this.clearTenantInventoryAction.execute(companyId),
+    );
   }
 
   // --------------------------------------------------------------------------
