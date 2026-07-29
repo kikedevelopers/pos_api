@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { DataSource, In } from 'typeorm';
+import { DataSource } from 'typeorm';
 
-import { calculateMargin, calculateProfit, toBig } from '@/common/utils/precision';
+import { toBig } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 import {
   propagateParentCostToChildren,
@@ -10,7 +10,6 @@ import {
 
 import type { UpdateProductDto } from '../dto/update-product.dto';
 import { Product } from '../entities/product.entity';
-import { ProductPrice } from '../entities/product-price.entity';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 import {
   assertCategoryBelongsToCompany,
@@ -18,6 +17,7 @@ import {
   assertParentBelongsToCompany,
   findProductInCompany,
 } from '../internal/product-lookups';
+import { syncProductPrices } from '../internal/sync-product-prices';
 
 import type { ProductCreator } from './create-product.action';
 
@@ -29,6 +29,9 @@ import type { ProductCreator } from './create-product.action';
  *     * precios con `id` presente en el array → UPDATE.
  *     * precios con `id` ausente → INSERT (precio nuevo).
  *     * precios existentes cuyo `id` NO está en el array → DELETE.
+ *     * si NINGÚN precio entrante trae `id` (cliente legacy), se emparejan
+ *       por posición contra los existentes → UPDATE in-place en vez de
+ *       DELETE+INSERT. Ver `internal/sync-product-prices.ts`.
  *   - `profit` y `margin` SIEMPRE recalculados con Big.js — el cliente
  *     puede enviar hints, se ignoran.
  *   - `cost` afecta a TODOS los precios (recalculan profit/margin). Si el
@@ -139,60 +142,15 @@ export class UpdateProductAction {
 
       // Sincronizar prices si el cliente los envió.
       if (dto.prices !== undefined) {
-        const effectiveCost = dto.cost !== undefined ? dto.cost : existing.cost;
-
-        const incomingIds = dto.prices
-          .map((p) => p.id)
-          .filter((id): id is number => typeof id === 'number');
-
-        const existingIds = (existing.prices ?? []).map((p) => Number(p.id));
-        const toDelete = existingIds.filter((existingId) => !incomingIds.includes(existingId));
-
-        if (toDelete.length > 0) {
-          await manager.delete(ProductPrice, {
-            id: In(toDelete.map((d) => String(d))),
-            product_id: existing.id,
-            company_id: String(companyId),
-          });
-        }
-
-        for (const priceInput of dto.prices) {
-          const profit = calculateProfit(priceInput.sale_price, effectiveCost);
-          const margin = calculateMargin(priceInput.sale_price, effectiveCost);
-
-          if (priceInput.id !== undefined) {
-            // UPDATE — filtra por id + product_id + company_id (defensa
-            // en profundidad anti cross-tenant).
-            await manager.update(
-              ProductPrice,
-              {
-                id: String(priceInput.id),
-                product_id: existing.id,
-                company_id: String(companyId),
-              },
-              {
-                name: priceInput.name ?? '',
-                sale_price: priceInput.sale_price,
-                profit,
-                margin,
-                iva_percentage: priceInput.iva_percentage ?? 0,
-              },
-            );
-          } else {
-            // INSERT — nuevo nivel de precio.
-            await manager.insert(ProductPrice, {
-              company_id: String(companyId),
-              product_id: existing.id,
-              name: priceInput.name ?? '',
-              sale_price: priceInput.sale_price,
-              profit,
-              margin,
-              iva_percentage: priceInput.iva_percentage ?? 0,
-              created_by: actor.fullName,
-              created_by_id: String(actor.id),
-            });
-          }
-        }
+        await syncProductPrices({
+          manager,
+          companyId,
+          productId: existing.id,
+          cost: dto.cost !== undefined ? dto.cost : existing.cost,
+          incoming: dto.prices,
+          existing: existing.prices ?? [],
+          actor,
+        });
       }
 
       // Si cambia el costo de un producto BASE, propagar a sus presentaciones
