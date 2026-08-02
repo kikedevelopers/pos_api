@@ -18,6 +18,7 @@ import {
 
 import { ProductType } from '@/modules/products/entities/product.entity';
 
+import { ComboComponentInputDto } from './combo-component.dto';
 import { ProductPriceInputDto } from './product-price.dto';
 
 /**
@@ -192,4 +193,16 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductPriceInputDto)
   prices!: ProductPriceInputDto[];
+
+  @ApiPropertyOptional({
+    type: [ComboComponentInputDto],
+    description:
+      'Receta del COMBO. Solo se lee cuando product_type === COMBO; para el resto de tipos ' +
+      'se ignora por completo. El servidor deriva el `cost` del producto desde esta receta.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ComboComponentInputDto)
+  components?: ComboComponentInputDto[];
 }

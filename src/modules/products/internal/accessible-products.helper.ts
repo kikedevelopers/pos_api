@@ -9,7 +9,11 @@ import type { EntityManager } from 'typeorm';
  *       `p.company_id = A`  (A comparte TODO su catálogo con B), O
  *   (3) existe un share PRODUCT-LEVEL `(A → B, product_id = p.id)`, O
  *   (4) `p` es HIJO (`parent_id`) de un producto compartido accesible — así una
- *       presentación/combo hijo de un producto compartido también se ve/vende.
+ *       presentación de un producto compartido también se ve/vende, O
+ *   (5) `p` es COMPONENTE de la receta de un COMBO compartido accesible — sin
+ *       esta regla, compartir SOLO un combo (share product-level) dejaría sus
+ *       bases fuera del set accesible y el cobro reventaría al intentar
+ *       descontarles stock.
  *
  * El share es solo lectura/venta: el producto sigue siendo del principal. Este
  * helper solo decide VISIBILIDAD; el descuento de stock (que pega en el dueño
@@ -35,7 +39,7 @@ export function accessibleProductsPredicate(
   startParamIndex: number,
 ): { sql: string; params: string[] } {
   const cid = String(activeCompanyId);
-  // Reservamos 5 placeholders consecutivos para las 5 apariciones de cid.
+  // Reservamos 7 placeholders consecutivos para las 7 apariciones de cid.
   const p = (offset: number): string => `$${startParamIndex + offset}`;
 
   const sql = `(
@@ -71,9 +75,31 @@ export function accessibleProductsPredicate(
           )
       )
     )
+    OR EXISTS (
+      SELECT 1
+      FROM combo_components cc
+      JOIN products combo
+        ON combo.id = cc.combo_product_id
+       AND combo.company_id = cc.company_id
+      WHERE cc.component_product_id = ${alias}.id
+        AND cc.company_id = ${alias}.company_id
+        AND (
+          EXISTS (
+            SELECT 1 FROM inventory_shares s3
+            WHERE s3.target_company_id = ${p(5)}
+              AND s3.product_id IS NULL
+              AND s3.source_company_id = combo.company_id
+          )
+          OR EXISTS (
+            SELECT 1 FROM inventory_shares s3
+            WHERE s3.target_company_id = ${p(6)}
+              AND s3.product_id = combo.id
+          )
+        )
+    )
   )`;
 
-  return { sql, params: [cid, cid, cid, cid, cid] };
+  return { sql, params: [cid, cid, cid, cid, cid, cid, cid] };
 }
 
 /**
@@ -88,6 +114,8 @@ export interface AccessibleProductRef {
   packagingId: number | null;
   name: string;
   isShared: boolean;
+  /** Tipo del producto — el motor de inventario expande los COMBO en su receta. */
+  productType: string;
 }
 
 /**
@@ -116,9 +144,10 @@ export async function resolveAccessibleProducts(
       parent_id: string | null;
       packaging_id: string | null;
       name: string;
+      product_type: string;
     }>
   >(
-    `SELECT p.id, p.company_id, p.parent_id, p.packaging_id, p.name
+    `SELECT p.id, p.company_id, p.parent_id, p.packaging_id, p.name, p.product_type
      FROM products p
      WHERE p.id = ANY($1::bigint[]) AND ${pred.sql}`,
     [uniqueIds, ...pred.params],
@@ -133,6 +162,7 @@ export async function resolveAccessibleProducts(
       packagingId: row.packaging_id !== null ? Number(row.packaging_id) : null,
       name: row.name,
       isShared: ownerCompanyId !== activeCompanyId,
+      productType: row.product_type,
     });
   }
   return map;

@@ -36,11 +36,13 @@ export class CloneProductsDto {
 }
 
 /**
- * Reporte de un producto NO clonado por colisión en la sucursal.
+ * Reporte de un producto NO clonado. `name`/`sku`/`barcode` = colisión con un
+ * producto activo de la sucursal; `combo` = es un COMBO y su receta apunta a
+ * productos del principal (ver `CloneSkipReason`).
  */
 export class CloneSkippedDto {
   name!: string;
-  reason!: 'name' | 'sku' | 'barcode';
+  reason!: 'name' | 'sku' | 'barcode' | 'combo';
 }
 
 /**

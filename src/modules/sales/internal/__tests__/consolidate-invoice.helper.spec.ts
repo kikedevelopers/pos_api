@@ -29,6 +29,8 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
     profit?: number;
     margin?: number;
     packaging_value: number | null;
+    /** FIX #3: opcional para no tocar los casos existentes (legacy = null). */
+    combo_recipe?: Array<{ component_product_id: number; quantity: number }> | null;
   }
   interface SeedNote {
     id: number;
@@ -48,6 +50,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
         quantity: l.quantity,
         total: l.total,
         packaging_value: l.packaging_value,
+        combo_recipe: l.combo_recipe ?? null,
       })),
     );
 
@@ -84,6 +87,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
               profit: l.profit ?? 0,
               margin: l.margin ?? 0,
               packaging_value: l.packaging_value,
+              combo_recipe: l.combo_recipe ?? null,
             })),
           );
         }
@@ -283,5 +287,187 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
     expect(stripped.total).toBe(10);
     // Garantía de contrato HTTP: el JSON serializado NO contiene la llave.
     expect(JSON.stringify(stripped)).not.toContain('packaging_value');
+  });
+  /**
+   * FIX #3 — Mismo threading para la receta congelada del combo. Si se pierde
+   * en cualquier tramo de la consolidación, la NC por edición y la anulación
+   * caen a la receta VIGENTE y corrompen el stock en silencio.
+   */
+  describe('threading de combo_recipe (FIX #3)', () => {
+    const RECIPE = [
+      { component_product_id: 1, quantity: 25 },
+      { component_product_id: 2, quantity: 30 },
+    ];
+
+    it('mapInvoiceLine cuelga la receta congelada de la línea original', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 9,
+            description: 'COMBO MIX',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 3,
+            total: 6,
+            packaging_value: null,
+            combo_recipe: RECIPE,
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      expect(result!.lines[0].combo_recipe).toEqual(RECIPE);
+    });
+
+    it('una línea que no vende un combo la expone null', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'A',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 1,
+            total: 2,
+            packaging_value: 10,
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      expect(result!.lines[0].combo_recipe).toBeNull();
+    });
+
+    it('una NC parcial NO altera la receta de la línea viva', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 9,
+            description: 'COMBO MIX',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 5,
+            total: 10,
+            packaging_value: null,
+            combo_recipe: RECIPE,
+          },
+        ],
+        notes: [
+          {
+            id: 50,
+            note_type: NoteType.CREDIT,
+            lines: [
+              {
+                product_id: 9,
+                description: 'COMBO MIX',
+                unit_cost: 1,
+                unit_price: 2,
+                quantity: 2,
+                total: 4,
+                packaging_value: null,
+                combo_recipe: RECIPE,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      expect(result!.lines[0].quantity).toBe(3);
+      expect(result!.lines[0].combo_recipe).toEqual(RECIPE);
+    });
+
+    it('una ND crea la línea nueva heredando la receta de la nota', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'A',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 1,
+            total: 2,
+            packaging_value: 10,
+          },
+        ],
+        notes: [
+          {
+            id: 60,
+            note_type: NoteType.DEBIT,
+            lines: [
+              {
+                product_id: 9,
+                description: 'COMBO MIX',
+                unit_cost: 1,
+                unit_price: 2,
+                quantity: 4,
+                total: 8,
+                packaging_value: null,
+                combo_recipe: RECIPE,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      const combo = result!.lines.find((l) => l.item_id === 9);
+      expect(combo?.combo_recipe).toEqual(RECIPE);
+    });
+
+    it('dos líneas del MISMO combo se fusionan conservando la receta', async () => {
+      const line = {
+        product_id: 9,
+        description: 'COMBO MIX',
+        unit_cost: 1,
+        unit_price: 2,
+        quantity: 2,
+        total: 4,
+        packaging_value: null,
+        combo_recipe: RECIPE,
+      };
+      const manager = buildManager({ invoiceLines: [line, { ...line }] });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      expect(result!.lines).toHaveLength(1);
+      expect(result!.lines[0].quantity).toBe(4);
+      expect(result!.lines[0].combo_recipe).toEqual(RECIPE);
+    });
+
+    it('la receta NUNCA sale por HTTP (contrato de respuesta intacto)', () => {
+      const invoice = {
+        id: 1,
+        ticketType: 'SALE' as ConsolidatedInvoice['ticketType'],
+        ticketNumber: 'T-1',
+        saleNumber: 'S-1',
+        total: 10,
+        cost: 5,
+        profit: 5,
+        margin: 50,
+        customerName: 'CONSUMIDOR FINAL',
+        customerId: null,
+        lines: [
+          {
+            item_id: 9,
+            name: 'COMBO MIX',
+            cost: 1,
+            price: 2,
+            quantity: 5,
+            total: 10,
+            profit: 5,
+            margin: 50,
+            price_mode: 'fixed' as const,
+            price_position: null,
+            packaging_value: null,
+            combo_recipe: RECIPE,
+          },
+        ],
+      };
+
+      const stripped = stripConsolidatedInternalFields(invoice);
+      expect(stripped.lines[0]).not.toHaveProperty('combo_recipe');
+      expect(stripped.lines[0]).toMatchObject({ item_id: 9, quantity: 5 });
+      expect(JSON.stringify(stripped)).not.toContain('combo_recipe');
+    });
   });
 });

@@ -5,13 +5,14 @@ import { In, type EntityManager } from 'typeorm';
 import { APP_SETTING_KEYS, AppSetting } from '@/modules/app-settings/entities/app-setting.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 
+import { ComboComponent } from '../entities/combo-component.entity';
 import {
   InventoryMovement,
   type InventoryMovementDirection,
   type InventoryMovementReason,
   type InventoryMovementReferenceType,
 } from '../entities/inventory-movement.entity';
-import { Product } from '../entities/product.entity';
+import { Product, ProductType } from '../entities/product.entity';
 
 import { resolveAccessibleProducts } from './accessible-products.helper';
 
@@ -31,7 +32,30 @@ export interface InventoryLineItem {
    * packaging del producto y usa su `value` (o `1` si no tiene packaging).
    */
   packaging_value?: number | null;
+  /**
+   * FIX #3 — Receta CONGELADA del combo, si esta línea vende uno. Mismo molde
+   * que `packaging_value`: si llega, manda sobre `combo_components`; si es
+   * `null`/ausente (líneas legacy) se lee la receta vigente.
+   *
+   * Sin este override, editar la receta entre la venta y su anulación rompe la
+   * simetría DEDUCT↔RETURN: quitar un componente pierde su stock para siempre y
+   * subir una cantidad devuelve más de lo que se descontó.
+   */
+  combo_recipe?: ComboRecipeSnapshot | null;
 }
+
+/** Una fila de la receta congelada: qué componente y cuánto, en unidad mínima. */
+export interface ComboRecipeSnapshotLine {
+  component_product_id: number;
+  quantity: number;
+}
+
+/**
+ * Explosión congelada de un combo, tal cual se aplicó al comprometer las
+ * unidades. Se persiste en la línea de venta / de nota y viaja hasta el
+ * `RETURN` para que devuelva EXACTAMENTE lo que el `DEDUCT` descontó.
+ */
+export type ComboRecipeSnapshot = ComboRecipeSnapshotLine[];
 
 /**
  * `DEDUCT` resta del stock (al confirmar una venta). `RETURN` suma al stock
@@ -78,6 +102,8 @@ interface ProductRef {
   name: string;
   /** Company DUEÑA real del producto (donde vive su fila/stock). */
   owner_company_id: number;
+  /** Un COMBO se expande en las líneas de su receta antes de calcular deltas. */
+  product_type: ProductType;
 }
 
 /**
@@ -124,6 +150,7 @@ async function loadProductRefs(
         packaging_id: ref.packagingId,
         name: ref.name,
         owner_company_id: ref.ownerCompanyId,
+        product_type: (ref.productType as ProductType) ?? ProductType.SIMPLE,
       });
     }
     return map;
@@ -131,7 +158,7 @@ async function loadProductRefs(
 
   const rows = await manager.find(Product, {
     where: { id: In(itemIds.map(String)), company_id: String(companyId) },
-    select: { id: true, parent_id: true, packaging_id: true, name: true },
+    select: { id: true, parent_id: true, packaging_id: true, name: true, product_type: true },
   });
   for (const row of rows) {
     map.set(Number(row.id), {
@@ -140,9 +167,109 @@ async function loadProductRefs(
       packaging_id: row.packaging_id !== null ? Number(row.packaging_id) : null,
       name: row.name,
       owner_company_id: companyId,
+      product_type: row.product_type ?? ProductType.SIMPLE,
     });
   }
   return map;
+}
+
+/**
+ * Explota las líneas cuyo producto es un COMBO en las líneas de sus componentes.
+ * Espejo de `placepos/src/main/database/utils/inventoryUtils.ts`.
+ *
+ * La receta (`combo_components.quantity`) está en la unidad MÍNIMA del base, la
+ * misma en la que vive `products.stock`. Por eso la línea expandida viaja con
+ * `packaging_value: 1`: la cantidad ya está convertida y el motor no debe
+ * volver a multiplicarla por el empaque del componente.
+ *
+ *   qty_componente = qty_combo × cantidad_receta
+ *
+ * El COMBO en sí NUNCA genera movimiento de inventario: no tiene stock propio,
+ * desaparece de las líneas y en su lugar quedan sus bases. Un combo sin receta
+ * (solo posible manipulando la BD: el alta exige ≥1 componente) simplemente no
+ * descuenta nada, en vez de abortar la venta.
+ *
+ * La receta se lee en la company DUEÑA del combo (en cross-company, el
+ * principal). La expansión es de UN nivel: un combo no puede ser componente de
+ * otro combo (lo valida el alta/edición del combo).
+ */
+async function expandComboLines(
+  manager: EntityManager,
+  lines: InventoryLineItem[],
+  productMap: Map<number, ProductRef>,
+): Promise<InventoryLineItem[]> {
+  const comboLines = lines.filter(
+    (l) => productMap.get(l.item_id)?.product_type === ProductType.COMBO,
+  );
+  if (comboLines.length === 0) {
+    return lines;
+  }
+
+  // FIX #3: solo se consulta `combo_components` para los combos SIN receta
+  // congelada. Una venta reciente trae su snapshot y no toca la tabla.
+  const staleRefs = [
+    ...new Map(
+      comboLines
+        .filter((l) => !hasFrozenRecipe(l))
+        .map((l) => productMap.get(l.item_id))
+        .filter((ref): ref is ProductRef => ref !== undefined)
+        .map((ref) => [ref.id, ref] as const),
+    ).values(),
+  ];
+
+  const recipeByCombo = new Map<number, ComboRecipeSnapshot>();
+  if (staleRefs.length > 0) {
+    const rows = await manager.find(ComboComponent, {
+      where: staleRefs.map((ref) => ({
+        company_id: String(ref.owner_company_id),
+        combo_product_id: String(ref.id),
+      })),
+      select: { combo_product_id: true, component_product_id: true, quantity: true },
+    });
+    for (const row of rows) {
+      const key = Number(row.combo_product_id);
+      const list = recipeByCombo.get(key) ?? [];
+      list.push({
+        component_product_id: Number(row.component_product_id),
+        quantity: Number(row.quantity),
+      });
+      recipeByCombo.set(key, list);
+    }
+  }
+
+  const expanded: InventoryLineItem[] = [];
+  for (const line of lines) {
+    if (productMap.get(line.item_id)?.product_type !== ProductType.COMBO) {
+      expanded.push(line);
+      continue;
+    }
+    // La receta congelada de la línea manda; sin ella, la vigente en la BD.
+    const recipe = hasFrozenRecipe(line)
+      ? (line.combo_recipe as ComboRecipeSnapshot)
+      : (recipeByCombo.get(line.item_id) ?? []);
+    for (const component of recipe) {
+      expanded.push({
+        item_id: Number(component.component_product_id),
+        quantity: Number(
+          new Big(line.quantity)
+            .times(Number(component.quantity))
+            .round(4, Big.roundHalfUp)
+            .toString(),
+        ),
+        packaging_value: 1,
+      });
+    }
+  }
+  return expanded;
+}
+
+/**
+ * Una receta congelada VACÍA (`[]`) no es lo mismo que ausente: significa "al
+ * vender, este combo no tenía componentes", y debe devolver cero — no
+ * reexpandirse contra la receta que exista hoy.
+ */
+function hasFrozenRecipe(line: InventoryLineItem): boolean {
+  return Array.isArray(line.combo_recipe);
 }
 
 /**
@@ -223,8 +350,10 @@ function computeStockDeltas(
     }
     const product = productMap.get(line.item_id);
     if (!product) {
-      throw new Error(
-        `El producto #${line.item_id} no existe en la company — no se puede ajustar inventario.`,
+      // 422 y no un Error pelado (500): pasa en cobro/anulación, con la
+      // transacción a medias, y el cliente necesita un mensaje accionable.
+      throw new UnprocessableEntityException(
+        `El producto #${line.item_id} no está disponible en este negocio — no se puede ajustar inventario.`,
       );
     }
     const targetId = product.parent_id ?? product.id;
@@ -332,6 +461,22 @@ export async function adjustInventory(
   const itemIds = [...new Set(lines.map((l) => l.item_id))];
   const productMap = await loadProductRefs(manager, companyId, itemIds, crossCompanyAccess);
 
+  // Los COMBO no tienen stock propio: se reemplazan por las líneas de sus
+  // componentes ANTES de calcular deltas. Si no hay combos en la operación,
+  // `effectiveLines === lines` y el camino queda idéntico al de siempre.
+  const effectiveLines = await expandComboLines(manager, lines, productMap);
+  if (effectiveLines.length === 0) {
+    return;
+  }
+  const newIds = [
+    ...new Set(effectiveLines.map((l) => l.item_id).filter((id) => !productMap.has(id))),
+  ];
+  for (const [id, ref] of (
+    await loadProductRefs(manager, companyId, newIds, crossCompanyAccess)
+  ).entries()) {
+    productMap.set(id, ref);
+  }
+
   // Si la operación solo trae hijos, sus padres no están en productMap todavía.
   await loadParentRefs(manager, companyId, productMap, crossCompanyAccess);
 
@@ -349,7 +494,7 @@ export async function adjustInventory(
     crossCompanyAccess,
   );
 
-  const stockDeltas = computeStockDeltas(lines, productMap, packagingMap);
+  const stockDeltas = computeStockDeltas(effectiveLines, productMap, packagingMap);
   if (stockDeltas.size === 0) {
     return;
   }

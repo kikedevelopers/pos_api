@@ -27,11 +27,14 @@ export enum ProductCostHistoryEvent {
  *   - PURCHASE: recepción/edición/archivo de una compra.
  *   - PARENT: propagación del costo del producto padre a sus presentaciones.
  *   - MANUAL: edición directa del costo del propio producto desde el formulario.
+ *   - COMBO: recálculo del costo de un COMBO porque cambió el costo de un
+ *     producto que forma parte de su receta.
  */
 export enum ProductCostHistoryDerivedFrom {
   PURCHASE = 'PURCHASE',
   PARENT = 'PARENT',
   MANUAL = 'MANUAL',
+  COMBO = 'COMBO',
 }
 
 /**

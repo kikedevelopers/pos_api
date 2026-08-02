@@ -104,6 +104,8 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       owner_company_id: 42,
       // SUCURSALES (CLONAR): fixture sin cloned_from_company_id → no es copia.
       is_clone: false,
+      // COMBOS: solo un producto COMBO trae receta; un SIMPLE va siempre null.
+      components: null,
     });
   });
 

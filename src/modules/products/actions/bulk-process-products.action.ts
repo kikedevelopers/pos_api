@@ -7,13 +7,17 @@ import {
   resolveCategoryIdByName,
 } from '@/modules/categories/internal/category-lookups';
 import { PG_UNIQUE_VIOLATION } from '@/modules/categories/internal/constraint-errors';
-import { propagateParentCostToChildren } from '@/modules/purchases/internal/recalculate-product-costs.helper';
+import {
+  propagateComponentCostToCombos,
+  propagateParentCostToChildren,
+} from '@/modules/purchases/internal/recalculate-product-costs.helper';
 
 import type { BulkItemDto, BulkProductsResponseDto } from '../dto/bulk-products.dto';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product, ProductType } from '../entities/product.entity';
 import { ProductPrice } from '../entities/product-price.entity';
 import { adjustInventory } from '../internal/adjust-inventory.helper';
+import { assertNotUsedInActiveCombos } from '../internal/combo-components.helper';
 import { toMinimalStock } from '../internal/compute-stock-display';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 
@@ -140,14 +144,20 @@ export class BulkProcessProductsAction {
       // update (fila que solo actualiza otros campos) se PRESERVA el existente
       // para no pisarlo a 0. En create sin costo → 0.
       const cost =
-        item.cost != null && Number.isFinite(item.cost)
-          ? item.cost
-          : existing
-            ? existing.cost
-            : 0;
+        item.cost != null && Number.isFinite(item.cost) ? item.cost : existing ? existing.cost : 0;
       const validPrices = buildBulkPrices(item.prices, cost);
 
       const ctx: ItemContext = { trimmedName, cost, sku, bar, validPrices };
+
+      // La importación masiva NO sabe expresar una receta: un COMBO se queda
+      // fuera del lote (se reporta como conflicto) en vez de ser degradado a
+      // producto simple y perder su receta y su costo derivado.
+      if (existing?.product_type === ProductType.COMBO) {
+        return {
+          kind: 'conflict',
+          reason: 'Es un combo: se edita desde su formulario, no por importación.',
+        };
+      }
 
       if (existing) {
         return this.applyUpdate(manager, companyId, actor, existing, item, ctx);
@@ -182,12 +192,12 @@ export class BulkProcessProductsAction {
     const resolvedCost = isPresentation ? (h.derivedCost as number) : ctx.cost;
     const resolvedStock = isPresentation ? 0 : toMinimalStock(item.stock ?? 0, h.packagingValue);
     const resolvedCategoryId = isPresentation
-      ? h.inheritedCategoryId ?? null
+      ? (h.inheritedCategoryId ?? null)
       : await resolveCategoryIdByName(manager, item.category, companyId);
     const resolvedParentId = isPresentation ? (h.parentId as string) : null;
     const resolvedPackagingId = isPresentation
       ? (h.packagingIdFromColumn as string)
-      : h.packagingIdFromColumn ?? null;
+      : (h.packagingIdFromColumn ?? null);
     // Precios: para presentación, profit/margin contra el costo DERIVADO.
     const pricesToInsert = isPresentation
       ? ctx.validPrices.map((p) => ({
@@ -212,7 +222,9 @@ export class BulkProcessProductsAction {
           packaging_id: resolvedPackagingId,
           cost: resolvedCost,
           stock: resolvedStock,
-          product_type: item.product_type ?? ProductType.SIMPLE,
+          // El Excel no lleva receta: la importación solo crea productos
+          // simples y presentaciones, nunca combos.
+          product_type: ProductType.SIMPLE,
           show_in_pos: item.show_in_pos === undefined ? true : item.show_in_pos,
           is_purchasable: item.is_purchasable === undefined ? false : item.is_purchasable,
           is_archived: false,
@@ -252,7 +264,9 @@ export class BulkProcessProductsAction {
     ctx: ItemContext,
   ): Promise<BulkOutcome> {
     // Estado resuelto de los flags/tipo (aplicando la semántica de preservación).
-    const resolvedType = item.product_type ?? existing.product_type;
+    // Un COMBO nunca llega aquí (se filtra antes); el import solo maneja
+    // productos simples y presentaciones.
+    const resolvedType = ProductType.SIMPLE;
     const resolvedShowInPos =
       item.show_in_pos === undefined ? existing.show_in_pos : item.show_in_pos;
     const resolvedIsPurchasable =
@@ -262,6 +276,19 @@ export class BulkProcessProductsAction {
     // y los campos derivados. Ver resolveHierarchy.
     const h = await resolveHierarchy(manager, item, existing, companyId, actor);
     const isPresentation = h.kind === 'presentation';
+
+    // El formulario ya impide convertir en presentación un producto que
+    // alimenta la receta de un combo; el import debe respetar la misma regla.
+    // Si no, la línea expandida (que viaja en unidad mínima) se aplicaría sobre
+    // el padre NUEVO: descuento del producto equivocado y en otra magnitud.
+    if (isPresentation && existing.parent_id === null) {
+      await assertNotUsedInActiveCombos(
+        manager,
+        companyId,
+        [Number(existing.id)],
+        'convertir en presentación',
+      );
+    }
 
     // parent_id: presentación → base.id; base → null; preservar → el actual.
     const resolvedParentId = isPresentation
@@ -290,7 +317,7 @@ export class BulkProcessProductsAction {
     // (solo si trae categoría) o preservar.
     const itemHasCategory = !(item.category === undefined || item.category.trim() === '');
     const resolvedCategoryId = isPresentation
-      ? h.inheritedCategoryId ?? null
+      ? (h.inheritedCategoryId ?? null)
       : itemHasCategory
         ? await resolveCategoryIdByName(manager, item.category, companyId)
         : existing.category_id;
@@ -408,6 +435,15 @@ export class BulkProcessProductsAction {
         companyId,
         parentId: Number(existing.id),
         parentCost: resolvedCost,
+        actor,
+      });
+      // …y a los combos que llevan este producto en su receta. El import es
+      // justo el camino por el que se actualizan cientos de costos de golpe:
+      // sin esto el combo se queda con el costo (y el margen) viejos.
+      await propagateComponentCostToCombos({
+        manager,
+        companyId,
+        componentId: Number(existing.id),
         actor,
       });
     }
@@ -739,7 +775,10 @@ async function resolvePackagingIdByName(
     );
     return created.id;
   } catch (error) {
-    if (error instanceof QueryFailedError && (error as { code?: string }).code === PG_UNIQUE_VIOLATION) {
+    if (
+      error instanceof QueryFailedError &&
+      (error as { code?: string }).code === PG_UNIQUE_VIOLATION
+    ) {
       const winner = await find();
       if (winner) {
         return winner;
@@ -784,7 +823,12 @@ async function findBaseByName(
     .andWhere('p.parent_id IS NULL')
     .andWhere(`${normalizeNameSql('p.name')} = ${normalizeNameSql(':name')}`, { name: trimmed })
     .limit(1)
-    .getRawOne<{ id: string; cost: string; category_id: string | null; pkg_value: string | null }>();
+    .getRawOne<{
+      id: string;
+      cost: string;
+      category_id: string | null;
+      pkg_value: string | null;
+    }>();
   if (!row) {
     return null;
   }
@@ -849,9 +893,7 @@ async function resolveHierarchy(
 
   const base = await findBaseByName(manager, item.base_name as string, companyId);
   if (!base) {
-    throw new BulkItemError(
-      `Producto base "${(item.base_name as string).trim()}" no encontrado.`,
-    );
+    throw new BulkItemError(`Producto base "${(item.base_name as string).trim()}" no encontrado.`);
   }
   const packagingId =
     packagingIdFromColumn ?? (existing && existing.parent_id ? existing.packaging_id : null);

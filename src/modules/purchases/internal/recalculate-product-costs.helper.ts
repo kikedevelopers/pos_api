@@ -6,6 +6,10 @@ import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product } from '@/modules/products/entities/product.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
 import {
+  findCombosUsingComponents,
+  recomputeComboCost,
+} from '@/modules/products/internal/combo-components.helper';
+import {
   ProductCostHistory,
   ProductCostHistoryDerivedFrom,
   ProductCostHistoryEvent,
@@ -432,6 +436,72 @@ async function propagateToChildren(args: PropagateChildrenArgs): Promise<void> {
  * `parentCost` es el costo FINAL del padre (en su unidad de empaque);
  * parentCostMin = parentCost / parent.pkg.value. Multi-tenant.
  */
+/**
+ * Propaga el cambio de costo de un producto BASE a los COMBOS que lo llevan en
+ * su receta. El costo del combo es DERIVADO (Σ de los aportes de sus
+ * componentes), así que cada vez que cambia el costo de un componente hay que
+ * recalcularlo y refrescar profit/margin de sus precios — misma maquinaria que
+ * la propagación padre→presentaciones (`applyCostChange`), con
+ * derived_from COMBO. No-op si el producto no participa en ningún combo activo
+ * o si el costo derivado no cambia. Espejo de placepos.
+ */
+export async function propagateComponentCostToCombos(args: {
+  manager: EntityManager;
+  companyId: number;
+  /** Uno o varios componentes. En lote = UNA sola consulta para todos. */
+  componentId: number | number[];
+  actor: RecalcActor;
+  eventType?: ProductCostHistoryEvent;
+  purchaseId?: number | null;
+}): Promise<void> {
+  const { manager, companyId, actor } = args;
+  const ids = Array.isArray(args.componentId) ? args.componentId : [args.componentId];
+  if (ids.length === 0) {
+    return;
+  }
+
+  // UNA sola consulta para todo el lote. Recibir una compra de 200 líneas no
+  // puede costar 200 SELECT en un negocio que no tiene ni un combo.
+  const usage = await findCombosUsingComponents(manager, companyId, ids);
+  if (usage.size === 0) {
+    return;
+  }
+
+  // Dedupe: si la compra tocó dos componentes del MISMO combo, se recalcula una
+  // vez (recomputeComboCost ya lee la receta completa). Recalcularlo dos veces
+  // dejaría una fila intermedia espuria en product_cost_history. Orden
+  // ascendente por id para lockear siempre igual y no provocar deadlocks.
+  const comboIds = [
+    ...new Set(
+      Array.from(usage.values())
+        .flat()
+        .map((combo) => combo.id),
+    ),
+  ].sort((a, b) => a - b);
+
+  for (const comboId of comboIds) {
+    const costAfter = await recomputeComboCost(manager, companyId, comboId);
+    if (costAfter === null) {
+      continue;
+    }
+    const lockedCombo = await lockProduct(manager, companyId, comboId);
+    if (!lockedCombo) {
+      continue;
+    }
+    await applyCostChange({
+      manager,
+      companyId,
+      product: lockedCombo,
+      costBefore: toBig(lockedCombo.cost),
+      costAfter: toBig(costAfter),
+      derivedFrom: ProductCostHistoryDerivedFrom.COMBO,
+      eventType: args.eventType ?? ProductCostHistoryEvent.EDIT,
+      purchaseId: args.purchaseId ?? null,
+      actor,
+    });
+  }
+}
+
 export async function propagateParentCostToChildren(args: {
   manager: EntityManager;
   companyId: number;
@@ -594,6 +664,18 @@ export async function recalculateProductCosts(
     });
   }
 
+  // Y a los COMBOS que llevan alguno de estos productos en su receta. FUERA del
+  // bucle: una sola consulta para toda la compra y cada combo recalculado una
+  // única vez aunque la compra toque varios de sus componentes.
+  await propagateComponentCostToCombos({
+    manager,
+    companyId: options.companyId,
+    componentId: [...linesByProduct.keys()],
+    actor: options.actor,
+    eventType: options.eventType,
+    purchaseId: options.purchaseId,
+  });
+
   return { skipped };
 }
 
@@ -680,6 +762,15 @@ export async function recalcCostFromLastActivePurchase(
     purchaseId: currentPurchaseId,
     actor,
     skipped,
+  });
+
+  await propagateComponentCostToCombos({
+    manager,
+    companyId,
+    componentId: productId,
+    actor,
+    eventType,
+    purchaseId: currentPurchaseId,
   });
 }
 

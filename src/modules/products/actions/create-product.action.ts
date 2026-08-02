@@ -10,9 +10,15 @@ import { Product, ProductType } from '../entities/product.entity';
 import { ProductPrice } from '../entities/product-price.entity';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 import {
+  comboCostFromComponents,
+  resolveComboComponents,
+  syncComboComponents,
+} from '../internal/combo-components.helper';
+import {
   assertCategoryBelongsToCompany,
   assertPackagingBelongsToCompany,
   assertParentBelongsToCompany,
+  assertParentIsNotCombo,
 } from '../internal/product-lookups';
 
 /**
@@ -49,18 +55,29 @@ export class CreateProductAction {
     companyId: number,
     createdBy: ProductCreator,
   ): Promise<Product> {
+    const isCombo = dto.product_type === ProductType.COMBO;
+
     return this.dataSource.transaction<Product>(async (manager) => {
       // Anti cross-tenant: parent, packaging y category deben ser de la
       // misma company.
       await assertParentBelongsToCompany(manager, dto.parent_id ?? null, companyId);
       await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
+      await assertParentIsNotCombo(manager, dto.parent_id ?? null, companyId);
+
+      // Un COMBO se arma con N productos base: su costo lo deriva SIEMPRE el
+      // servidor de la receta, nunca el `cost` que teclee el cliente. Además
+      // vive en la raíz, sin empaque ni stock propios, y no es comprable.
+      const comboComponents = isCombo
+        ? await resolveComboComponents(manager, companyId, null, dto.components ?? [])
+        : null;
+      const resolvedCost = comboComponents ? comboCostFromComponents(comboComponents) : dto.cost;
 
       // Presentaciones de peso/monto variable: si llega `packaging_value` sin
       // `packaging_id`, find-or-create de un empaque auto con ese valor (en la
       // misma company y transacción). Espejo PlacePos.
-      let packagingId = dto.packaging_id ? String(dto.packaging_id) : null;
-      if (!packagingId && dto.packaging_value && dto.packaging_value > 0) {
+      let packagingId = isCombo || !dto.packaging_id ? null : String(dto.packaging_id);
+      if (!isCombo && !packagingId && dto.packaging_value && dto.packaging_value > 0) {
         packagingId = await resolveAutoPackagingId(manager, dto.packaging_value, companyId, {
           id: createdBy.id,
           fullName: createdBy.fullName,
@@ -77,16 +94,16 @@ export class CreateProductAction {
         name: trimmedName,
         description: trimmedDescription,
         product_type: dto.product_type ?? ProductType.SIMPLE,
-        parent_id: dto.parent_id ? String(dto.parent_id) : null,
+        parent_id: isCombo || !dto.parent_id ? null : String(dto.parent_id),
         sku_code: trimmedSku,
         bar_code: trimmedBarcode,
         packaging_id: packagingId,
         category_id: dto.category_id ? String(dto.category_id) : null,
-        cost: dto.cost,
-        stock: dto.stock,
+        cost: resolvedCost,
+        stock: isCombo ? 0 : dto.stock,
         image: dto.image ?? null,
         show_in_pos: dto.show_in_pos !== false,
-        is_purchasable: dto.is_purchasable === true,
+        is_purchasable: isCombo ? false : dto.is_purchasable === true,
         is_archived: false,
         // PlacePos genera `hash` localmente. pos_api lo persiste passthrough.
         hash: dto.hash ?? null,
@@ -102,9 +119,13 @@ export class CreateProductAction {
         throw error;
       }
 
+      if (comboComponents) {
+        await syncComboComponents(manager, companyId, Number(saved.id), comboComponents);
+      }
+
       // Insertar prices. Cada uno copia `company_id` (denormalizado) y
       // recalcula profit/margin con Big.js — fuente de verdad servidor.
-      const priceRows = dto.prices.map((p) => buildPriceRow(p, saved, dto.cost, createdBy));
+      const priceRows = dto.prices.map((p) => buildPriceRow(p, saved, resolvedCost, createdBy));
       await manager.insert(ProductPrice, priceRows);
 
       // Re-fetch con relations para devolver el product completo.

@@ -13,6 +13,7 @@ import { Company } from '@/modules/companies/entities/company.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product } from '@/modules/products/entities/product.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
+import type { ComboRecipeSnapshot } from '@/modules/products/internal/adjust-inventory.helper';
 
 import { SaleInvoice } from './sale-invoice.entity';
 
@@ -219,6 +220,18 @@ export class SaleInvoiceLine {
     transformer: NumericTransformer,
   })
   packaging_value!: number | null;
+
+  /**
+   * FIX #3 — Receta del COMBO CONGELADA al comprometer las unidades, en la
+   * misma unidad mínima que `combo_components.quantity`. Hermana de
+   * `packaging_value`: el motor de inventario la usa como override; si es
+   * `null` (línea legacy, o línea que no vende un combo) cae a la receta
+   * vigente. Garantiza que el `RETURN` de una anulación / NC devuelva
+   * EXACTAMENTE los componentes y cantidades que el `DEDUCT` descontó, aunque
+   * la receta se haya editado entre medias.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  combo_recipe!: ComboRecipeSnapshot | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

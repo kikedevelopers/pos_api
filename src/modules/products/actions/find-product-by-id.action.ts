@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
-import { Product } from '@/modules/products/entities/product.entity';
+import { Product, ProductType } from '@/modules/products/entities/product.entity';
+import {
+  loadComboComponentsByCombo,
+  type ComboComponentView,
+} from '@/modules/products/internal/combo-components.helper';
 
 /**
  * Lookup individual con relations. Endpoint `GET /inventory/:id`.
@@ -24,7 +28,7 @@ export class FindProductByIdAction {
   ) {}
 
   async execute(id: number, companyId: number): Promise<Product | null> {
-    return this.repo.findOne({
+    const product = await this.repo.findOne({
       where: { id: String(id), company_id: String(companyId) },
       relations: { prices: true, packaging: true, category: true },
       // Orden explícito: sin él Postgres puede devolver los niveles de precio
@@ -34,5 +38,19 @@ export class FindProductByIdAction {
       // entre niveles.
       order: { prices: { id: 'ASC' } },
     });
+
+    // Un COMBO viaja con su receta: de ella salen el costo mostrado y el stock
+    // derivado. Para el resto de productos no hay consulta extra.
+    if (product?.product_type === ProductType.COMBO) {
+      const byCombo = await loadComboComponentsByCombo(this.repo.manager, companyId, [id]);
+      (product as Product & ProductWithComponents).components = byCombo.get(id) ?? [];
+    }
+
+    return product;
   }
+}
+
+/** POJO extendido con la receta del combo, que consume `toProductResponseDto`. */
+interface ProductWithComponents {
+  components?: ComboComponentView[] | null;
 }

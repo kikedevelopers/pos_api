@@ -27,7 +27,11 @@ import {
   MovementType,
 } from '@/modules/financial-movements/entities/financial-movement.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
-import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
+import {
+  adjustInventory,
+  type ComboRecipeSnapshot,
+} from '@/modules/products/internal/adjust-inventory.helper';
+import { resolveComboRecipes } from '@/modules/products/internal/resolve-combo-recipe.helper';
 import { resolvePackagingValues } from '@/modules/products/internal/resolve-packaging-value.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
@@ -84,6 +88,13 @@ interface PlacePosLineDifference {
    * producto vigente (helper) en el emisor de la ND.
    */
   packaging_value: number | null;
+  /**
+   * FIX #3: receta del combo CONGELADA, hermana de `packaging_value` y con el
+   * mismo reparto: `removed`/`reduced` la copian de la línea consolidada (la
+   * receta con que se descontó); `added`/`increased` la resuelven del producto
+   * vigente en el emisor de la ND.
+   */
+  combo_recipe: ComboRecipeSnapshot | null;
 }
 
 /**
@@ -208,12 +219,22 @@ export class UpdateSaleAction {
       dto.items.map((item) => Number(item.item_id)),
       true,
     );
+    // FIX #3: re-snapshot de la receta por el mismo motivo — si el pedido se
+    // edita hoy y se cobra mañana, el DEDUCT debe usar la receta de HOY, que es
+    // la que quedó registrada en la línea.
+    const comboRecipeByItem = await resolveComboRecipes(
+      manager,
+      companyId,
+      dto.items.map((item) => Number(item.item_id)),
+      true,
+    );
     const lineRows = dto.items.map((item) =>
       mapPayloadLineToRow(
         item,
         sale.id,
         companyId,
         packagingValueByItem.get(Number(item.item_id)) ?? null,
+        comboRecipeByItem.get(Number(item.item_id)) ?? null,
       ),
     );
     await manager.insert(SaleInvoiceLine, lineRows);
@@ -386,8 +407,17 @@ export class UpdateSaleAction {
         addedOrIncreased.map((l) => l.item_id),
         true,
       );
+      // FIX #3: idem para la receta — lo que la ND descuenta ahora es lo que
+      // su futura devolución tendrá que reponer.
+      const debitRecipes = await resolveComboRecipes(
+        manager,
+        companyId,
+        addedOrIncreased.map((l) => l.item_id),
+        true,
+      );
       for (const diff of addedOrIncreased) {
         diff.packaging_value = debitPackaging.get(diff.item_id) ?? null;
+        diff.combo_recipe = debitRecipes.get(diff.item_id) ?? null;
       }
       const debit = await this.emitDebitNote(manager, {
         companyId,
@@ -636,6 +666,8 @@ export class UpdateSaleAction {
       // FIX #2: factor congelado (copiado de la línea consolidada removida/
       // reducida) — el mismo que se pasa al RETURN.
       packaging_value: l.packaging_value,
+      // FIX #3: receta congelada — idéntico criterio.
+      combo_recipe: l.combo_recipe,
     }));
     await manager.insert(CreditNoteLine, cnLines);
 
@@ -646,6 +678,7 @@ export class UpdateSaleAction {
         item_id: l.item_id,
         quantity: l.quantity,
         packaging_value: l.packaging_value,
+        combo_recipe: l.combo_recipe,
       })),
       'RETURN',
       {
@@ -756,6 +789,7 @@ export class UpdateSaleAction {
         item_id: l.item_id,
         quantity: l.quantity,
         packaging_value: l.packaging_value,
+        combo_recipe: l.combo_recipe,
       })),
       'DEDUCT',
       {
@@ -967,6 +1001,8 @@ function calculatePlacePosLineDifferences(
         total: Number(currentLine.total),
         // FIX #2: factor con que se descontó esta línea viva (null = legacy).
         packaging_value: currentLine.packaging_value ?? null,
+        // FIX #3: y la receta con que se expandió (null = legacy / no combo).
+        combo_recipe: currentLine.combo_recipe ?? null,
       });
       continue;
     }
@@ -983,6 +1019,8 @@ function calculatePlacePosLineDifferences(
         total: preciseNumber(toBig(currentLine.price).times(diffQty), 2),
         // FIX #2: factor con que se descontó esta línea viva (null = legacy).
         packaging_value: currentLine.packaging_value ?? null,
+        // FIX #3: y la receta con que se expandió (null = legacy / no combo).
+        combo_recipe: currentLine.combo_recipe ?? null,
       });
     }
   }
@@ -998,9 +1036,10 @@ function calculatePlacePosLineDifferences(
         price: newEntry.line.price,
         quantity: preciseNumber(newEntry.quantity, 4),
         total: preciseNumber(newEntry.total, 2),
-        // FIX #2: se resuelve del producto vigente en `editSaleFlow` (helper)
-        // antes de emitir la ND. Placeholder null aquí.
+        // FIX #2 / #3: se resuelven del producto vigente en `editSaleFlow`
+        // (helpers) antes de emitir la ND. Placeholder null aquí.
         packaging_value: null,
+        combo_recipe: null,
       });
       continue;
     }
@@ -1015,9 +1054,10 @@ function calculatePlacePosLineDifferences(
         price: newEntry.line.price,
         quantity: preciseNumber(diffQty, 4),
         total: preciseNumber(toBig(newEntry.line.price).times(diffQty), 2),
-        // FIX #2: se resuelve del producto vigente en `editSaleFlow` (helper)
-        // antes de emitir la ND. Placeholder null aquí.
+        // FIX #2 / #3: se resuelven del producto vigente en `editSaleFlow`
+        // (helpers) antes de emitir la ND. Placeholder null aquí.
         packaging_value: null,
+        combo_recipe: null,
       });
     }
   }
@@ -1047,6 +1087,7 @@ interface SaleInvoiceLineInsertRow {
   profit: number;
   margin: number;
   packaging_value: number | null;
+  combo_recipe: ComboRecipeSnapshot | null;
 }
 
 /**
@@ -1060,6 +1101,7 @@ function mapPayloadLineToRow(
   saleInvoiceId: string,
   companyId: number,
   packagingValue: number | null,
+  comboRecipe: ComboRecipeSnapshot | null,
 ): SaleInvoiceLineInsertRow {
   return {
     company_id: String(companyId),
@@ -1081,5 +1123,7 @@ function mapPayloadLineToRow(
     // FIX #2: snapshot del factor de empaque vigente (null si el producto no se
     // resolvió en la company — el motor cae a su fallback al cobrar).
     packaging_value: packagingValue,
+    // FIX #3: snapshot de la receta vigente (null si la línea no vende un combo).
+    combo_recipe: comboRecipe,
   };
 }

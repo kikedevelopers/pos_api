@@ -1,7 +1,7 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 
-import { Product } from '@/modules/products/entities/product.entity';
+import { Product, ProductType } from '@/modules/products/entities/product.entity';
 
 /**
  * Lookup por id dentro de una company con relations `prices` y `packaging`
@@ -120,5 +120,29 @@ export async function assertCategoryBelongsToCompany(
   );
   if (rows.length === 0) {
     throw new NotFoundException('Categoría no encontrada o pertenece a otro negocio.');
+  }
+}
+
+/**
+ * Guard: una presentación no puede colgar de un COMBO. El combo no tiene stock
+ * ni empaque propios, así que no hay nada de dónde derivar la variante.
+ * No-op si `parentId` es null (producto base). Espejo PlacePos.
+ */
+export async function assertParentIsNotCombo(
+  manager: EntityManager,
+  parentId: number | null | undefined,
+  companyId: number,
+): Promise<void> {
+  if (parentId === null || parentId === undefined) {
+    return;
+  }
+  const parent = await manager.findOne(Product, {
+    where: { id: String(parentId), company_id: String(companyId) },
+    select: { id: true, name: true, product_type: true },
+  });
+  if (parent?.product_type === ProductType.COMBO) {
+    throw new BadRequestException(
+      `"${parent.name}" es un combo: no puede tener presentaciones. Elige un producto base.`,
+    );
   }
 }

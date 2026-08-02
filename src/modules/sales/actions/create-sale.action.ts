@@ -11,8 +11,10 @@ import { DataSource, In, type EntityManager } from 'typeorm';
 import { toBig } from '@/common/utils/precision';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
-import { Product, ProductType } from '@/modules/products/entities/product.entity';
+import { Product } from '@/modules/products/entities/product.entity';
 import { resolveAccessibleProducts } from '@/modules/products/internal/accessible-products.helper';
+import type { ComboRecipeSnapshot } from '@/modules/products/internal/adjust-inventory.helper';
+import { resolveComboRecipes } from '@/modules/products/internal/resolve-combo-recipe.helper';
 import { resolvePackagingValues } from '@/modules/products/internal/resolve-packaging-value.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
@@ -28,6 +30,7 @@ import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { SaleStatusEventType } from '../entities/sale-status-history.entity';
 import { applySalePayment, type SalePaymentActor } from '../internal/apply-sale-payment';
 import { recordSaleStatus } from '../internal/record-sale-status.helper';
+import { assertSellableProducts } from '../internal/sellable-products.guard';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
 import { findSaleCredit, findSaleLines, findSalePayments } from '../internal/sale-lookups';
 import type { SaleAggregate } from './find-sale.action';
@@ -68,7 +71,7 @@ export interface SaleCreator {
  *      Lock pessimistic_write sobre el customer si va a quedar saldo.
  *
  *   2. Validar TODOS los `item_id` de las líneas pertenecen a la company,
- *      son SIMPLE y NO están archivados.
+ *      son vendibles (SIMPLE o COMBO) y NO están archivados.
  *
  *   3. Generar `ticket_number` con `IncrementTicketNumberAction` para
  *      ticket_type ORDER (paridad PlacePos).
@@ -132,9 +135,10 @@ export class CreateSaleAction {
         }
 
         // 2. Productos: validar que cada item_id sea ACCESIBLE para la company
-        // activa (propio O compartido por el principal — FASE 2) y sea SIMPLE no
-        // archivado. Cross-tenant guard crítico: un producto NO accesible (de otra
-        // company sin share) NO aparece en el set → se rechaza igual que antes.
+        // activa (propio O compartido por el principal — FASE 2) y sea vendible
+        // (SIMPLE o COMBO) y no archivado. Cross-tenant guard crítico: un producto
+        // NO accesible (de otra company sin share) NO aparece en el set → se
+        // rechaza igual que antes.
         const productIdNums = Array.from(new Set(dto.items.map((l) => Number(l.item_id))));
         const accessible = await resolveAccessibleProducts(manager, companyId, productIdNums);
         if (accessible.size !== productIdNums.length) {
@@ -145,14 +149,7 @@ export class CreateSaleAction {
         const products = await manager.find(Product, {
           where: { id: In(productIdNums.map(String)) },
         });
-        const invalidProduct = products.find(
-          (p) => p.product_type !== ProductType.SIMPLE || p.is_archived,
-        );
-        if (invalidProduct) {
-          throw new BadRequestException(
-            `El producto "${invalidProduct.name}" no es un producto simple disponible`,
-          );
-        }
+        assertSellableProducts(products);
 
         // 3. Folio ORDER per-company (atómico).
         const ticket = await this.incrementTicketNumberAction.execute(
@@ -236,10 +233,20 @@ export class CreateSaleAction {
             p.packaging_id !== null ? String(p.packaging_id) : null,
           ]),
         );
+        // FIX #3: snapshot de la receta por línea, en el mismo momento y con el
+        // mismo criterio cross-company que el empaque. Solo los COMBO entran al
+        // mapa; el resto persiste `combo_recipe = null`.
+        const comboRecipeByItem = await resolveComboRecipes(
+          manager,
+          companyId,
+          productIdNums,
+          true,
+        );
         const lineRows = dto.items.map((item) =>
           mapItemToLineRow(item, savedSale.id, companyId, {
             packagingId: packagingIdByItem.get(Number(item.item_id)) ?? null,
             packagingValue: packagingValueByItem.get(Number(item.item_id)) ?? null,
+            comboRecipe: comboRecipeByItem.get(Number(item.item_id)) ?? null,
           }),
         );
         await manager.insert(SaleInvoiceLine, lineRows);
@@ -465,7 +472,11 @@ function mapItemToLineRow(
   item: CreateSaleLineDto,
   saleInvoiceId: string,
   companyId: number,
-  pkg: { packagingId: string | null; packagingValue: number | null },
+  pkg: {
+    packagingId: string | null;
+    packagingValue: number | null;
+    comboRecipe: ComboRecipeSnapshot | null;
+  },
 ) {
   const unitCost = item.cost;
   const lineTotal = item.total;
@@ -487,5 +498,6 @@ function mapItemToLineRow(
     profit: item.profit,
     margin: item.margin,
     packaging_value: pkg.packagingValue,
+    combo_recipe: pkg.comboRecipe,
   };
 }

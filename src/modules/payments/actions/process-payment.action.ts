@@ -475,6 +475,9 @@ export class ProcessPaymentAction {
         // FIX #2: factor de empaque CONGELADO al crear la línea. Si es null
         // (legacy) el motor cae al packaging vigente del producto.
         packaging_value: l.packaging_value,
+        // FIX #3: receta del combo CONGELADA al crear la línea. Lo que se
+        // descuenta aquí es EXACTAMENTE lo que devolverá la anulación / NC.
+        combo_recipe: l.combo_recipe,
       }));
       // Paridad PlacePos: el override_stock solo lo concede el rol del actor.
       // Si un employee/manager envía la flag, se ignora silenciosamente — el

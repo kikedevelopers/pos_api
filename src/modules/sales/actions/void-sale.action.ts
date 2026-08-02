@@ -287,6 +287,8 @@ export class VoidSaleAction {
         // FIX #2: el RETURN devuelve stock con el MISMO factor congelado de la
         // línea consolidada (snapshot de la sale line original o de la ND).
         packaging_value: l.packaging_value ?? null,
+        // FIX #3: y con la MISMA receta de combo con que se descontó.
+        combo_recipe: l.combo_recipe ?? null,
       }));
       await manager.insert(CreditNoteLine, noteLines);
 
@@ -298,6 +300,9 @@ export class VoidSaleAction {
           quantity: l.quantity,
           // FIX #2: factor congelado de la línea consolidada (simetría DEDUCT↔RETURN).
           packaging_value: l.packaging_value ?? null,
+          // FIX #3: receta congelada — el combo se re-explota EXACTAMENTE igual
+          // que al vender, aunque hoy tenga otros componentes.
+          combo_recipe: l.combo_recipe ?? null,
         })),
         'RETURN',
         {

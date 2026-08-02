@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 
 import { Product } from '../entities/product.entity';
+import { assertNotUsedInActiveCombos } from '../internal/combo-components.helper';
 
 /**
  * Resultado del bulk archive. Espejo PlacePos (`{ archived: N }`), pero
@@ -47,6 +48,11 @@ export class BulkArchiveProductsAction {
     }
 
     return this.dataSource.transaction<BulkArchiveResult>(async (manager) => {
+      // Archivar un producto que alimenta la receta de un combo activo lo
+      // dejaría descontando de un producto invisible. Se bloquea con el nombre
+      // de los combos para que el usuario sepa qué desarmar primero.
+      await assertNotUsedInActiveCombos(manager, companyId, cleanIds, 'archivar');
+
       const existing = await manager.find(Product, {
         where: {
           id: In(cleanIds.map(String)),

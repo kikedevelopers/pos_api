@@ -2,10 +2,14 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
+import { comboStockFromComponents } from '@/modules/products/internal/combo-components.helper';
+import type { ComboComponentView } from '@/modules/products/internal/combo-components.helper';
 import {
   computeChildStockDisplay,
   computeStockDisplay,
 } from '@/modules/products/internal/compute-stock-display';
+
+import { ComboComponentNestedDto } from './combo-component.dto';
 
 /**
  * Shape de respuesta de packaging anidado dentro de Product. Espejo PlacePos:
@@ -185,6 +189,14 @@ export class ProductResponseDto {
    */
   @ApiProperty({ example: false })
   is_clone!: boolean;
+
+  /**
+   * Receta del COMBO (`product_type = 'COMBO'`). `null` para cualquier otro
+   * tipo de producto. El caller la adjunta al POJO antes de mapear; el front la
+   * trata como campo OPCIONAL (resiliencia a version-skew).
+   */
+  @ApiPropertyOptional({ type: [ComboComponentNestedDto], nullable: true })
+  components!: ComboComponentNestedDto[] | null;
 }
 
 /**
@@ -207,9 +219,16 @@ export function toProductResponseDto(
   const stock = Number(p.stock);
   const packagingValue = p.packaging ? Number(p.packaging.value) : null;
   const isChild = p.parent_id !== null && p.parent_id !== undefined;
-  const stockDisplay = isChild
-    ? computeChildStockDisplay(parentStock, stock, packagingValue)
-    : computeStockDisplay(stock, packagingValue);
+  // Un COMBO no tiene stock propio: su disponibilidad es cuántas unidades se
+  // pueden armar hoy con el stock de sus componentes. El caller adjunta la
+  // receta al POJO (`components`); sin ella el combo queda en 0.
+  const isCombo = p.product_type === ProductType.COMBO;
+  const comboComponents = isCombo ? ((p as ProductWithCombo).components ?? []) : null;
+  const stockDisplay = isCombo
+    ? comboStockFromComponents(comboComponents ?? [])
+    : isChild
+      ? computeChildStockDisplay(parentStock, stock, packagingValue)
+      : computeStockDisplay(stock, packagingValue);
   return {
     id: Number(p.id),
     name: p.name,
@@ -262,7 +281,13 @@ export function toProductResponseDto(
       (p as ProductWithSharing).is_clone !== undefined
         ? (p as ProductWithSharing).is_clone === true
         : p.cloned_from_company_id != null,
+    components: comboComponents,
   };
+}
+
+/** Product POJO extendido con la receta del combo (la adjunta el caller). */
+interface ProductWithCombo {
+  components?: ComboComponentView[] | null;
 }
 
 /**

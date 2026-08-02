@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
 import { Product } from '@/modules/products/entities/product.entity';
+import { attachComboComponentsTo } from '@/modules/products/internal/combo-components.helper';
 
 import { Category } from '../entities/category.entity';
 import { findCategoryInCompany } from '../internal/category-lookups';
@@ -14,7 +15,8 @@ import { findCategoryInCompany } from '../internal/category-lookups';
  * Reglas:
  *   - 404 si la categoría no existe o pertenece a otra company.
  *   - Devuelve productos `is_archived = false` con `parent` y `packaging`
- *     cargados (espejo PlacePos).
+ *     cargados (espejo PlacePos), y los COMBO con su receta (de la que se
+ *     deriva su `stock_display`).
  *   - Multi-tenant doble filtro (defense in depth): `product.company_id`
  *     debe coincidir además de `category_id`.
  *
@@ -32,7 +34,7 @@ export class ListProductsByCategoryAction {
   async execute(categoryId: number, companyId: number): Promise<Product[]> {
     await findCategoryInCompany(this.categoryRepo.manager, categoryId, companyId);
 
-    return this.productRepo
+    const products = await this.productRepo
       .createQueryBuilder('p')
       .leftJoinAndSelect('p.parent', 'parent')
       .leftJoinAndSelect('p.packaging', 'packaging')
@@ -41,5 +43,11 @@ export class ListProductsByCategoryAction {
       .andWhere('p.is_archived = false')
       .orderBy('p.name', 'ASC')
       .getMany();
+
+    // Sin la receta, `toProductResponseDto` da `stock_display: 0` a un combo —
+    // dato falso, no ausente (saldría agotado aquí y correcto en /inventory).
+    await attachComboComponentsTo(this.productRepo.manager, products, companyId);
+
+    return products;
   }
 }

@@ -12,6 +12,7 @@ import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product } from '@/modules/products/entities/product.entity';
+import type { ComboRecipeSnapshot } from '@/modules/products/internal/adjust-inventory.helper';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
 
 import { CreditNote } from './credit-note.entity';
@@ -200,6 +201,16 @@ export class CreditNoteLine {
     transformer: NumericTransformer,
   })
   packaging_value!: number | null;
+
+  /**
+   * FIX #3 — Receta del COMBO CONGELADA, hermana de `packaging_value`. Para una
+   * NC viene de la línea de venta que se está devolviendo (así el `RETURN`
+   * deshace exactamente el `DEDUCT`); para una ND, de la receta vigente al
+   * añadir la línea (que es la que su propio `DEDUCT` aplica). `null` = línea
+   * legacy o línea que no vende un combo → el motor usa la receta vigente.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  combo_recipe!: ComboRecipeSnapshot | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

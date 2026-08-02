@@ -184,7 +184,9 @@ describe('BulkProductsDto / BulkItemDto validation', () => {
 
   it('base_name vacío (fila = BASE) → 0 errores', async () => {
     const errors = await validatePayload({
-      items: [{ name: 'Linaza x libra', base_name: '', cost: 3705, prices: [{ sale_price: 6000 }] }],
+      items: [
+        { name: 'Linaza x libra', base_name: '', cost: 3705, prices: [{ sale_price: 6000 }] },
+      ],
     });
     expect(errors).toHaveLength(0);
   });
@@ -260,7 +262,12 @@ describe('BulkProductsDto / BulkItemDto validation', () => {
   it('base_name que excede 150 chars → error MaxLength', async () => {
     const errors = await validatePayload({
       items: [
-        { name: 'X', base_name: 'a'.repeat(151), packaging: { name: 'U', value: 1 }, prices: [{ sale_price: 1 }] },
+        {
+          name: 'X',
+          base_name: 'a'.repeat(151),
+          packaging: { name: 'U', value: 1 },
+          prices: [{ sale_price: 1 }],
+        },
       ],
     });
     expect(errors.length).toBeGreaterThan(0);

@@ -5,6 +5,7 @@ import { Product, ProductType } from '@/modules/products/entities/product.entity
 
 import type { InventoryQueryDto } from '../dto/inventory-query.dto';
 import { accessibleProductsPredicate } from '../internal/accessible-products.helper';
+import { attachComboComponentsTo } from '../internal/combo-components.helper';
 
 /**
  * Lista productos de una company. Endpoint `GET /inventory`.
@@ -129,7 +130,11 @@ export class FindAllProductsAction {
 
     const rows = await this.dataSource.query<RawProductRow[]>(sql, params);
 
-    return sortParentsThenChildren(rows.map((r) => mapRawToProduct(r, companyId)));
+    const products = rows.map((r) => mapRawToProduct(r, companyId));
+    // Los COMBO viajan con su receta: de ella sale su `stock_display`.
+    await attachComboComponentsTo(this.dataSource.manager, products, companyId);
+
+    return sortParentsThenChildren(products);
   }
 }
 

@@ -4,6 +4,7 @@ import { LessThanOrEqual, type EntityManager } from 'typeorm';
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
 import { CreditNote, NoteType } from '@/modules/credit-notes/entities/credit-note.entity';
+import type { ComboRecipeSnapshot } from '@/modules/products/internal/adjust-inventory.helper';
 
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import type { TicketType } from '../entities/sale-invoice.entity';
@@ -39,6 +40,13 @@ export interface ConsolidatedLine {
    * `stripConsolidatedInternalFields` (contrato de respuesta inalterado).
    */
   packaging_value?: number | null;
+  /**
+   * FIX #3 (INTERNO — NUNCA se serializa al cliente). Receta del combo
+   * CONGELADA de la línea viva, hermana de `packaging_value`. Hace que la NC
+   * por líneas removidas/reducidas devuelva los MISMOS componentes y cantidades
+   * que el DEDUCT descontó, aunque la receta se haya editado entre medias.
+   */
+  combo_recipe?: ComboRecipeSnapshot | null;
 }
 
 /**
@@ -59,17 +67,19 @@ export interface ConsolidatedInvoice {
 }
 
 /**
- * FIX #2 — Elimina los campos INTERNOS de `ConsolidatedInvoice` antes de
- * devolverlo por HTTP. Hoy solo `lines[].packaging_value` (snapshot de empaque
- * que el flujo de edición consume internamente pero NUNCA forma parte del
- * contrato de respuesta de `GET /sales/:id/consolidated[-upto]`). El consumidor
- * interno (`update-sale.action`) llama a `getConsolidatedInvoice` directo y SÍ
- * recibe el campo; las acciones HTTP pasan por este saneador.
+ * FIX #2 / FIX #3 — Elimina los campos INTERNOS de `ConsolidatedInvoice` antes
+ * de devolverlo por HTTP: `lines[].packaging_value` y `lines[].combo_recipe`
+ * (snapshots que el flujo de edición consume internamente pero que NUNCA forman
+ * parte del contrato de respuesta de `GET /sales/:id/consolidated[-upto]`). El
+ * consumidor interno (`update-sale.action`) llama a `getConsolidatedInvoice`
+ * directo y SÍ recibe los campos; las acciones HTTP pasan por este saneador.
  */
 export function stripConsolidatedInternalFields(invoice: ConsolidatedInvoice): ConsolidatedInvoice {
   return {
     ...invoice,
-    lines: invoice.lines.map(({ packaging_value: _packagingValue, ...rest }) => rest),
+    lines: invoice.lines.map(
+      ({ packaging_value: _packagingValue, combo_recipe: _comboRecipe, ...rest }) => rest,
+    ),
   };
 }
 
@@ -88,6 +98,8 @@ interface NoteSnapshot {
     total: number;
     /** FIX #2: snapshot del factor de empaque de la línea de la nota. */
     packaging_value: number | null;
+    /** FIX #3: snapshot de la receta del combo de la línea de la nota. */
+    combo_recipe: ComboRecipeSnapshot | null;
   }>;
 }
 
@@ -162,8 +174,9 @@ function applyDebitAdjustment(
     margin,
     price_mode: 'fixed',
     price_position: null,
-    // FIX #2: la línea consolidada nace de una ND → hereda su factor de empaque.
+    // FIX #2 / #3: la línea consolidada nace de una ND → hereda sus snapshots.
     packaging_value: noteLine.packaging_value,
+    combo_recipe: noteLine.combo_recipe,
   });
 }
 
@@ -199,6 +212,12 @@ function buildConsolidatedLines(
     );
     if (existing.packaging_value === null || existing.packaging_value === undefined) {
       existing.packaging_value = line.packaging_value;
+    }
+    // FIX #3: idéntico criterio para la receta. Dos líneas del mismo combo en
+    // la misma venta comparten receta por construcción (se congela una vez por
+    // item al crear la venta), así que conservar la primera es exacto.
+    if (existing.combo_recipe === null || existing.combo_recipe === undefined) {
+      existing.combo_recipe = line.combo_recipe;
     }
   }
   for (const note of notes) {
@@ -242,6 +261,9 @@ function mapInvoiceLine(l: SaleInvoiceLine): ConsolidatedLine {
     price_position: null,
     // FIX #2 (interno): factor congelado de la línea original (null = legacy).
     packaging_value: l.packaging_value,
+    // FIX #3 (interno): receta congelada de la línea original (null = legacy
+    // o línea que no vende un combo).
+    combo_recipe: l.combo_recipe,
   };
 }
 
@@ -258,6 +280,8 @@ function mapNoteSnapshot(cn: CreditNote, lines: CreditNoteLine[]): NoteSnapshot 
       total: Number(l.total),
       // FIX #2: factor congelado de la línea de la nota (null = legacy).
       packaging_value: l.packaging_value,
+      // FIX #3: receta congelada de la línea de la nota (null = legacy).
+      combo_recipe: l.combo_recipe,
     })),
   };
 }

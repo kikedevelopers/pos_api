@@ -16,8 +16,13 @@ import type { ProductCreator } from './create-product.action';
  *   - `name`    → la sucursal ya tiene un producto activo con el mismo nombre.
  *   - `sku`     → ya tiene uno con el mismo `sku_code`.
  *   - `barcode` → ya tiene uno con el mismo `bar_code`.
+ *   - `combo`   → es un producto COMBO: su receta vive en `combo_components` y
+ *     apunta a productos del principal. Clonarla exigiría que TODOS sus
+ *     componentes se clonaran en el mismo lote y remapear cada
+ *     `component_product_id`; clonar el combo sin receta produciría un producto
+ *     que se vende SIN descontar inventario. Se omite y se reporta.
  */
-export type CloneSkipReason = 'name' | 'sku' | 'barcode';
+export type CloneSkipReason = 'name' | 'sku' | 'barcode' | 'combo';
 
 export interface CloneSkipped {
   name: string;
@@ -74,13 +79,14 @@ interface SourcePrice {
  * Familias (presentaciones / combos)
  * --------------------------------------------------------------------------
  *
- * El modelo NO tiene tabla de componentes de combo: tanto presentaciones como
- * combos se modelan como productos HIJO vía `parent_id` (FK reflexiva). No hay
- * otra referencia producto→producto. Por eso clonar = clonar la FAMILIA
- * COMPLETA (padre + hijos) recableando `parent_id` al id del padre clonado vía
- * un mapa `oldId → newId`. Si piden clonar un id que es HIJO, se clona su
- * familia entera (sube al padre) para no dejar huérfanos con `parent_id`
- * colgante.
+ * Las PRESENTACIONES se modelan como productos HIJO vía `parent_id` (FK
+ * reflexiva). Por eso clonar = clonar la FAMILIA COMPLETA (padre + hijos)
+ * recableando `parent_id` al id del padre clonado vía un mapa `oldId → newId`.
+ * Si piden clonar un id que es HIJO, se clona su familia entera (sube al padre)
+ * para no dejar huérfanos con `parent_id` colgante.
+ *
+ * Los COMBO sí tienen tabla propia (`combo_components`) y NO se clonan: se
+ * omiten con reason `combo`. Ver `CloneSkipReason`.
  *
  * --------------------------------------------------------------------------
  * Colisiones → OMITIR y reportar
@@ -211,6 +217,12 @@ export class CloneProductsToBranchAction {
         return { created: 0, skipped: [] };
       }
       const root = family[0];
+
+      // Un COMBO no se clona: su receta referencia productos del principal y
+      // clonarlo sin ella daría un producto que se vende sin descontar stock.
+      if (root.product_type === ProductType.COMBO) {
+        return { created: 0, skipped: [{ name: root.name, reason: 'combo' }] };
+      }
 
       // Colisión: se evalúa sobre la RAÍZ. Si la sucursal ya tiene un activo con
       // el mismo name/sku/barcode, se omite la familia entera.
