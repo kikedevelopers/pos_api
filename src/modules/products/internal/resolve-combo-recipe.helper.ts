@@ -3,7 +3,7 @@ import { In, type EntityManager } from 'typeorm';
 import { ComboComponent } from '../entities/combo-component.entity';
 import { ProductType } from '../entities/product.entity';
 
-import { resolveAccessibleProducts } from './accessible-products.helper';
+import { resolveAccessibleProducts, type AccessibleProductRef } from './accessible-products.helper';
 import type { ComboRecipeSnapshot } from './adjust-inventory.helper';
 
 /**
@@ -43,6 +43,12 @@ export async function resolveComboRecipes(
   companyId: number,
   itemIds: number[],
   crossCompanyAccess = false,
+  /**
+   * Set accesible ya resuelto por el caller. Evita repetir el predicado de
+   * accesibilidad, que NO es barato. `create-sale` ya lo calculó para validar
+   * las líneas: pasarlo ahorra una consulta en cada venta.
+   */
+  accessibleRefs?: Map<number, AccessibleProductRef>,
 ): Promise<Map<number, ComboRecipeSnapshot>> {
   const result = new Map<number, ComboRecipeSnapshot>();
   const uniqueIds = [...new Set(itemIds.map((id) => Number(id)))];
@@ -52,7 +58,8 @@ export async function resolveComboRecipes(
 
   // combo_product_id → company DUEÑA. Solo los COMBO llegan hasta aquí.
   const ownerByCombo = new Map<number, number>();
-  const accessible = await resolveAccessibleProducts(manager, companyId, uniqueIds);
+  const accessible =
+    accessibleRefs ?? (await resolveAccessibleProducts(manager, companyId, uniqueIds));
   for (const ref of accessible.values()) {
     // `productType` viaja como string en el ref accesible; el cast lo alinea
     // con el enum (mismo criterio que `adjust-inventory.helper`).

@@ -236,11 +236,14 @@ export class CreateSaleAction {
         // FIX #3: snapshot de la receta por línea, en el mismo momento y con el
         // mismo criterio cross-company que el empaque. Solo los COMBO entran al
         // mapa; el resto persiste `combo_recipe = null`.
+        // Reusa el set accesible del paso 2 en vez de recalcularlo: el
+        // predicado de accesibilidad es caro y esta es la ruta más caliente.
         const comboRecipeByItem = await resolveComboRecipes(
           manager,
           companyId,
           productIdNums,
           true,
+          accessible,
         );
         const lineRows = dto.items.map((item) =>
           mapItemToLineRow(item, savedSale.id, companyId, {

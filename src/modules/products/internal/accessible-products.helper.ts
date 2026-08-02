@@ -33,14 +33,61 @@ import type { EntityManager } from 'typeorm';
  * que se anexa varias veces (Postgres no reusa `$N` por valor lógico aquí para
  * mantener el generador simple y sin estado).
  */
+export interface AccessiblePredicateOptions {
+  /**
+   * Incluir la REGLA 5 (componentes de un combo compartido).
+   *
+   * Cuesta caro: es un EXISTS con JOIN a `combo_components` más dos EXISTS
+   * anidados, evaluado por cada fila candidata. En un listado masivo (que
+   * escanea `products` entera) multiplica el tiempo del plan; medido sobre una
+   * BD real: 0,9 ms → 26,5 ms.
+   *
+   * Solo hace falta al resolver IDS CONCRETOS, que es el camino donde el motor
+   * de inventario necesita alcanzar un componente para descontarlo. En los
+   * listados, además, incluirlo sería INCORRECTO: la sucursal no debe ver ni
+   * vender suelto el componente de un combo compartido — solo el combo.
+   *
+   * Por eso el default es `false` y `resolveAccessibleProducts` lo activa.
+   */
+  includeComboComponents?: boolean;
+}
+
 export function accessibleProductsPredicate(
   alias: string,
   activeCompanyId: number,
   startParamIndex: number,
+  options: AccessiblePredicateOptions = {},
 ): { sql: string; params: string[] } {
   const cid = String(activeCompanyId);
-  // Reservamos 7 placeholders consecutivos para las 7 apariciones de cid.
+  const includeComboComponents = options.includeComboComponents === true;
+  // 5 placeholders para las reglas 1-4; 7 si además entra la regla 5.
   const p = (offset: number): string => `$${startParamIndex + offset}`;
+
+  // REGLA 5 — opt-in (ver `AccessiblePredicateOptions.includeComboComponents`).
+  const comboComponentsRule = includeComboComponents
+    ? `OR EXISTS (
+      SELECT 1
+      FROM combo_components cc
+      JOIN products combo
+        ON combo.id = cc.combo_product_id
+       AND combo.company_id = cc.company_id
+      WHERE cc.component_product_id = ${alias}.id
+        AND cc.company_id = ${alias}.company_id
+        AND (
+          EXISTS (
+            SELECT 1 FROM inventory_shares s3
+            WHERE s3.target_company_id = ${p(5)}
+              AND s3.product_id IS NULL
+              AND s3.source_company_id = combo.company_id
+          )
+          OR EXISTS (
+            SELECT 1 FROM inventory_shares s3
+            WHERE s3.target_company_id = ${p(6)}
+              AND s3.product_id = combo.id
+          )
+        )
+    )`
+    : '';
 
   const sql = `(
     ${alias}.company_id = ${p(0)}
@@ -75,31 +122,15 @@ export function accessibleProductsPredicate(
           )
       )
     )
-    OR EXISTS (
-      SELECT 1
-      FROM combo_components cc
-      JOIN products combo
-        ON combo.id = cc.combo_product_id
-       AND combo.company_id = cc.company_id
-      WHERE cc.component_product_id = ${alias}.id
-        AND cc.company_id = ${alias}.company_id
-        AND (
-          EXISTS (
-            SELECT 1 FROM inventory_shares s3
-            WHERE s3.target_company_id = ${p(5)}
-              AND s3.product_id IS NULL
-              AND s3.source_company_id = combo.company_id
-          )
-          OR EXISTS (
-            SELECT 1 FROM inventory_shares s3
-            WHERE s3.target_company_id = ${p(6)}
-              AND s3.product_id = combo.id
-          )
-        )
-    )
+    ${comboComponentsRule}
   )`;
 
-  return { sql, params: [cid, cid, cid, cid, cid, cid, cid] };
+  return {
+    sql,
+    params: includeComboComponents
+      ? [cid, cid, cid, cid, cid, cid, cid]
+      : [cid, cid, cid, cid, cid],
+  };
 }
 
 /**
@@ -135,7 +166,11 @@ export async function resolveAccessibleProducts(
     return map;
   }
   const uniqueIds = Array.from(new Set(productIds.map((id) => String(id))));
-  const pred = accessibleProductsPredicate('p', activeCompanyId, 2);
+  // Ids concretos: aquí SÍ hace falta la regla 5 — es el camino por el que el
+  // motor de inventario alcanza el componente de un combo compartido.
+  const pred = accessibleProductsPredicate('p', activeCompanyId, 2, {
+    includeComboComponents: true,
+  });
 
   const rows = await manager.query<
     Array<{
