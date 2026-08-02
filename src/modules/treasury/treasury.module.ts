@@ -16,5 +16,7 @@ import { TreasuryService } from './treasury.service';
 @Module({
   controllers: [TreasuryController],
   providers: [TreasuryService, GetTreasuryAccountsAction, ListTreasuryMovementsAction],
+  // `AiModule` consulta los saldos consolidados como herramienta del asistente.
+  exports: [TreasuryService],
 })
 export class TreasuryModule {}

@@ -101,4 +101,18 @@ export const validationSchema = Joi.object({
   BACKUP_TIMEOUT_MS: Joi.number().integer().min(10000).default(600000),
   // Retención: nunca puede haber más de este número de respaldos en el bucket.
   BACKUP_MAX_FILES: Joi.number().integer().min(1).max(365).default(7),
+
+  // PlacePOS IA (Google Gemini). Sin `GEMINI_API_KEY` el módulo /ai queda
+  // deshabilitado (503) — la app cliente lo detecta y muestra el aviso.
+  GEMINI_API_KEY: Joi.string().allow('').default(''),
+  GEMINI_BASE_URL: Joi.string()
+    .allow('')
+    .default('https://generativelanguage.googleapis.com/v1beta'),
+  GEMINI_DEFAULT_MODEL: Joi.string().allow('').default('gemini-flash-lite-latest'),
+  // Lista separada por comas de los modelos que el cliente puede pedir.
+  GEMINI_ALLOWED_MODELS: Joi.string().allow('').default(''),
+  GEMINI_TEMPERATURE: Joi.number().min(0).max(2).default(0.7),
+  GEMINI_MAX_OUTPUT_TOKENS: Joi.number().integer().min(256).max(32768).default(4096),
+  GEMINI_REQUEST_TIMEOUT_MS: Joi.number().integer().min(5000).max(600000).default(120000),
+  GEMINI_MAX_TOOL_ROUNDS: Joi.number().integer().min(0).max(10).default(4),
 });

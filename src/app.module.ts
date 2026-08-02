@@ -25,6 +25,7 @@ import { AppAlertsModule } from './modules/app-alerts/app-alerts.module';
 import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AgreementsModule } from './modules/agreements/agreements.module';
+import { AiModule } from './modules/ai/ai.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { BackupRestoreModule } from './modules/backup-restore/backup-restore.module';
 import { BanksModule } from './modules/banks/banks.module';
@@ -241,6 +242,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     ReportsModule,
     PosReportsModule,
     PosDataModule,
+    // PlacePOS IA — chat con Gemini + herramientas de solo lectura sobre la
+    // base del tenant. Cloud-only: no tiene gemelo en el Express de placepos.
+    AiModule,
     // Fase 12 — Backup stub (paridad de contrato; siempre 503).
     BackupModule,
     // Migración cloud (altivopos Mongo → pos_api). Protegido por firma
