@@ -27,6 +27,26 @@ export class SuperadminTenantCompanyDto {
 
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   createdAt!: string;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'true si la company es una SUCURSAL (companies.is_branch). Una sucursal no ' +
+      'tiene owner ni suscripción propios: los hereda del negocio principal (ver `parent`).',
+  })
+  isBranch!: boolean;
+}
+
+/**
+ * Negocio principal del que cuelga una sucursal. `null` cuando la company ES el
+ * principal (o cuando la sucursal quedó sin membresía, dato inconsistente).
+ */
+export class SuperadminTenantParentDto {
+  @ApiProperty({ example: 8 })
+  id!: number;
+
+  @ApiProperty({ example: 'Esencia & Grano' })
+  name!: string;
 }
 
 /**
@@ -118,10 +138,29 @@ export class SuperadminTenantDetailDto {
   @ApiProperty({ type: SuperadminTenantCompanyDto })
   company!: SuperadminTenantCompanyDto;
 
-  @ApiProperty({ type: SuperadminTenantOwnerDto, nullable: true })
+  @ApiPropertyOptional({
+    type: SuperadminTenantParentDto,
+    nullable: true,
+    description:
+      'Negocio principal cuando `company.isBranch` es true. null en el negocio principal.',
+  })
+  parent!: SuperadminTenantParentDto | null;
+
+  @ApiProperty({
+    type: SuperadminTenantOwnerDto,
+    nullable: true,
+    description:
+      'Owner de la cuenta. En una sucursal es el owner del negocio principal ' +
+      '(resuelto vía company_members): la sucursal no tiene usuario propio.',
+  })
   owner!: SuperadminTenantOwnerDto | null;
 
-  @ApiPropertyOptional({ type: SuperadminTenantSubscriptionDto, nullable: true })
+  @ApiPropertyOptional({
+    type: SuperadminTenantSubscriptionDto,
+    nullable: true,
+    description:
+      'Vigencia. En una sucursal es la del negocio principal: no tiene suscripción propia.',
+  })
   subscription!: SuperadminTenantSubscriptionDto | null;
 
   @ApiProperty({ type: SuperadminTenantCountsDto })

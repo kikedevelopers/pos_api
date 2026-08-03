@@ -604,14 +604,29 @@ export class MigrateCatalogAction {
   /**
    * Owner (`type='owner'`) del destino para `created_by`/`created_by_id`. Si no
    * hay owner, cae a `('Migración Mongo', null)`.
+   *
+   * Una SUCURSAL no tiene fila propia en `users` —su owner es el del negocio
+   * principal, alcanzable por `company_members`—, así que la búsqueda directa
+   * no encuentra nada. Sin el fallback, migrar el catálogo a una sucursal dejaba
+   * todos los productos y clientes sin autor, atribuidos a "Migración Mongo".
    */
   private async resolveOwner(companyId: number): Promise<OwnerInfo> {
+    // `priority` fija el ganador: el owner DIRECTO manda sobre el heredado por
+    // membresía. Un LIMIT suelto sobre el UNION ALL no lo garantiza — el orden
+    // entre ramas no es parte del contrato de SQL.
     const rows = await this.dataSource.query<Array<{ id: number; name: string | null }>>(
-      `SELECT id, NULLIF(TRIM(CONCAT_WS(' ', name, lastname)), '') AS name
-         FROM users
-        WHERE company_id = $1 AND type = 'owner'
-        ORDER BY id
-        LIMIT 1`,
+      `SELECT id, name FROM (
+         SELECT u.id, NULLIF(TRIM(CONCAT_WS(' ', u.name, u.lastname)), '') AS name, 1 AS priority
+           FROM users u
+          WHERE u.company_id = $1 AND u.type = 'owner'
+          UNION ALL
+         SELECT u.id, NULLIF(TRIM(CONCAT_WS(' ', u.name, u.lastname)), '') AS name, 2 AS priority
+           FROM company_members cm
+           JOIN users u ON u.id = cm.user_id
+          WHERE cm.company_id = $1 AND cm.role = 'owner'
+       ) candidates
+       ORDER BY priority ASC, id ASC
+       LIMIT 1`,
       [companyId],
     );
     const owner = rows[0];

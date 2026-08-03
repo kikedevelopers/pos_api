@@ -52,7 +52,38 @@ export class SuperadminTenantListItemDto {
     nullable: true,
     description:
       'Vencimiento de la suscripción (expires_at). null si el tenant no tiene suscripción. ' +
-      'El panel calcula los días restantes a partir de esta fecha.',
+      'El panel calcula los días restantes a partir de esta fecha. En una SUCURSAL es ' +
+      'siempre null: la vigencia es la del negocio principal (ver parentCompanyId).',
   })
   subscriptionExpiresAt!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'true si la fila es una SUCURSAL (companies.is_branch). Las sucursales vienen ' +
+      'inmediatamente después de su negocio principal, ordenadas de más antigua a más nueva.',
+  })
+  isBranch!: boolean;
+
+  @ApiPropertyOptional({
+    example: 8,
+    nullable: true,
+    description: 'company_id del negocio principal. null cuando la fila ES el principal.',
+  })
+  parentCompanyId!: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Esencia & Grano',
+    nullable: true,
+    description: 'Nombre del negocio principal. null cuando la fila ES el principal.',
+  })
+  parentCompanyName!: string | null;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'Sucursal seleccionable vs suspendida (company_members.is_active). Siempre true ' +
+      'en el negocio principal.',
+  })
+  active!: boolean;
 }

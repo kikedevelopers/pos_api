@@ -34,6 +34,7 @@ export class UpdateTenantCompanyAction {
       phoneNumber: company.phone_number,
       origin: company.origin,
       createdAt: company.created_at.toISOString(),
+      isBranch: company.is_branch,
     };
   }
 }

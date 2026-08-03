@@ -134,11 +134,15 @@ export class SuperadminController {
 
   @Get('tenants')
   @ApiOperation({
-    summary: 'Listar TODOS los tenants (owners + company) cross-tenant.',
+    summary: 'Listar TODOS los tenants (owners + company + sucursales) cross-tenant.',
     description:
       'Requiere firma superadmin válida (x-kdevs-signature/timestamp/key-id). ' +
       'Paginación limit/offset y búsqueda libre por owner y company (ILIKE). ' +
-      'Incluye por tenant la vigencia de la suscripción (LEFT JOIN; puede ser null).',
+      'Incluye por tenant la vigencia de la suscripción (LEFT JOIN; puede ser null). ' +
+      'Cada SUCURSAL del owner viaja como una fila más (isBranch=true) inmediatamente ' +
+      'después de su negocio principal, de más antigua a más nueva: `tenants` puede ' +
+      'traer más filas que `limit`, que pagina CUENTAS principales (`total`). La ' +
+      'búsqueda es de grupo: el nombre de una sucursal también trae a su principal.',
   })
   @ApiResponse({ status: HttpStatus.OK, type: SuperadminTenantsResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Firma ausente/inválida/expirada' })
@@ -147,6 +151,7 @@ export class SuperadminController {
     return {
       tenants: result.tenants,
       total: result.total,
+      branchCount: result.branchCount,
       limit: result.limit,
       offset: result.offset,
     };
