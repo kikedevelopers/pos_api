@@ -1,12 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 
 import type { ProductPriceInputDto } from '../dto/product-price.dto';
-import {
-  PG_FOREIGN_KEY_VIOLATION,
-  PG_UNIQUE_VIOLATION,
-  translateProductPriceDeleteError,
-} from '../internal/constraint-errors';
+import { PG_FOREIGN_KEY_VIOLATION } from '../internal/constraint-errors';
 import { pairIncomingPrices, syncProductPrices } from '../internal/sync-product-prices';
 
 /**
@@ -14,9 +9,8 @@ import { pairIncomingPrices, syncProductPrices } from '../internal/sync-product-
  *
  * PlacePos ≤ 1.0.0 reconstruye el array `prices` del formulario SIN el `id`.
  * Con la semántica "el array es fuente de verdad" eso significaba borrar todos
- * los precios e insertarlos de nuevo, y el DELETE viola las FKs
- * `product_price_history.product_price_id` / `sale_invoice_lines.product_price_id`
- * (ambas NO ACTION) en cuanto el producto se compró o se vendió.
+ * los precios e insertarlos de nuevo, perdiendo la identidad del nivel (y con
+ * ella el enlace de su historial de precio) en cada guardado.
  */
 describe('pairIncomingPrices', () => {
   const price = (input: Partial<ProductPriceInputDto>): ProductPriceInputDto => ({
@@ -240,7 +234,10 @@ describe('syncProductPrices', () => {
     });
   });
 
-  it('traduce la violación de FK del DELETE a 400 legible (no 500)', async () => {
+  // El esquema ya no puede bloquear el borrado (FKs SET NULL), así que el
+  // sync NO traduce ningún error a "no se puede eliminar": cualquier fallo
+  // real del DELETE sube tal cual en vez de disfrazarse de regla de negocio.
+  it('un error de FK del DELETE se relanza tal cual (ya no se traduce a 400)', async () => {
     const fkError = new QueryFailedError('DELETE', [], new Error('fk')) as QueryFailedError & {
       code: string;
     };
@@ -252,7 +249,7 @@ describe('syncProductPrices', () => {
 
     await expect(
       run(manager, [{ id: 7, sale_price: 100 }], [{ id: '7' }, { id: '8' }]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBe(fkError);
   });
 
   it('un error de DELETE que NO es FK se relanza tal cual', async () => {
@@ -263,36 +260,23 @@ describe('syncProductPrices', () => {
       run(manager, [{ id: 7, sale_price: 100 }], [{ id: '7' }, { id: '8' }]),
     ).rejects.toBe(boom);
   });
-});
 
-describe('translateProductPriceDeleteError', () => {
-  it('no lanza si el error no es de TypeORM', () => {
-    expect(() => translateProductPriceDeleteError(new Error('x'))).not.toThrow();
+  it('borrar el ÚLTIMO nivel restante también procede (sin excepciones)', async () => {
+    const manager = buildManager();
+
+    await run(manager, [{ id: 8, sale_price: 100 }], [{ id: '7' }, { id: '8' }]);
+
+    expect(argOf(manager.delete, 0, 1)).toMatchObject({ product_id: '7366' });
+    expect(manager.update).toHaveBeenCalledTimes(1);
   });
 
-  it('no lanza si el SQLSTATE no es 23503', () => {
-    const error = new QueryFailedError('DELETE', [], new Error('x')) as QueryFailedError & {
-      code: string;
-    };
-    error.code = PG_UNIQUE_VIOLATION;
+  it('borra varios niveles de una vez', async () => {
+    const manager = buildManager();
 
-    expect(() => translateProductPriceDeleteError(error)).not.toThrow();
-  });
+    await run(manager, [{ id: 7, sale_price: 100 }], [{ id: '7' }, { id: '8' }, { id: '9' }]);
 
-  it('lanza 400 con code PRODUCT_PRICE_IN_USE ante 23503', () => {
-    const error = new QueryFailedError('DELETE', [], new Error('x')) as QueryFailedError & {
-      code: string;
-    };
-    error.code = PG_FOREIGN_KEY_VIOLATION;
-
-    try {
-      translateProductPriceDeleteError(error);
-      throw new Error('debió lanzar');
-    } catch (thrown) {
-      expect(thrown).toBeInstanceOf(BadRequestException);
-      expect((thrown as BadRequestException).getResponse()).toMatchObject({
-        payload: { code: 'PRODUCT_PRICE_IN_USE' },
-      });
-    }
+    expect(manager.delete).toHaveBeenCalledTimes(1);
+    const filter = argOf(manager.delete, 0, 1) as { id: { _value: string[] } };
+    expect(filter.id._value).toEqual(['8', '9']);
   });
 });

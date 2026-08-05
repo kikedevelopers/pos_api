@@ -7,7 +7,8 @@ import { QueryFailedError } from 'typeorm';
 export const PG_UNIQUE_VIOLATION = '23505';
 
 /**
- * Postgres SQLSTATE para `foreign_key_violation`.
+ * Postgres SQLSTATE para `foreign_key_violation`. Se conserva exportado para
+ * los tests de regresión del borrado de niveles de precio.
  */
 export const PG_FOREIGN_KEY_VIOLATION = '23503';
 
@@ -73,34 +74,15 @@ export function translateProductConstraintError(error: unknown): void {
   });
 }
 
-/**
- * Traduce el `foreign_key_violation` que Postgres lanza al intentar borrar un
- * `product_prices` todavía referenciado.
+/*
+ * Antes vivía aquí `translateProductPriceDeleteError`, que traducía el 23503
+ * del DELETE de un `product_prices` a "No se puede eliminar un nivel de precio
+ * que ya tiene ventas o historial de compras asociado".
  *
- * Dos FKs lo protegen con `NO ACTION`:
- *   - `sale_invoice_lines.product_price_id` → el nivel de precio ya se vendió.
- *   - `product_price_history.product_price_id` → la recepción de una compra
- *     dejó un snapshot de costo/precio apuntando a esa fila.
- *
- * Sin esta traducción el error subía crudo al filtro global y el cliente veía
- * un 500 "Error interno del servidor" opaco al guardar un producto.
- *
- * Si el match no aplica, NO re-lanza: deja al caller relanzar el original.
+ * Ya no existe: desde `AllowPriceLevelDeleteKeepingHistory1747012300000` las
+ * dos FKs que apuntaban al nivel (`sale_invoice_lines.product_price_id` y
+ * `product_price_history.product_price_id`) son `ON DELETE SET NULL`, así que
+ * el borrado SIEMPRE procede y el histórico queda intacto. Traducir un error
+ * que el esquema ya no puede producir solo servía para volver a prohibir lo
+ * que ahora está permitido.
  */
-export function translateProductPriceDeleteError(error: unknown): void {
-  if (!(error instanceof QueryFailedError)) {
-    return;
-  }
-
-  const pgError = error as QueryFailedError & { code?: string };
-
-  if (pgError.code !== PG_FOREIGN_KEY_VIOLATION) {
-    return;
-  }
-
-  throw new BadRequestException({
-    message:
-      'No se puede eliminar un nivel de precio que ya tiene ventas o historial de compras asociado. Ajusta su valor en lugar de eliminarlo.',
-    payload: { code: 'PRODUCT_PRICE_IN_USE' },
-  });
-}

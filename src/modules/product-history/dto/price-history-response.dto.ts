@@ -13,8 +13,12 @@ export class PriceHistoryEntryDto {
   @ApiProperty({ example: 1 })
   id!: number;
 
-  @ApiProperty({ example: 7 })
-  product_price_id!: number;
+  @ApiPropertyOptional({
+    example: 7,
+    nullable: true,
+    description: 'NULL si el nivel de precio fue eliminado del catálogo (el snapshot se conserva).',
+  })
+  product_price_id!: number | null;
 
   @ApiProperty({ example: 42 })
   product_id!: number;
@@ -66,7 +70,7 @@ export function toPriceHistoryEntryDto(
 ): PriceHistoryEntryDto {
   return {
     id: Number(entry.id),
-    product_price_id: Number(entry.product_price_id),
+    product_price_id: entry.product_price_id !== null ? Number(entry.product_price_id) : null,
     product_id: Number(entry.product_id),
     cost_history_id: entry.cost_history_id !== null ? Number(entry.cost_history_id) : null,
     purchase_id: joined.purchase_id,

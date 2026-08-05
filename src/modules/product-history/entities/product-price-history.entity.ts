@@ -43,16 +43,18 @@ export class ProductPriceHistory {
   @JoinColumn({ name: 'company_id' })
   company!: Company;
 
-  @Column({ type: 'bigint', nullable: false })
-  product_price_id!: string;
+  // NULL = el nivel de precio se eliminó del catálogo. El snapshot se conserva
+  // igual (ver `product_id`): borrar un precio nunca borra histórico.
+  @Column({ type: 'bigint', nullable: true })
+  product_price_id!: string | null;
 
   @ManyToOne(() => ProductPrice, {
-    onDelete: 'RESTRICT',
+    onDelete: 'SET NULL',
     onUpdate: 'CASCADE',
-    nullable: false,
+    nullable: true,
   })
   @JoinColumn({ name: 'product_price_id' })
-  product_price!: ProductPrice;
+  product_price!: ProductPrice | null;
 
   @Column({ type: 'bigint', nullable: false })
   product_id!: string;

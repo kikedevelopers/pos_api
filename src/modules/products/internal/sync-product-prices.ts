@@ -5,8 +5,6 @@ import { calculateMargin, calculateProfit } from '@/common/utils/precision';
 import type { ProductPriceInputDto } from '../dto/product-price.dto';
 import { ProductPrice } from '../entities/product-price.entity';
 
-import { translateProductPriceDeleteError } from './constraint-errors';
-
 /**
  * Precio ya persistido del producto, en la forma mínima que necesita el sync.
  */
@@ -35,12 +33,10 @@ export interface PricePairing {
  *   2. **Por posición** (cliente legacy): NINGÚN precio entrante trae `id`.
  *      PlacePos ≤ 1.0.0 reconstruye el array del formulario con sólo
  *      `sale_price/profit/margin`, así que el modo 1 leería "borra todos e
- *      inserta de nuevo". Ese DELETE explota contra las FKs de
- *      `sale_invoice_lines` / `product_price_history` en cuanto el producto se
- *      vendió o entró por una compra → el usuario no podía editar el precio.
- *      Emparejando por posición (existentes ordenados por id ascendente,
- *      mismo orden en que el cliente los pinta) hacemos UPDATE in-place: sin
- *      DELETE no hay violación de FK y el historial queda intacto.
+ *      inserta de nuevo": el nivel perdería su identidad y su historial de
+ *      precio quedaría desconectado en cada guardado. Emparejando por posición
+ *      (existentes ordenados por id ascendente, mismo orden en que el cliente
+ *      los pinta) hacemos UPDATE in-place y el nivel conserva su id.
  *
  * En ambos modos los precios entrantes de más se insertan y los existentes
  * sobrantes se borran (el cliente quitó un nivel de precio de verdad).
@@ -96,16 +92,16 @@ export async function syncProductPrices(args: SyncProductPricesArgs): Promise<vo
   const { pairs, toDelete } = pairIncomingPrices(incoming, existing);
 
   if (toDelete.length > 0) {
-    try {
-      await manager.delete(ProductPrice, {
-        id: In(toDelete),
-        product_id: productId,
-        company_id: String(companyId),
-      });
-    } catch (error) {
-      translateProductPriceDeleteError(error);
-      throw error;
-    }
+    // Borrar un nivel de precio SIEMPRE está permitido, tenga ventas o
+    // historial de compras: `sale_invoice_lines.product_price_id` y
+    // `product_price_history.product_price_id` son FKs `ON DELETE SET NULL`
+    // (ver AllowPriceLevelDeleteKeepingHistory1747012300000), así que el
+    // histórico se conserva íntegro y solo se vacía el puntero al catálogo.
+    await manager.delete(ProductPrice, {
+      id: In(toDelete),
+      product_id: productId,
+      company_id: String(companyId),
+    });
   }
 
   for (const { input, targetId } of pairs) {

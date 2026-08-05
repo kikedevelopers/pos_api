@@ -2963,10 +2963,11 @@ export class ImportZipAction {
    * antes/después de un cambio de costo.
    *
    * Mapeo backup→cloud:
-   *   - `product_price_id` remapeado contra `product_prices`; requerido (FK NOT
-   *     NULL) → skip si no resuelve. OJO: `product_prices` topa en 5 por
-   *     producto en el import, así que precios excedentes no existen y sus
-   *     snapshots se descartan legítimamente.
+   *   - `product_price_id` remapeado contra `product_prices`; NULLABLE en cloud
+   *     (FK SET NULL desde que se puede eliminar un nivel de precio) → si no
+   *     resuelve dejamos NULL y CONSERVAMOS el snapshot. OJO: `product_prices`
+   *     topa en 5 por producto en el import, así que los snapshots de precios
+   *     excedentes entran igual, atribuidos a su producto.
    *   - `product_id` remapeado; requerido (FK NOT NULL) → skip si no resuelve.
    *   - `cost_history_id` offline es NOT NULL, pero el cloud lo modela nullable
    *     (FK SET NULL). Lo remapeamos contra `product_cost_history`; si su row
@@ -2986,12 +2987,15 @@ export class ImportZipAction {
         skippedNoDate++;
         continue;
       }
+      // product_price_id: nullable en cloud desde que se puede eliminar un
+      // nivel de precio (FK SET NULL) → si el nivel no resuelve conservamos el
+      // snapshot con NULL en vez de descartarlo. El histórico nunca se pierde.
       const productPriceIdReal = ctx.remapper.getOptional(
         'product_prices',
         asNullableString(row.product_price_id),
       );
       const productIdReal = ctx.remapper.getOptional('products', asNullableString(row.product_id));
-      if (productPriceIdReal === null || productIdReal === null) {
+      if (productIdReal === null) {
         skipped++;
         continue;
       }
@@ -3021,7 +3025,7 @@ export class ImportZipAction {
     }
     if (skipped > 0) {
       ctx.warnings.push(
-        `product_price_history: ${skipped} snapshots descartados (product_price/product inexistente)`,
+        `product_price_history: ${skipped} snapshots descartados (product inexistente)`,
       );
     }
     if (skippedNoDate > 0) {

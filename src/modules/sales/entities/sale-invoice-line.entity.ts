@@ -97,11 +97,14 @@ export class SaleInvoiceLine {
   @JoinColumn({ name: 'packaging_id' })
   packaging!: Packaging | null;
 
+  // NULL = fue precio libre, o el nivel de precio se eliminó del catálogo
+  // después de la venta. El precio cobrado vive en esta misma línea, así que
+  // borrar un nivel jamás altera lo facturado.
   @Column({ type: 'bigint', nullable: true })
   product_price_id!: string | null;
 
   @ManyToOne(() => ProductPrice, {
-    onDelete: 'RESTRICT',
+    onDelete: 'SET NULL',
     onUpdate: 'CASCADE',
     nullable: true,
   })
