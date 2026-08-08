@@ -40,6 +40,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { InventoryQueryDto } from './dto/inventory-query.dto';
 import { PriceComparisonResponseDto } from './dto/price-comparison-response.dto';
 import {
+  DuplicateProductResponseDto,
   ProductMinimalResponseDto,
   ProductResponseDto,
   SalesHistoryResponseDto,
@@ -317,6 +318,47 @@ export class ProductsController {
     return {
       id: Number(product.id),
       name: product.name,
+      created_by: product.created_by ?? null,
+      created_at: product.created_at.toISOString(),
+    };
+  }
+
+  /**
+   * `POST /inventory/:id/duplicate` — Duplica un producto del catálogo.
+   *
+   * Copia todo salvo SKU, código de barras (únicos) y stock (arranca en 0).
+   * El nombre lleva el sufijo "COPIA" (numerado si ya existía). Espejo PlacePos.
+   */
+  @Post(':id/duplicate')
+  @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Duplicar un producto',
+    description:
+      'Crea una copia con el mismo costo, precios, categoría, empaque, descripción y receta ' +
+      '(si es COMBO). NO copia sku_code ni bar_code (son únicos) y el stock arranca en 0. ' +
+      'El nombre es "<NOMBRE> COPIA", numerado si ya existe.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.CREATED, type: DuplicateProductResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Receta del combo inválida' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol insuficiente' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
+  async duplicate(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<DuplicateProductResponseDto> {
+    const product = await this.productsService.duplicate(id, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+    });
+    return {
+      id: Number(product.id),
+      name: product.name,
+      source_id: id,
       created_by: product.created_by ?? null,
       created_at: product.created_at.toISOString(),
     };

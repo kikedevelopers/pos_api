@@ -11,6 +11,7 @@ import {
 } from './actions/bulk-toggle-show-in-pos.action';
 import { CompareProductPricesAction } from './actions/compare-product-prices.action';
 import { CreateProductAction, type ProductCreator } from './actions/create-product.action';
+import { DuplicateProductAction } from './actions/duplicate-product.action';
 import { FindAllProductsAction } from './actions/find-all-products.action';
 import { FindProductByIdAction } from './actions/find-product-by-id.action';
 import { FindSupplierHistoryAction } from './actions/find-supplier-history.action';
@@ -46,6 +47,7 @@ export class ProductsService {
     private readonly findProductByIdAction: FindProductByIdAction,
     private readonly createProductAction: CreateProductAction,
     private readonly updateProductAction: UpdateProductAction,
+    private readonly duplicateProductAction: DuplicateProductAction,
     private readonly bulkArchiveProductsAction: BulkArchiveProductsAction,
     private readonly bulkToggleShowInPosAction: BulkToggleShowInPosAction,
     private readonly bulkProcessProductsAction: BulkProcessProductsAction,
@@ -74,6 +76,10 @@ export class ProductsService {
     actor: ProductCreator,
   ): Promise<Product> {
     return this.updateProductAction.execute(id, dto, companyId, actor);
+  }
+
+  duplicate(id: number, companyId: number, actor: ProductCreator): Promise<Product> {
+    return this.duplicateProductAction.execute(id, companyId, actor);
   }
 
   bulkArchive(ids: number[], companyId: number): Promise<BulkArchiveResult> {

@@ -337,6 +337,29 @@ export class ProductMinimalResponseDto {
 }
 
 /**
+ * Respuesta de `POST /inventory/:id/duplicate`. Espejo del payload de PlacePos.
+ * `name` es el nombre YA resuelto de la copia (con su sufijo "COPIA"/"COPIA N"):
+ * el cliente no lo adivina, lo muestra tal cual. `source_id` deja rastro del
+ * producto del que salió.
+ */
+export class DuplicateProductResponseDto {
+  @ApiProperty({ example: 42 })
+  id!: number;
+
+  @ApiProperty({ example: 'ARROZ DIANA COPIA 2' })
+  name!: string;
+
+  @ApiProperty({ example: 7 })
+  source_id!: number;
+
+  @ApiProperty({ example: 'Kike Pacheco', nullable: true })
+  created_by!: string | null;
+
+  @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
+  created_at!: string;
+}
+
+/**
  * @deprecated Fase 3A — el endpoint single `PUT /:id/show-in-pos` fue
  * reemplazado por el bulk `PUT /inventory/show-in-pos`. Ver
  * `BulkToggleShowInPosResponseDto`. Se conserva por si algún cliente

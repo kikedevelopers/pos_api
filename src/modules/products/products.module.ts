@@ -9,6 +9,7 @@ import { BulkToggleShowInPosAction } from './actions/bulk-toggle-show-in-pos.act
 import { CloneProductsToBranchAction } from './actions/clone-products-to-branch.action';
 import { CompareProductPricesAction } from './actions/compare-product-prices.action';
 import { CreateProductAction } from './actions/create-product.action';
+import { DuplicateProductAction } from './actions/duplicate-product.action';
 import { FindAllProductsAction } from './actions/find-all-products.action';
 import { FindProductByIdAction } from './actions/find-product-by-id.action';
 import { FindSupplierHistoryAction } from './actions/find-supplier-history.action';
@@ -50,6 +51,7 @@ import { ProductsService } from './products.service';
     FindProductByIdAction,
     CreateProductAction,
     UpdateProductAction,
+    DuplicateProductAction,
     BulkArchiveProductsAction,
     BulkToggleShowInPosAction,
     BulkProcessProductsAction,
