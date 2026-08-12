@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import type { MailConfig } from '@/config/mail.config';
 
 import { SendAccountActivatedEmailAction } from './actions/send-account-activated-email.action';
+import { SendPasswordChangedEmailAction } from './actions/send-password-changed-email.action';
+import { SendPasswordResetEmailAction } from './actions/send-password-reset-email.action';
 import { SendTestEmailAction } from './actions/send-test-email.action';
 import { SendWelcomeEmailAction } from './actions/send-welcome-email.action';
 import { createMailDriver } from './drivers/mail-driver.factory';
@@ -36,11 +38,19 @@ import { MailService } from './mail.service';
     SendTestEmailAction,
     SendWelcomeEmailAction,
     SendAccountActivatedEmailAction,
+    SendPasswordResetEmailAction,
+    SendPasswordChangedEmailAction,
   ],
   // Las actions de correo se exportan porque las dispara `AuthModule` (al
   // registrar un owner y al activar su cuenta): las plantillas y sus asuntos
   // viven aquí, con el resto de los correos, no repartidos por los módulos de
   // dominio.
-  exports: [MailService, SendWelcomeEmailAction, SendAccountActivatedEmailAction],
+  exports: [
+    MailService,
+    SendWelcomeEmailAction,
+    SendAccountActivatedEmailAction,
+    SendPasswordResetEmailAction,
+    SendPasswordChangedEmailAction,
+  ],
 })
 export class MailModule {}

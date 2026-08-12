@@ -2,6 +2,8 @@ import {
   AccountActivatedEmail,
   type AccountActivatedEmailProps,
 } from '../emails/account-activated';
+import { PasswordChangedEmail, type PasswordChangedEmailProps } from '../emails/password-changed';
+import { PasswordResetEmail, type PasswordResetEmailProps } from '../emails/password-reset';
 import { WelcomeEmail, type WelcomeEmailProps } from '../emails/welcome';
 
 import { renderEmail } from './render';
@@ -12,7 +14,11 @@ import type { RenderedEmail } from './test-email.template';
  * envío de prueba, así que renombrar uno rompe el botón: se añaden, no se
  * cambian.
  */
-export type EmailTemplateId = 'welcome' | 'account-activated';
+export type EmailTemplateId =
+  | 'welcome'
+  | 'account-activated'
+  | 'password-reset'
+  | 'password-changed';
 
 export interface EmailTemplateInfo {
   id: EmailTemplateId;
@@ -44,12 +50,26 @@ export const EMAIL_TEMPLATES: readonly EmailTemplateInfo[] = [
     description: 'Confirma que la activación salió bien y lo empuja a cargar su catálogo.',
     trigger: 'Al canjear el enlace de activación del correo de bienvenida.',
   },
+  {
+    id: 'password-reset',
+    name: 'Recuperar contraseña',
+    description: 'Enlace de un solo uso que abre PlacePos para escribir una contraseña nueva.',
+    trigger: 'Al pedir "¿Olvidaste tu contraseña?" desde el inicio de sesión.',
+  },
+  {
+    id: 'password-changed',
+    name: 'Contraseña actualizada',
+    description: 'Avisa del cambio. Es la alarma de quien NO lo hizo, no una felicitación.',
+    trigger: 'Justo después de cambiar la contraseña con el enlace.',
+  },
 ] as const;
 
 /** Datos de muestra de cada plantilla, para las pruebas del panel. */
 const SAMPLE_DATA: {
   welcome: WelcomeEmailProps;
   'account-activated': AccountActivatedEmailProps;
+  'password-reset': PasswordResetEmailProps;
+  'password-changed': PasswordChangedEmailProps;
 } = {
   welcome: {
     customer_name: 'Enrique',
@@ -61,6 +81,14 @@ const SAMPLE_DATA: {
   'account-activated': {
     customer_name: 'Enrique',
     company_name: 'Esencia & Grano',
+  },
+  'password-reset': {
+    customer_name: 'Enrique',
+    reset_url:
+      'https://placepos.kikedevs.com/restablecer?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  },
+  'password-changed': {
+    changed_at_label: '12/08/2026 a las 03:41 PM',
   },
 };
 
@@ -76,7 +104,9 @@ export const isEmailTemplateId = (value: string): value is EmailTemplateId =>
 // `async` a propósito aunque el cuerpo no espere nada en el camino de error:
 // sin él, un id desconocido lanzaría de forma SÍNCRONA pese a que la firma
 // promete un `Promise`, y un `.catch()` del llamador no lo atraparía.
-export type EmailSampleOverrides = Partial<WelcomeEmailProps & AccountActivatedEmailProps>;
+export type EmailSampleOverrides = Partial<
+  WelcomeEmailProps & AccountActivatedEmailProps & PasswordResetEmailProps
+>;
 
 export const renderSampleEmail = async (
   id: EmailTemplateId,
@@ -90,6 +120,13 @@ export const renderSampleEmail = async (
     case 'account-activated': {
       const { customer_name, company_name } = { ...SAMPLE_DATA['account-activated'], ...overrides };
       return renderAccountActivatedEmail({ customer_name, company_name });
+    }
+    case 'password-reset': {
+      const { customer_name, reset_url } = { ...SAMPLE_DATA['password-reset'], ...overrides };
+      return renderPasswordResetEmail({ customer_name, reset_url });
+    }
+    case 'password-changed': {
+      return renderPasswordChangedEmail(SAMPLE_DATA['password-changed']);
     }
     default: {
       // Exhaustividad en compilación: añadir un id sin su rama rompe el build.
@@ -108,3 +145,13 @@ export const renderAccountActivatedEmail = (
   props: AccountActivatedEmailProps,
 ): Promise<RenderedEmail> =>
   renderEmail('Tu cuenta de PlacePOS ya está activa', AccountActivatedEmail(props));
+
+/** Renderiza el correo con el enlace para cambiar la contraseña. */
+export const renderPasswordResetEmail = (props: PasswordResetEmailProps): Promise<RenderedEmail> =>
+  renderEmail('Cambia tu contraseña de PlacePOS', PasswordResetEmail(props));
+
+/** Renderiza el aviso de contraseña actualizada. */
+export const renderPasswordChangedEmail = (
+  props: PasswordChangedEmailProps,
+): Promise<RenderedEmail> =>
+  renderEmail('Tu contraseña de PlacePOS se actualizó', PasswordChangedEmail(props));

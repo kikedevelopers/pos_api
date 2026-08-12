@@ -6,10 +6,14 @@ import { CheckEmailAction } from './actions/check-email.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
 import { ActivateAccountAction } from './actions/activate-account.action';
+import { RequestPasswordResetAction } from './actions/request-password-reset.action';
+import { ResetPasswordAction } from './actions/reset-password.action';
 import { LoginAction } from './actions/login.action';
 import { RegisterAction } from './actions/register.action';
 import type {
   ActivateAccountResponseDto,
+  ForgotPasswordResponseDto,
+  ResetPasswordResponseDto,
   AuthResponseDto,
   AuthUserDto,
   ProfileResponseDto,
@@ -33,6 +37,8 @@ export class AuthService {
     private readonly registerAction: RegisterAction,
     private readonly loginAction: LoginAction,
     private readonly activateAccountAction: ActivateAccountAction,
+    private readonly requestPasswordResetAction: RequestPasswordResetAction,
+    private readonly resetPasswordAction: ResetPasswordAction,
     private readonly getMeAction: GetMeAction,
     private readonly getProfileAction: GetProfileAction,
     private readonly checkEmailAction: CheckEmailAction,
@@ -47,6 +53,14 @@ export class AuthService {
 
   activate(token: string): Promise<ActivateAccountResponseDto> {
     return this.activateAccountAction.execute(token);
+  }
+
+  forgotPassword(email: string): Promise<ForgotPasswordResponseDto> {
+    return this.requestPasswordResetAction.execute(email);
+  }
+
+  resetPassword(token: string, password: string): Promise<ResetPasswordResponseDto> {
+    return this.resetPasswordAction.execute(token, password);
   }
 
   login(dto: LoginDto): Promise<AuthResponseDto> {

@@ -11,13 +11,16 @@ import { AuthService } from './auth.service';
 import {
   ActivateAccountResponseDto,
   AuthResponseDto,
+  ForgotPasswordResponseDto,
   MeResponseDto,
   ProfileResponseDto,
   RegisterResponseDto,
+  ResetPasswordResponseDto,
 } from './dto/auth-response.dto';
 import { CheckEmailDto, CheckEmailResponseDto } from './dto/check-email.dto';
 import { LoginDto } from './dto/login.dto';
 import { ActivateAccountDto } from './dto/activate-account.dto';
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { RegisterDto } from './dto/register.dto';
 
 /**
@@ -81,6 +84,48 @@ export class AuthController {
   })
   activate(@Body() dto: ActivateAccountDto): Promise<ActivateAccountResponseDto> {
     return this.authService.activate(dto.token);
+  }
+
+  @Post('forgot-password')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Pedir el enlace para cambiar la contraseña',
+    description:
+      'Envía un enlace de un solo uso (vigente 2 horas) al correo de la cuenta. ' +
+      'Distingue "no existe" de "sin activar" para poder decirle al usuario qué ' +
+      'le pasa; el precio es que permite averiguar si una dirección está ' +
+      'registrada, acotado por el rate limit global.',
+  })
+  @ApiBody({ type: ForgotPasswordDto })
+  @ApiResponse({ status: HttpStatus.OK, type: ForgotPasswordResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'No existe (code: ACCOUNT_NOT_FOUND)' })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'La cuenta no está activada (code: ACCOUNT_NOT_ACTIVATED)',
+  })
+  forgotPassword(@Body() dto: ForgotPasswordDto): Promise<ForgotPasswordResponseDto> {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  @Post('reset-password')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cambiar la contraseña con el token del correo',
+    description:
+      'Aplica las MISMAS reglas que el registro (8+, mayúscula, minúscula y un ' +
+      'carácter especial) en el servidor, quema el token y avisa por correo del ' +
+      'cambio.',
+  })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({ status: HttpStatus.OK, type: ResetPasswordResponseDto })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Token inválido/vencido/usado o contraseña que no cumple las reglas',
+  })
+  resetPassword(@Body() dto: ResetPasswordDto): Promise<ResetPasswordResponseDto> {
+    return this.authService.resetPassword(dto.token, dto.password);
   }
 
   @Post('check/email')

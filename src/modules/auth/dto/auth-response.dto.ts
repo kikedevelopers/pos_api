@@ -243,3 +243,24 @@ export class ActivateAccountResponseDto {
   @ApiProperty({ example: 'kike@esenciaygrano.com' })
   email!: string;
 }
+
+/** Respuesta de `POST /auth/forgot-password`. */
+export class ForgotPasswordResponseDto {
+  @ApiProperty({ example: true })
+  sent!: boolean;
+
+  @ApiProperty({
+    example: 'k***e@esenciaygrano.com',
+    description: 'Destinatario enmascarado: confirma a dónde fue sin exponerlo entero.',
+  })
+  email!: string;
+}
+
+/** Respuesta de `POST /auth/reset-password`. */
+export class ResetPasswordResponseDto {
+  @ApiProperty({ example: true })
+  updated!: boolean;
+
+  @ApiProperty({ example: 'k***e@esenciaygrano.com' })
+  email!: string;
+}

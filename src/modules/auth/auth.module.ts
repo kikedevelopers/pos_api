@@ -22,6 +22,8 @@ import { ListBranchesAction } from './actions/list-branches.action';
 import { ActivateAccountAction } from './actions/activate-account.action';
 import { IssueActivationTokenAction } from './actions/issue-activation-token.action';
 import { LoginAction } from './actions/login.action';
+import { RequestPasswordResetAction } from './actions/request-password-reset.action';
+import { ResetPasswordAction } from './actions/reset-password.action';
 import { RegisterAction } from './actions/register.action';
 import { SeedCompanyAction } from './actions/seed-company.action';
 import { SetActiveBranchesAction } from './actions/set-active-branches.action';
@@ -88,6 +90,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     LoginAction,
     ActivateAccountAction,
     IssueActivationTokenAction,
+    RequestPasswordResetAction,
+    ResetPasswordAction,
     GetMeAction,
     GetProfileAction,
     CheckEmailAction,

@@ -1,78 +1,38 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import {
+  evaluateOneTimeToken,
+  expiresInDays,
+  generateOneTimeToken,
+  hashOneTimeToken,
+  looksLikeOneTimeToken,
+  oneTimeHashMatches,
+  type StoredOneTimeToken,
+  type TokenRejection,
+} from './one-time-token';
 
 /**
- * Token de activación: generación, hash y validación. Puro y testeado — es lo
- * único que separa "activar mi cuenta" de "activar la cuenta de cualquiera".
+ * Token de activación de cuenta.
+ *
+ * El mecanismo (generar, hashear, evaluar) vive en `one-time-token.ts`, que
+ * comparte con la recuperación de contraseña: son el mismo artefacto. Aquí solo
+ * queda lo propio de la activación — cuánto vive, a dónde apunta el enlace y
+ * qué se le dice al usuario cuando no sirve.
  */
 
-/**
- * 32 bytes de aleatoriedad criptográfica (64 caracteres hex). Un token de
- * activación es una credencial de un solo uso que viaja en una URL: tiene que
- * ser imposible de adivinar y no puede depender de datos del usuario.
- */
-export const generateActivationToken = (): string => randomBytes(32).toString('hex');
+export const generateActivationToken = generateOneTimeToken;
+export const hashActivationToken = hashOneTimeToken;
+export const activationHashMatches = oneTimeHashMatches;
+export const looksLikeActivationToken = looksLikeOneTimeToken;
+export const evaluateActivationToken = evaluateOneTimeToken;
 
-/** SHA-256 hex. Es lo ÚNICO que se guarda en la base. */
-export const hashActivationToken = (token: string): string =>
-  createHash('sha256').update(token.trim()).digest('hex');
-
-/**
- * Comparación en tiempo constante de dos hashes. Un `===` filtra por timing en
- * cuántos caracteres coincidieron, que es justo lo que necesita un atacante
- * para ir adivinando el token byte a byte.
- */
-export const activationHashMatches = (a: string, b: string): boolean => {
-  const left = Buffer.from(a, 'utf8');
-  const right = Buffer.from(b, 'utf8');
-  // `timingSafeEqual` exige la misma longitud; distintas = distinto hash.
-  return left.length === right.length && timingSafeEqual(left, right);
-};
-
-/**
- * Un token con forma válida: 64 caracteres hexadecimales. Filtrar temprano
- * evita ir a la base con cualquier basura que llegue en la URL.
- */
-export const looksLikeActivationToken = (value: string): boolean =>
-  /^[0-9a-f]{64}$/i.test(value.trim());
+export type ActivationRejection = TokenRejection;
+export type StoredActivationToken = StoredOneTimeToken;
 
 /** Vigencia del enlace. Suficiente para quien no lee el correo el mismo día. */
 export const ACTIVATION_TOKEN_TTL_DAYS = 7;
 
 /** Caducidad a partir del momento de emisión. */
 export const activationExpiresAt = (from: Date, days: number = ACTIVATION_TOKEN_TTL_DAYS): Date =>
-  new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
-
-/** Motivos por los que un token no sirve. Los distingue la UI de activación. */
-export type ActivationRejection = 'invalid' | 'expired' | 'used';
-
-/** Lo mínimo que necesita `evaluateActivationToken` de un token guardado. */
-export interface StoredActivationToken {
-  expires_at: Date;
-  used_at: Date | null;
-}
-
-/**
- * Decide si un token guardado sigue sirviendo. Puro: recibe el registro y el
- * `now`, para poder testear la caducidad sin tocar el reloj.
- *
- * El caso válido DEVUELVE el registro (ya sin `null`), para que quien llama no
- * tenga que asegurarle al compilador algo que esta función acaba de comprobar.
- */
-export const evaluateActivationToken = <T extends StoredActivationToken>(
-  record: T | null,
-  now: Date,
-): { valid: true; record: T } | { valid: false; reason: ActivationRejection } => {
-  if (!record) {
-    return { valid: false, reason: 'invalid' };
-  }
-  if (record.used_at !== null) {
-    return { valid: false, reason: 'used' };
-  }
-  if (record.expires_at.getTime() <= now.getTime()) {
-    return { valid: false, reason: 'expired' };
-  }
-  return { valid: true, record };
-};
+  expiresInDays(from, days);
 
 /** Mensaje para el usuario final según el motivo del rechazo. */
 export const describeActivationRejection = (reason: ActivationRejection): string => {
