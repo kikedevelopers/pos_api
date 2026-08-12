@@ -78,8 +78,14 @@ cd placepos && pnpm deeplink:register-dev
 open "placepos://reset-password?token=abc123"   # comprobación
 ```
 
+El script hace dos cosas sobre ese `Info.plist`: declara el esquema y **renombra
+el bundle a "PlacePos"**. El diálogo de confirmación del navegador ("¿Abrir …?")
+lo escribe el sistema con el nombre del bundle registrado; sin el renombrado
+diría *"Open Electron"*, que no le dice nada a nadie.
+
 Vive dentro de `node_modules`, así que se pierde al reinstalar dependencias. En
-la app EMPAQUETADA no hace falta: lo declara `CFBundleURLTypes`.
+la app EMPAQUETADA no hace falta ninguna de las dos cosas: el esquema lo declara
+`CFBundleURLTypes` y el bundle ya se llama PlacePos (`productName`).
 
 ### La página nunca usa `location.href` para el esquema
 
