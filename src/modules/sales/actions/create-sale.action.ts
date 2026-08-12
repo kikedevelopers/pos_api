@@ -457,6 +457,11 @@ export class CreateSaleAction {
       creditNotes: [],
       pointsEnabled: false,
       customerPoints: null,
+      // Mismo motivo que los puntos: la respuesta de creación no los serializa
+      // y el detalle los resuelve leyendo la ficha del cliente. Neutros aquí
+      // para no gastar una consulta que nadie va a mirar.
+      customerAddress: null,
+      customerPhone: null,
       // La respuesta de creación (`toCreateSaleResponseDto`) no serializa el
       // historial; el detalle (`GET /sales/:id`) lo recarga desde BD. Neutro aquí.
       statusHistory: [],

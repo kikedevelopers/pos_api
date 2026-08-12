@@ -215,6 +215,8 @@ export class SalesController {
       creditNotes,
       pointsEnabled,
       customerPoints,
+      customerAddress,
+      customerPhone,
       statusHistory,
     } = await this.salesService.findOne(id, companyId);
     return toSaleResponseDto(
@@ -226,6 +228,8 @@ export class SalesController {
       pointsEnabled,
       customerPoints,
       statusHistory,
+      customerAddress,
+      customerPhone,
     );
   }
 
