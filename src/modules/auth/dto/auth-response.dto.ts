@@ -204,3 +204,42 @@ export class MeResponseDto {
   @ApiProperty({ type: AuthUserDto })
   user!: AuthUserDto;
 }
+
+/**
+ * Respuesta de `POST /auth/register`.
+ *
+ * NO trae `access_token` a propósito: la cuenta nace sin activar y no puede
+ * abrir sesión hasta que se canjee el enlace del correo. Devolver un JWT aquí
+ * dejaría entrar justo a quien todavía no ha probado que el correo es suyo.
+ */
+export class RegisterResponseDto {
+  @ApiProperty({ example: true, description: 'La cuenta requiere activación por correo.' })
+  activation_required!: boolean;
+
+  @ApiProperty({
+    example: 'kike@esenciaygrano.com',
+    description: 'Dirección a la que se envió el enlace de activación.',
+  })
+  email!: string;
+
+  @ApiProperty({ type: AuthUserDto })
+  user!: AuthUserDto;
+}
+
+/** Respuesta de `POST /auth/activate`. */
+export class ActivateAccountResponseDto {
+  @ApiProperty({ example: true })
+  activated!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'La cuenta ya estaba activa (doble clic en el enlace). No es un error.',
+  })
+  already_activated!: boolean;
+
+  @ApiProperty({ example: 'Enrique' })
+  name!: string;
+
+  @ApiProperty({ example: 'kike@esenciaygrano.com' })
+  email!: string;
+}

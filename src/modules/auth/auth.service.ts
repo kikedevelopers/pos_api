@@ -5,9 +5,16 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { CheckEmailAction } from './actions/check-email.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
+import { ActivateAccountAction } from './actions/activate-account.action';
 import { LoginAction } from './actions/login.action';
 import { RegisterAction } from './actions/register.action';
-import type { AuthResponseDto, AuthUserDto, ProfileResponseDto } from './dto/auth-response.dto';
+import type {
+  ActivateAccountResponseDto,
+  AuthResponseDto,
+  AuthUserDto,
+  ProfileResponseDto,
+  RegisterResponseDto,
+} from './dto/auth-response.dto';
 import type { CheckEmailDto, CheckEmailResponseDto } from './dto/check-email.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -25,13 +32,21 @@ export class AuthService {
   constructor(
     private readonly registerAction: RegisterAction,
     private readonly loginAction: LoginAction,
+    private readonly activateAccountAction: ActivateAccountAction,
     private readonly getMeAction: GetMeAction,
     private readonly getProfileAction: GetProfileAction,
     private readonly checkEmailAction: CheckEmailAction,
   ) {}
 
-  register(dto: RegisterDto): Promise<AuthResponseDto> {
-    return this.registerAction.execute(dto);
+  register(dto: RegisterDto): Promise<RegisterResponseDto> {
+    // Sin `skipActivation`, la action SIEMPRE devuelve la respuesta con
+    // `activation_required`. El camino que sí emite JWT es exclusivo del panel
+    // superadmin, que llama a la action directamente.
+    return this.registerAction.execute(dto) as Promise<RegisterResponseDto>;
+  }
+
+  activate(token: string): Promise<ActivateAccountResponseDto> {
+    return this.activateAccountAction.execute(token);
   }
 
   login(dto: LoginDto): Promise<AuthResponseDto> {

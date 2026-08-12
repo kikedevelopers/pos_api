@@ -19,6 +19,8 @@ import { CreateBranchAction } from './actions/create-branch.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
 import { ListBranchesAction } from './actions/list-branches.action';
+import { ActivateAccountAction } from './actions/activate-account.action';
+import { IssueActivationTokenAction } from './actions/issue-activation-token.action';
 import { LoginAction } from './actions/login.action';
 import { RegisterAction } from './actions/register.action';
 import { SeedCompanyAction } from './actions/seed-company.action';
@@ -84,6 +86,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     // Actions.
     RegisterAction,
     LoginAction,
+    ActivateAccountAction,
+    IssueActivationTokenAction,
     GetMeAction,
     GetProfileAction,
     CheckEmailAction,

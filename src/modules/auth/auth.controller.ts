@@ -8,9 +8,16 @@ import { SkipActiveCompanyCheck } from '@/common/decorators/skip-active-company-
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { AuthService } from './auth.service';
-import { AuthResponseDto, MeResponseDto, ProfileResponseDto } from './dto/auth-response.dto';
+import {
+  ActivateAccountResponseDto,
+  AuthResponseDto,
+  MeResponseDto,
+  ProfileResponseDto,
+  RegisterResponseDto,
+} from './dto/auth-response.dto';
 import { CheckEmailDto, CheckEmailResponseDto } from './dto/check-email.dto';
 import { LoginDto } from './dto/login.dto';
+import { ActivateAccountDto } from './dto/activate-account.dto';
 import { RegisterDto } from './dto/register.dto';
 
 /**
@@ -37,17 +44,43 @@ export class AuthController {
   @ApiOperation({
     summary: 'Crear cuenta (owner + company)',
     description:
-      'Crea atómicamente un User con rol `owner` y su Company. Devuelve un JWT igual al de login.',
+      'Crea atómicamente un User con rol `owner` y su Company, y envía el correo ' +
+      'de activación. NO devuelve JWT: la cuenta no puede iniciar sesión hasta ' +
+      'que se canjee el enlace en `POST /auth/activate`.',
   })
   @ApiBody({ type: RegisterDto })
-  @ApiResponse({ status: HttpStatus.CREATED, description: 'Cuenta creada', type: AuthResponseDto })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Cuenta creada, pendiente de activación',
+    type: RegisterResponseDto,
+  })
   @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
   @ApiResponse({
     status: HttpStatus.CONFLICT,
     description: 'Email ya registrado (code: EMAIL_TAKEN)',
   })
-  register(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
+  register(@Body() dto: RegisterDto): Promise<RegisterResponseDto> {
     return this.authService.register(dto);
+  }
+
+  @Post('activate')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Activar la cuenta con el token del correo de bienvenida',
+    description:
+      'Canjea el enlace de un solo uso y habilita el login. Responde 200 con ' +
+      '`already_activated: true` si la cuenta ya estaba activa (doble clic), ' +
+      'porque eso no es un error para quien lo hace.',
+  })
+  @ApiBody({ type: ActivateAccountDto })
+  @ApiResponse({ status: HttpStatus.OK, type: ActivateAccountResponseDto })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Token inválido, vencido o ya usado (code: ACTIVATION_TOKEN_*)',
+  })
+  activate(@Body() dto: ActivateAccountDto): Promise<ActivateAccountResponseDto> {
+    return this.authService.activate(dto.token);
   }
 
   @Post('check/email')

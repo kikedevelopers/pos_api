@@ -137,4 +137,16 @@ export class User {
    */
   @Column({ type: 'timestamptz', nullable: true })
   last_login!: Date | null;
+
+  /**
+   * Cuándo se activó la cuenta desde el enlace del correo de bienvenida.
+   * NULL = sin activar, y el login la rechaza (`ACCOUNT_NOT_ACTIVATED`).
+   *
+   * Solo lo deja en NULL el registro por cuenta propia de un owner. Los
+   * empleados, los usuarios espejo y las cuentas que crea el operador desde el
+   * panel nacen activadas: en esos casos ya hay alguien respondiendo por la
+   * cuenta y pedir un correo de vuelta solo estorbaría.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  activated_at!: Date | null;
 }

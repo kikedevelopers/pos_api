@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { DataSource } from 'typeorm';
@@ -103,6 +103,33 @@ export class LoginAction {
     }
   }
 
+  /**
+   * Bloqueo de login por cuenta sin activar.
+   *
+   * Igual que el chequeo de suscripción: se invoca DESPUÉS de `argon2.verify`,
+   * nunca antes. Así el mensaje —que sí es específico, porque el usuario tiene
+   * que saber que le falta abrir su correo— solo lo ve quien ya demostró
+   * conocer la contraseña, y no sirve para enumerar cuentas.
+   *
+   * Los usuarios espejo de empleados y las cuentas anteriores a esta función
+   * tienen `activated_at` poblado (backfill de la migración), así que nadie que
+   * hoy puede entrar se queda fuera.
+   */
+  private assertAccountActivated(user: User): void {
+    // Fail-CLOSED: solo pasa quien tiene fecha de activación. Comprobar contra
+    // `null` dejaría entrar a un `undefined` (un SELECT que no traiga la
+    // columna, un mock incompleto), y en una medida de seguridad el fallo tiene
+    // que ser hacia el lado que bloquea.
+    if (user.activated_at) {
+      return;
+    }
+    throw new ForbiddenException({
+      message:
+        'Tu cuenta todavía no está activada. Abre el correo de bienvenida y pulsa "Activar mi cuenta".',
+      payload: { code: 'ACCOUNT_NOT_ACTIVATED' },
+    });
+  }
+
   async execute(dto: LoginDto): Promise<AuthResponseDto> {
     const isEmailShape = looksLikeEmail(dto.username);
 
@@ -129,6 +156,9 @@ export class LoginAction {
       if (!passwordValid) {
         throw new UnauthorizedException('Credenciales inválidas');
       }
+      // Cuenta sin activar — tras verify, antes que nada más: no tiene sentido
+      // hablarle de su suscripción a quien todavía no ha confirmado el correo.
+      this.assertAccountActivated(user);
       // Bloqueo por suscripción vencida — tras verify, antes de firmar. El
       // superadmin (company_id null) queda exento dentro del helper.
       await this.assertSubscriptionActive(

@@ -45,6 +45,7 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
 import { FixedExpensesModule } from './modules/fixed-expenses/fixed-expenses.module';
+import { MailModule } from './modules/mail/mail.module';
 import { MigrationImportModule } from './modules/migration-import/migration-import.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -170,6 +171,11 @@ import { WalletsModule } from './modules/wallets/wallets.module';
 
     DatabaseModule,
     HealthModule,
+
+    // Correo saliente. `@Global`: cualquier módulo puede inyectar `MailService`
+    // sin importarlo. Va temprano porque es infraestructura, no dominio, y
+    // porque los módulos de dominio que envíen correos deben encontrarlo listo.
+    MailModule,
 
     // Módulos de dominio — Fase 0 a Fase 5.
     // Orden: dependencias antes que dependientes. `AuthModule` va último
