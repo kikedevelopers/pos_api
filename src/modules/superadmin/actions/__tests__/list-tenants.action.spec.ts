@@ -36,9 +36,22 @@ type BranchRow = {
   is_active: boolean;
 };
 
-function buildAction(entities: unknown[], raw: unknown[], total: number, branches: BranchRow[] = []) {
+/** Filas que devolvería la consulta del último enlace de activación. */
+type TokenRow = { user_id: string; expires_at: unknown; used_at: Date | null };
+
+function buildAction(
+  entities: unknown[],
+  raw: unknown[],
+  total: number,
+  branches: BranchRow[] = [],
+  tokens: TokenRow[] = [],
+) {
   const qb = makeQB(entities, raw, total);
-  const query = jest.fn().mockResolvedValue(branches);
+  // `manager.query` sirve DOS consultas distintas: las sucursales y el último
+  // enlace de activación de cada owner. Se distinguen por la tabla que tocan.
+  const query = jest.fn((sql: string) =>
+    Promise.resolve(String(sql).includes('user_activation_tokens') ? tokens : branches),
+  );
   const repo = { createQueryBuilder: jest.fn(() => qb), manager: { query } };
   const action = new ListTenantsAction(repo as never);
   return { action, qb, query };
@@ -168,15 +181,10 @@ describe('ListTenantsAction · sucursales', () => {
   });
 
   it('respeta el orden por antigüedad que devuelve la consulta (más vieja primero)', async () => {
-    const { action } = buildAction(
-      [owner],
-      [sub],
-      1,
-      [
-        branch({ id: '12', name: 'Sucursal Norte', created_at: new Date('2026-06-15T00:00:00Z') }),
-        branch({ id: '30', name: 'Sucursal Sur', created_at: new Date('2026-07-20T00:00:00Z') }),
-      ],
-    );
+    const { action } = buildAction([owner], [sub], 1, [
+      branch({ id: '12', name: 'Sucursal Norte', created_at: new Date('2026-06-15T00:00:00Z') }),
+      branch({ id: '30', name: 'Sucursal Sur', created_at: new Date('2026-07-20T00:00:00Z') }),
+    ]);
 
     const res = await action.execute({});
 
@@ -208,15 +216,10 @@ describe('ListTenantsAction · sucursales', () => {
       last_login: null,
       company: { id: '9', name: 'Negocio Ana', document_number: null },
     };
-    const { action } = buildAction(
-      [owner, ana],
-      [sub, sub],
-      2,
-      [
-        branch({ user_id: '5', id: '12', name: 'Sucursal de Kike' }),
-        branch({ user_id: '6', id: '13', name: 'Sucursal de Ana' }),
-      ],
-    );
+    const { action } = buildAction([owner, ana], [sub, sub], 2, [
+      branch({ user_id: '5', id: '12', name: 'Sucursal de Kike' }),
+      branch({ user_id: '6', id: '13', name: 'Sucursal de Ana' }),
+    ]);
 
     const res = await action.execute({});
 
@@ -286,10 +289,7 @@ describe('ListTenantsAction · búsqueda', () => {
 
     const res = await action.execute({ search: 'Sucursal Sur' });
 
-    expect(res.tenants.map((t) => t.companyName)).toEqual([
-      'Esencia & Grano',
-      'Sucursal Sur',
-    ]);
+    expect(res.tenants.map((t) => t.companyName)).toEqual(['Esencia & Grano', 'Sucursal Sur']);
   });
 
   it('sin búsqueda no añade filtros', async () => {
@@ -298,5 +298,114 @@ describe('ListTenantsAction · búsqueda', () => {
     await action.execute({});
 
     expect(qb.andWhere).not.toHaveBeenCalled();
+  });
+});
+
+describe('ListTenantsAction · estado de activación', () => {
+  const FUTURE = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+  const PAST = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  /** Owner sin activar; el token se decide por test. */
+  const pendingOwner = { ...owner, activated_at: null };
+
+  it('marca como activa la cuenta que ya confirmó el correo', async () => {
+    const activated = { ...owner, activated_at: new Date('2026-08-01T10:00:00Z') };
+    const { action } = buildAction([activated], [sub], 1);
+
+    const { tenants } = await action.execute({});
+
+    expect(tenants[0].activationStatus).toBe('active');
+    expect(tenants[0].canResendActivation).toBe(false);
+    expect(tenants[0].activatedAt).toBe('2026-08-01T10:00:00.000Z');
+  });
+
+  it('con enlace vigente queda pendiente y NO ofrece reenvío', async () => {
+    const { action } = buildAction(
+      [pendingOwner],
+      [sub],
+      1,
+      [],
+      [{ user_id: '5', expires_at: FUTURE, used_at: null }],
+    );
+
+    const { tenants } = await action.execute({});
+
+    expect(tenants[0].activationStatus).toBe('pending');
+    expect(tenants[0].canResendActivation).toBe(false);
+    expect(tenants[0].activationReason).toContain('todavía no lo abre');
+  });
+
+  it('con enlace vencido ofrece el reenvío y explica por qué', async () => {
+    const { action } = buildAction(
+      [pendingOwner],
+      [sub],
+      1,
+      [],
+      [{ user_id: '5', expires_at: PAST, used_at: null }],
+    );
+
+    const { tenants } = await action.execute({});
+
+    expect(tenants[0].activationStatus).toBe('expired');
+    expect(tenants[0].canResendActivation).toBe(true);
+    expect(tenants[0].activationReason).toContain('venció');
+  });
+
+  it('sin ningún enlace también ofrece el reenvío', async () => {
+    const { action } = buildAction([pendingOwner], [sub], 1, [], []);
+
+    const { tenants } = await action.execute({});
+
+    expect(tenants[0].activationStatus).toBe('no_link');
+    expect(tenants[0].canResendActivation).toBe(true);
+  });
+
+  it('una fila de token ilegible NO tumba el listado', async () => {
+    // El estado de activación es un adorno de la pantalla de cuentas: un dato
+    // raro tiene que degradar, no dejar al operador sin listado.
+    const { action } = buildAction(
+      [pendingOwner],
+      [sub],
+      1,
+      [],
+      [{ user_id: '5', expires_at: undefined, used_at: null }],
+    );
+
+    const { tenants } = await action.execute({});
+
+    expect(tenants).toHaveLength(1);
+    expect(tenants[0].activationStatus).toBe('no_link');
+  });
+
+  it('la sucursal hereda el estado del owner pero nunca ofrece reenvío', async () => {
+    // La activación es del dueño, no de cada company: reenviar desde una
+    // sucursal mandaría el mismo correo por un camino que confunde.
+    const { action } = buildAction(
+      [pendingOwner],
+      [sub],
+      1,
+      [branch()],
+      [{ user_id: '5', expires_at: PAST, used_at: null }],
+    );
+
+    const { tenants } = await action.execute({});
+
+    expect(tenants[1].isBranch).toBe(true);
+    expect(tenants[1].activationStatus).toBe('expired');
+    expect(tenants[1].canResendActivation).toBe(false);
+  });
+
+  it('pide el ÚLTIMO enlace por owner, no uno cualquiera', async () => {
+    // Reemitir invalida los anteriores: el único que dice algo del estado
+    // actual es el más reciente.
+    const { action, query } = buildAction([pendingOwner], [sub], 1, [], []);
+
+    await action.execute({});
+
+    const sql = String(
+      (query.mock.calls.find((c) => String(c[0]).includes('user_activation_tokens')) ?? [''])[0],
+    );
+    expect(sql).toContain('DISTINCT ON (t.user_id)');
+    expect(sql).toContain('ORDER BY t.user_id, t.created_at DESC');
   });
 });

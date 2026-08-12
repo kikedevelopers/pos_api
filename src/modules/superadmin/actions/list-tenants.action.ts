@@ -3,6 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Subscription } from '@/modules/subscriptions/entities/subscription.entity';
+
+import {
+  describeActivationStatus,
+  resolveActivationStatus,
+  type ActivationStatus,
+} from '../internal/activation-status';
 import type { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
 import { User, UserType } from '@/modules/users/entities/user.entity';
 
@@ -28,6 +34,16 @@ export interface ListTenantsItem {
   lastLogin: string | null;
   subscriptionStartedAt: string | null;
   subscriptionExpiresAt: string | null;
+  /** Estado de la confirmación del correo del owner. */
+  activationStatus: ActivationStatus;
+  /** Cuándo se activó. `null` si todavía no. */
+  activatedAt: string | null;
+  /** Vencimiento del último enlace de activación. `null` si no hay ninguno. */
+  activationLinkExpiresAt: string | null;
+  /** `true` cuando reenviar el correo resolvería la situación. */
+  canResendActivation: boolean;
+  /** Explicación para el operador (lo que se lee al pasar el cursor). */
+  activationReason: string;
   /** `true` si la fila es una sucursal (`companies.is_branch`). */
   isBranch: boolean;
   /** Negocio principal del que cuelga la sucursal. `null` en el principal. */
@@ -56,6 +72,12 @@ export interface ListTenantsResult {
 }
 
 /** Fila cruda de la consulta de sucursales por owner. */
+/** Fila de `user_activation_tokens` reducida a lo que decide el estado. */
+interface ActivationTokenRow {
+  expires_at: Date;
+  used_at: Date | null;
+}
+
 interface BranchRow {
   user_id: string;
   id: string;
@@ -151,8 +173,14 @@ export class ListTenantsAction {
       .skip(offset)
       .getRawAndEntities();
 
-    // Sucursales de los owners de ESTA página, agrupadas por owner.
-    const branchesByOwner = await this.loadBranches(entities.map((o) => o.id));
+    const ownerIds = entities.map((o) => o.id);
+    // Sucursales y último enlace de activación de los owners de ESTA página.
+    // Dos consultas para toda la página, no dos por fila.
+    const [branchesByOwner, tokensByOwner] = await Promise.all([
+      this.loadBranches(ownerIds),
+      this.loadLatestActivationTokens(ownerIds),
+    ]);
+    const now = new Date();
 
     const tenants: ListTenantsItem[] = [];
     entities.forEach((owner, i) => {
@@ -160,6 +188,12 @@ export class ListTenantsAction {
       const companyId = owner.company ? Number(owner.company.id) : Number(owner.company_id);
       const companyName = owner.company?.name ?? '';
       const ownerName = `${owner.name} ${owner.lastname}`.trim();
+
+      const activation = resolveActivationStatus(
+        owner.activated_at,
+        tokensByOwner.get(String(owner.id)) ?? null,
+        now,
+      );
 
       tenants.push({
         companyId,
@@ -175,6 +209,11 @@ export class ListTenantsAction {
         parentCompanyId: null,
         parentCompanyName: null,
         active: true,
+        activationStatus: activation.status,
+        activatedAt: activation.activatedAt,
+        activationLinkExpiresAt: activation.linkExpiresAt,
+        canResendActivation: activation.canResend,
+        activationReason: describeActivationStatus(activation),
       });
 
       // Sucursales justo debajo de su principal, más antigua primero.
@@ -196,6 +235,14 @@ export class ListTenantsAction {
           parentCompanyId: companyId,
           parentCompanyName: companyName,
           active: branch.is_active,
+          // La activación es del OWNER, no de cada company: la sucursal hereda
+          // su estado, igual que hereda la suscripción. Nunca se le ofrece
+          // reenviar el correo desde una sucursal.
+          activationStatus: activation.status,
+          activatedAt: activation.activatedAt,
+          activationLinkExpiresAt: activation.linkExpiresAt,
+          canResendActivation: false,
+          activationReason: describeActivationStatus(activation),
         });
       }
     });
@@ -239,6 +286,51 @@ export class ListTenantsAction {
       } else {
         byOwner.set(row.user_id, [row]);
       }
+    }
+    return byOwner;
+  }
+
+  /**
+   * Último enlace de activación emitido para cada owner de la página.
+   *
+   * `DISTINCT ON` se queda con la fila más reciente por usuario: los tokens
+   * anteriores quedan invalidados al reemitir, así que el único que dice algo
+   * del estado actual es el último.
+   */
+  private async loadLatestActivationTokens(
+    ownerIds: string[],
+  ): Promise<Map<string, ActivationTokenRow>> {
+    const byOwner = new Map<string, ActivationTokenRow>();
+    if (ownerIds.length === 0) {
+      return byOwner;
+    }
+
+    const rows = await this.repo.manager.query<
+      Array<{ user_id: string; expires_at: Date; used_at: Date | null }>
+    >(
+      `SELECT DISTINCT ON (t.user_id)
+              t.user_id::text AS user_id,
+              t.expires_at    AS expires_at,
+              t.used_at       AS used_at
+       FROM user_activation_tokens t
+       WHERE t.user_id = ANY($1::bigint[])
+       ORDER BY t.user_id, t.created_at DESC, t.id DESC`,
+      [ownerIds],
+    );
+
+    for (const row of rows) {
+      const expiresAt = new Date(row.expires_at);
+      // Una fila sin fecha usable se ignora en vez de propagarse: el estado de
+      // activación es un adorno del listado, y no puede tumbar la pantalla de
+      // cuentas entera por un dato raro. Sin token, la fila queda en `no_link`,
+      // que es justo lo que un token ilegible significa en la práctica.
+      if (Number.isNaN(expiresAt.getTime())) {
+        continue;
+      }
+      byOwner.set(row.user_id, {
+        expires_at: expiresAt,
+        used_at: row.used_at ? new Date(row.used_at) : null,
+      });
     }
     return byOwner;
   }

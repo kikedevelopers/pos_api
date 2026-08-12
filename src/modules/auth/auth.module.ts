@@ -106,6 +106,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   // el panel kdevs-admin REUTILIZANDO exactamente el flujo de registro cloud
   // (paridad total con placepos). `AuthModule` no importa `SuperadminModule`,
   // así que no hay ciclo.
-  exports: [AuthService, RegisterAction],
+  // `IssueActivationTokenAction` se exporta para el reenvío del enlace desde el
+  // panel superadmin: reemitir es exactamente lo mismo que hace el registro, y
+  // duplicar esa lógica sería la forma de que las dos se desincronizaran.
+  exports: [AuthService, RegisterAction, IssueActivationTokenAction],
 })
 export class AuthModule {}

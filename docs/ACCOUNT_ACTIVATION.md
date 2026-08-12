@@ -76,9 +76,34 @@ placepos_lp/src/routes/activar/                      ← la página del enlace
 placepos/src/renderer/src/modules/Setup/CloudSetup/  ← aviso post-registro
 ```
 
+## Reenvío desde el panel
+
+El listado de cuentas (`/dashboard/cuentas`) muestra el estado de cada owner y,
+cuando hace falta, el botón para reenviar el correo.
+
+| Estado | Qué significa | ¿Botón? |
+| --- | --- | --- |
+| `active` | Confirmó su correo; puede entrar | No |
+| `pending` | Tiene un enlace vigente sin usar | **No** |
+| `expired` | El enlace venció sin usarse | Sí |
+| `no_link` | No tiene ningún enlace vivo | Sí |
+
+**`pending` no ofrece el botón a propósito.** Reenviar emite un enlace nuevo e
+invalida el anterior: si el dueño tiene el correo abierto y está a punto de
+pulsarlo, se lo romperíamos.
+
+`POST /superadmin/tenants/:companyId/resend-activation` reemite y reenvía. A
+diferencia del resto de correos del sistema, este **espera el envío y falla si
+el proveedor lo rechaza** (`ACTIVATION_EMAIL_NOT_SENT`): el operador acaba de
+pulsar un botón que dice "reenviar", y darle por bueno un envío que no ocurrió
+lo dejaría esperando una respuesta del cliente que nunca va a llegar. Si la
+cuenta ya está activa responde 409 sin tocar nada.
+
+Las **sucursales heredan el estado del owner** y nunca ofrecen el botón: la
+activación es de la persona, no de cada company.
+
 ## Pendiente
 
-No hay **reenvío de activación**: si el correo se pierde o el enlace vence, hoy
-solo se resuelve a mano (emitir otro token o activar la cuenta en la base). La
-página de error dirige al WhatsApp de soporte. Un `POST /auth/resend-activation`
-con su propio límite de tasa cerraría el hueco.
+No hay reenvío que el propio cliente pueda pedir (`POST /auth/resend-activation`
+público, con su límite de tasa). Hoy pasa por el operador o por el WhatsApp de
+soporte al que dirige la página de error.

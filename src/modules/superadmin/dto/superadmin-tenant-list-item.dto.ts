@@ -86,4 +86,43 @@ export class SuperadminTenantListItemDto {
       'en el negocio principal.',
   })
   active!: boolean;
+
+  @ApiProperty({
+    example: 'active',
+    enum: ['active', 'pending', 'expired', 'no_link'],
+    description:
+      'Confirmación del correo del owner: `active` ya entró al enlace; `pending` tiene ' +
+      'uno vigente sin usar; `expired` se le venció; `no_link` no tiene ninguno vivo. ' +
+      'Las sucursales heredan el estado del owner.',
+  })
+  activationStatus!: string;
+
+  @ApiPropertyOptional({
+    example: '2026-08-12T14:00:00.000Z',
+    nullable: true,
+    description: 'Cuándo activó la cuenta. null si todavía no.',
+  })
+  activatedAt!: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-08-19T14:00:00.000Z',
+    nullable: true,
+    description: 'Vencimiento del último enlace de activación. null si no hay ninguno.',
+  })
+  activationLinkExpiresAt!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'true cuando reenviar el correo resolvería la situación. Un enlace VIGENTE no se ' +
+      'reenvía: solo invalidaría el que el dueño quizá está a punto de pulsar. Siempre ' +
+      'false en una sucursal (la activación es del owner).',
+  })
+  canResendActivation!: boolean;
+
+  @ApiProperty({
+    example: 'El dueño confirmó su correo y puede iniciar sesión.',
+    description: 'Explicación del estado para el operador.',
+  })
+  activationReason!: string;
 }

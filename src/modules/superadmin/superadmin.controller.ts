@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   HttpStatus,
   Logger,
   Param,
@@ -30,6 +31,7 @@ import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
+import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
@@ -56,6 +58,7 @@ import {
   toSuperadminClearInventoryResponseDto,
   toSuperadminTenantInventoryDto,
 } from './dto/superadmin-tenant-inventory.dto';
+import { SuperadminResendActivationResponseDto } from './dto/superadmin-resend-activation-response.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
@@ -90,6 +93,7 @@ export class SuperadminController {
     private readonly createTenantAction: CreateTenantAction,
     private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
     private readonly resetTenantOwnerPasswordAction: ResetTenantOwnerPasswordAction,
+    private readonly resendActivationAction: ResendActivationAction,
     private readonly updateTenantCompanyAction: UpdateTenantCompanyAction,
     private readonly exportTenantAction: ExportTenantAction,
     private readonly importTenantAction: ImportTenantAction,
@@ -258,6 +262,32 @@ export class SuperadminController {
     @Body() dto: ResetOwnerPasswordDto,
   ): Promise<{ success: boolean }> {
     return this.resetTenantOwnerPasswordAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /superadmin/tenants/:companyId/resend-activation
+  // --------------------------------------------------------------------------
+
+  @Post('tenants/:companyId/resend-activation')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reenviar el correo de activación al dueño de un tenant.',
+    description:
+      'Emite un enlace nuevo (invalidando el anterior) y reenvía el correo de ' +
+      'bienvenida. A diferencia del resto de correos del sistema, este espera ' +
+      'el envío y falla si el proveedor lo rechaza: el operador necesita saber ' +
+      'si el correo salió de verdad.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminResendActivationResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'La cuenta ya está activada, o el correo no pudo salir',
+  })
+  resendActivation(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ): Promise<SuperadminResendActivationResponseDto> {
+    return this.resendActivationAction.execute(companyId);
   }
 
   // --------------------------------------------------------------------------
