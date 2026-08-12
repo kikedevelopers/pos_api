@@ -66,6 +66,29 @@ Linux. En la app empaquetada de macOS manda el bundle, no la llamada.
 Solo se enrutan los destinos declarados en `ROUTE_BY_HOST`: un
 `placepos://loquesea` no puede convertirse en navegación interna.
 
+### Probarlo en DESARROLLO (macOS)
+
+En macOS quien decide qué app abre un esquema es LaunchServices, y lo lee del
+`Info.plist` del bundle. En desarrollo el bundle es el `Electron.app` de
+`node_modules`, que no declara nada: `setAsDefaultProtocolClient()` no tiene
+efecto y **el enlace no abre nada**. Una vez:
+
+```bash
+cd placepos && pnpm deeplink:register-dev
+open "placepos://reset-password?token=abc123"   # comprobación
+```
+
+Vive dentro de `node_modules`, así que se pierde al reinstalar dependencias. En
+la app EMPAQUETADA no hace falta: lo declara `CFBundleURLTypes`.
+
+### La página nunca usa `location.href` para el esquema
+
+Si el sistema no tiene registrado `placepos://`, el navegador falla con
+`ERR_UNKNOWN_URL_SCHEME` y **descarta la página**: el usuario se queda con una
+pestaña en blanco y sin ninguna explicación. Por eso `/restablecer` lanza el
+enlace con un iframe oculto, que falla en silencio y deja la página en pie para
+poder contarle qué pasó.
+
 ## Dónde está cada pieza
 
 ```
