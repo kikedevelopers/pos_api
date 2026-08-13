@@ -52,6 +52,23 @@ Mientras tanto, el login responde **403** con `payload.code =
 | Cuentas creadas desde el panel superadmin | Ya activas (`skipActivation`) | El operador ya validó al cliente; un correo de ida y vuelta solo estorbaría |
 | Empleados y usuarios espejo | No aplica | No se registran por este flujo; su alta la hace el owner |
 
+## Probarlo en desarrollo
+
+Hacen falta las dos piezas levantadas, y apuntando la una a la otra:
+
+| Pieza | Puerto | Qué tiene que cumplirse |
+| --- | --- | --- |
+| `pos_api` | 3010 | `CORS_ORIGINS` incluye `http://localhost:5181` |
+| `placepos_lp` | 5181 | En dev llama al API local (`SITE.apiUrl` usa `dev`) |
+| `.env` de pos_api | — | `ACTIVATION_BASE_URL=http://localhost:5181` |
+
+El fallo más fácil de cometer es que la landing llame al API de PRODUCCIÓN: los
+tokens se emiten contra la base local, así que el enlace saldría siempre
+inválido — y, sin el origen de la landing en el CORS de producción, el navegador
+ni siquiera dejaría leer la respuesta y la página diría "no pudimos contactar al
+servidor". Por eso `SITE.apiUrl` conmuta con el flag `dev` de SvelteKit en vez
+de ser una constante.
+
 ## Configuración
 
 | Variable | Para qué |
