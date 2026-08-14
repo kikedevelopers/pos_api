@@ -247,16 +247,18 @@ export class RunAiToolAction {
       SELECT
         COALESCE(si.sale_number, si.ticket_number)   AS number,
         COALESCE(si.sold_at, si.created_at)          AS sold_at,
-        si.total                                     AS total,
-        si.profit                                    AS profit,
+        -- CONSOLIDADO: la venta con sus notas ya aplicadas, que es como la
+        -- reportan todos los informes. Devolver el total persistido hacía que
+        -- el asistente dijera una cifra distinta de la del informe del mismo
+        -- día, y eso se lee como una alucinación aunque el dato salga de la BD.
+        (si.total + COALESCE(adj.total_adjustment, 0))                                AS total,
+        ((si.total + COALESCE(adj.total_adjustment, 0))
+          - (si.cost + COALESCE(adj.cost_adjustment, 0)))                             AS profit,
         COALESCE(c.name, si.customer_name)           AS customer,
         si.created_by                                AS cashier,
         sc.balance                                   AS credit_balance,
         sc.status::text                              AS credit_status,
-        (
-          SELECT COUNT(*) FROM credit_notes n
-          WHERE n.sale_invoice_id = si.id AND n.company_id = si.company_id AND n.is_deleted = false
-        ) AS notes_count,
+        COALESCE(adj.notes_count, 0) AS notes_count,
         (
           SELECT jsonb_agg(DISTINCT p.payment_method::text)
           FROM sale_payments p
@@ -275,6 +277,8 @@ export class RunAiToolAction {
       FROM sale_invoices si
       LEFT JOIN customers c ON c.id = si.customer_id AND c.company_id = si.company_id
       LEFT JOIN sale_credits sc ON sc.sale_invoice_id = si.id AND sc.company_id = si.company_id
+      LEFT JOIN v_sale_note_adjustments adj
+             ON adj.sale_invoice_id = si.id AND adj.company_id = si.company_id
       WHERE si.company_id = $1
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
@@ -314,7 +318,7 @@ export class RunAiToolAction {
       scope:
         scopeUserId === null ? 'todas las ventas del negocio' : 'solo las ventas de este usuario',
       sales,
-      note: 'Si "customer" dice "Mostrador (sin cliente)" la venta se registró sin asociar cliente: NO le atribuyas un nombre. "hasAdjustmentNotes" indica que el ticket tiene notas crédito/débito, así que su total pudo cambiar.',
+      note: 'Si "customer" dice "Mostrador (sin cliente)" la venta se registró sin asociar cliente: NO le atribuyas un nombre. "total" y "profit" ya vienen CONSOLIDADOS (la venta con sus notas crédito/débito aplicadas), así que coinciden con los informes: repórtalos tal cual. "hasAdjustmentNotes" solo avisa de que el ticket tuvo ajustes; "items" son los productos de la venta original, antes de esos ajustes.',
     };
   }
 
