@@ -66,9 +66,15 @@ export function mapNoteToTicket(note: NoteRow): Record<string, unknown> {
     ticketNumber: note.note_number,
     saleNumber: null,
     originalTotal: Number(note.total),
-    consolidatedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
+    // La nota se LISTA (con su número, su tipo y su valor en `originalTotal` y
+    // en `signedTotal`) pero aporta 0 a la suma: su efecto ya está dentro del
+    // consolidado de la venta de arriba. Sumarla otra vez descuadraría la
+    // columna contra el total del informe.
+    consolidatedTotal: 0,
+    signedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
     cost: noteCost,
-    profit: note.note_type === 'CREDIT' ? -noteProfit : noteProfit,
+    profit: 0,
+    signedProfit: note.note_type === 'CREDIT' ? -noteProfit : noteProfit,
     margin: noteMargin,
     customerName: note.customer_name ?? 'CONSUMIDOR FINAL',
     createdBy: note.created_by ?? null,

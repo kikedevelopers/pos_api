@@ -124,9 +124,21 @@ describe('mapNoteToTicket · identidad de la venta ajustada', () => {
     expect(row.parentSoldAt).toBe('2026-07-05T15:00:00.000Z');
   });
 
-  it('sigue firmando el total: la nota de crédito resta', () => {
+  it('la nota se lista pero NO suma: su valor ya está en la venta', () => {
+    // La fila de la venta lleva el consolidado (venta ± sus notas), así que
+    // volver a sumar la nota aquí descuadraría la columna contra el total.
+    // El valor firmado se conserva aparte, para poder mostrarlo.
     const row = mapNoteToTicket(makeNote());
 
-    expect(row.consolidatedTotal).toBe(-5000);
+    expect(row.consolidatedTotal).toBe(0);
+    expect(row.signedTotal).toBe(-5000);
+    expect(row.originalTotal).toBe(5000);
+  });
+
+  it('la nota débito conserva su signo positivo', () => {
+    const row = mapNoteToTicket(makeNote({ note_type: 'DEBIT', operation_type: 'ADDITION' }));
+
+    expect(row.signedTotal).toBe(5000);
+    expect(row.consolidatedTotal).toBe(0);
   });
 });

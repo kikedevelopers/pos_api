@@ -275,6 +275,26 @@ export class GetSalesReportAction {
     // pagos (medio de pago sin definir): la distinción la da `is_credit`, no el
     // medio con que luego se abone.
     const paymentType = inv.is_credit ? 'CREDIT' : derivePaymentType(inv.payment_methods);
+
+    // Consolidado de la fila. El margen se recalcula sobre el total ya neteado:
+    // arrastrar el margen previo a las notas dejaría un porcentaje que no
+    // corresponde a las cifras impresas a su lado.
+    const consolidatedTotal = round2(
+      toBig(inv.original_total).plus(toBig(inv.note_adjustment)).toNumber(),
+    );
+    const consolidatedCost = round2(
+      toBig(inv.original_cost).plus(toBig(inv.note_cost_adjustment)).toNumber(),
+    );
+    const consolidatedProfit = round2(toBig(consolidatedTotal).minus(consolidatedCost).toNumber());
+    const consolidated = {
+      total: consolidatedTotal,
+      cost: consolidatedCost,
+      profit: consolidatedProfit,
+      margin:
+        consolidatedTotal > 0
+          ? round2(toBig(consolidatedProfit).div(consolidatedTotal).times(100).toNumber())
+          : 0,
+    };
     return {
       id: Number(inv.id),
       rowType: 'INVOICE',
@@ -282,10 +302,15 @@ export class GetSalesReportAction {
       ticketNumber: inv.ticket_number,
       saleNumber: inv.sale_number,
       originalTotal: Number(inv.original_total),
-      consolidatedTotal: Number(inv.original_total),
-      cost: Number(inv.original_cost),
-      profit: Number(inv.original_profit),
-      margin: Number(inv.original_margin),
+      // La fila lleva el CONSOLIDADO: la venta con sus notas ya aplicadas.
+      // "Una venta de 200.000 a la que se le quitan 50.000 ahora se entiende
+      // por 150.000". Las notas se siguen listando debajo como detalle, pero
+      // aportan 0 a la suma (ver `mapNoteToTicket`): su valor ya está aquí, y
+      // contarlas otra vez descuadraría la columna contra el total.
+      consolidatedTotal: consolidated.total,
+      cost: consolidated.cost,
+      profit: consolidated.profit,
+      margin: consolidated.margin,
       customerName: inv.customer_name ?? 'CONSUMIDOR FINAL',
       createdBy: inv.created_by ?? null,
       synced: true,
