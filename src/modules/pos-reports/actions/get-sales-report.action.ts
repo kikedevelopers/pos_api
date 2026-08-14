@@ -36,6 +36,9 @@ interface InvoiceRow {
   // COALESCE(sold_at, created_at): cuándo se REALIZÓ la venta. En un pedido
   // cobrado días después no coincide con created_at. Paridad placepos.
   sold_at: Date;
+  // Ajuste por notas ya agregado (NC resta, ND suma). Viene de la vista.
+  note_adjustment: number;
+  note_cost_adjustment: number;
   notes_count: string | number;
   note_types: string | null;
   is_credit: boolean;
@@ -406,6 +409,10 @@ export class GetSalesReportAction {
         si.is_deleted,
         si.created_at,
         COALESCE(si.sold_at, si.created_at) AS sold_at,
+        -- Ajuste de las notas, agregado por la vista consolidada: NC resta, ND
+        -- suma. Es lo que convierte la fila en el CONSOLIDADO de la venta.
+        COALESCE(adj.total_adjustment, 0)::float AS note_adjustment,
+        COALESCE(adj.cost_adjustment, 0)::float AS note_cost_adjustment,
         COALESCE(na.notes_count, 0) AS notes_count,
         na.note_types,
         (sc.id IS NOT NULL) AS is_credit,
@@ -426,6 +433,9 @@ export class GetSalesReportAction {
             AND sp.is_voided = false
         ) AS payment_methods
       FROM sale_invoices si
+      LEFT JOIN "v_sale_note_adjustments" adj
+        ON adj.sale_invoice_id = si.id
+       AND adj.company_id = si.company_id
       LEFT JOIN sale_credits sc
         ON sc.sale_invoice_id = si.id
        AND sc.company_id = $1
