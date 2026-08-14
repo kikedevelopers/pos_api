@@ -810,7 +810,17 @@ export class UpdateSaleAction {
     );
 
     const debitTotal = preciseNumber(total, 2);
-    if (debitTotal > 0 && params.source) {
+    if (debitTotal > 0) {
+      // El cliente paga la diferencia en el momento, así que el cobro SIEMPRE
+      // se registra. Antes esto era `if (... && params.source)`: si el cliente
+      // no mandaba cuenta destino, el dinero entraba al cajón y el sistema no
+      // guardaba ni un registro — en la base había 16 notas débito y CERO
+      // movimientos de caja por ellas.
+      //
+      // Sin cuenta explícita el destino es la caja de quien está facturando,
+      // que es donde cae la plata en el mostrador. `applyCorrectionMovement`
+      // resuelve la caja desde el actor autenticado (para `cash_register` el
+      // `id` es vestigial), así que el default no necesita conocer ninguna.
       await this.applyCorrectionMovement(manager, {
         direction: 'DEBIT',
         amount: debitTotal,
@@ -820,7 +830,7 @@ export class UpdateSaleAction {
         noteNumber: saved.note_number,
         isFullVoid: false,
         actor: params.actor,
-        source: params.source,
+        source: params.source ?? { type: 'cash_register', id: 0, name: 'Caja' },
       });
     }
 
