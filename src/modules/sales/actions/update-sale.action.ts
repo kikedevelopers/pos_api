@@ -39,6 +39,7 @@ import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-set
 import { SaleCorrectionSourceDto, UpdateSaleDto, UpdateSaleLineDto } from '../dto/update-sale.dto';
 import { SaleCredit } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
+import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import {
   getConsolidatedInvoice,
@@ -821,6 +822,7 @@ export class UpdateSaleAction {
       // que es donde cae la plata en el mostrador. `applyCorrectionMovement`
       // resuelve la caja desde el actor autenticado (para `cash_register` el
       // `id` es vestigial), así que el default no necesita conocer ninguna.
+      const source = params.source ?? { type: 'cash_register' as const, id: 0, name: 'Caja' };
       await this.applyCorrectionMovement(manager, {
         direction: 'DEBIT',
         amount: debitTotal,
@@ -830,7 +832,15 @@ export class UpdateSaleAction {
         noteNumber: saved.note_number,
         isFullVoid: false,
         actor: params.actor,
-        source: params.source ?? { type: 'cash_register', id: 0, name: 'Caja' },
+        source,
+      });
+      await this.recordDebitNotePayment(manager, {
+        companyId: params.companyId,
+        invoiceId: Number(params.sale.id),
+        creditNoteId: Number(saved.id),
+        amount: debitTotal,
+        actor: params.actor,
+        source,
       });
     }
 
@@ -945,6 +955,52 @@ export class UpdateSaleAction {
       created_by: params.actor.fullName,
       created_by_id: params.actor.id,
     });
+  }
+
+  /**
+   * Registra el cobro de la nota débito como un PAGO de la venta.
+   *
+   * El movimiento de caja por sí solo deja el dinero en el cajón pero no en la
+   * venta: la factura seguiría figurando cobrada por su total viejo (27.000
+   * cuando vale 53.946), la ganancia saldría diluida y la Meta del mes —que se
+   * calcula sobre lo COBRADO— se quedaría corta con plata que ya entró.
+   *
+   * Queda enlazado a la nota (`credit_note_id`) para que los informes puedan
+   * mostrarlo como "corrección por nota débito" y no como un cobro más.
+   *
+   * El método sigue a la cuenta destino: a la caja entra efectivo; a un banco o
+   * una billetera, transferencia.
+   */
+  private async recordDebitNotePayment(
+    manager: EntityManager,
+    params: {
+      companyId: number;
+      invoiceId: number;
+      creditNoteId: number;
+      amount: number;
+      actor: UpdateSaleActor;
+      source: SaleCorrectionSourceDto;
+    },
+  ): Promise<void> {
+    const isCash = params.source.type === 'cash_register';
+    const payment = manager.create(SalePayment, {
+      company_id: String(params.companyId),
+      sale_invoice_id: String(params.invoiceId),
+      credit_note_id: String(params.creditNoteId),
+      payment_method: isCash ? SalePaymentMethod.CASH : SalePaymentMethod.TRANSFER,
+      amount: params.amount,
+      // Sin vuelto: el cliente paga la diferencia exacta de la nota.
+      change_amount: 0,
+      account_type: params.source.type,
+      // Para la caja el id es vestigial (siempre 0): la caja real se resuelve
+      // desde el actor, igual que en el movimiento.
+      account_id: String(params.source.id),
+      bank_id: params.source.type === 'bank' ? String(params.source.id) : null,
+      bank_name: params.source.type === 'bank' ? params.source.name : null,
+      created_by: params.actor.fullName,
+      created_by_id: String(params.actor.id),
+    });
+    await manager.save(SalePayment, payment);
   }
 
   private buildCorrectionDescription(params: {

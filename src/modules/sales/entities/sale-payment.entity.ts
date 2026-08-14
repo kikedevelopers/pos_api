@@ -153,6 +153,16 @@ export class SalePayment {
    * el dinero ya fue devuelto a la cuenta original (CashRegisterLog OUT o
    * FinancialMovement EXPENSE concept=PAYMENT_REVERSAL).
    */
+  /**
+   * Nota débito que originó este cobro, cuando el pago NO es un cobro normal
+   * sino la diferencia que el cliente pagó al añadirle productos a una venta ya
+   * cobrada. `null` en los pagos corrientes. Permite mostrarlo en la lista de
+   * abonos como "corrección por nota débito" en vez de confundirlo con un pago
+   * más de la venta.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  credit_note_id!: string | null;
+
   @Column({ type: 'boolean', default: false })
   is_voided!: boolean;
 
