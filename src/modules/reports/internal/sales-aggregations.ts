@@ -109,18 +109,28 @@ export async function fetchCashSales(
 ): Promise<SalesRow> {
   const rows = await dataSource.query<SalesRow[]>(
     `
+      -- El tope contra el total de la factura se aplica UNA vez, sobre la suma
+      -- de sus pagos en efectivo. Antes se aplicaba a cada pago por separado
+      -- (SUM(LEAST(sp.amount, si.total))), así que una venta cobrada en dos
+      -- pagos con vuelto se contaba dos veces entera: medido en producción,
+      -- PED-3071 (11.000) aportaba 22.000 y PED-3124 (18.600,24) aportaba
+      -- 37.200,48. El tope existe porque en efectivo amount es lo que
+      -- entregó el cliente, vuelto incluido.
       SELECT
-        COALESCE(SUM(LEAST(sp.amount, si.total)), 0)::float AS gross_sales,
-        COALESCE(SUM(si.cost * LEAST(sp.amount, si.total) / NULLIF(si.total, 0)), 0)::float AS gross_cost
-      FROM sale_payments sp
-      INNER JOIN sale_invoices si
-        ON sp.sale_invoice_id = si.id
-       AND si.company_id = $1
-      WHERE sp.company_id = $1
-        AND sp.is_voided = false
+        COALESCE(SUM(LEAST(pagos.pagado, si.total)), 0)::float AS gross_sales,
+        COALESCE(SUM(si.cost * LEAST(pagos.pagado, si.total) / NULLIF(si.total, 0)), 0)::float AS gross_cost
+      FROM sale_invoices si
+      INNER JOIN LATERAL (
+        SELECT SUM(sp.amount) AS pagado
+        FROM sale_payments sp
+        WHERE sp.sale_invoice_id = si.id
+          AND sp.company_id = $1
+          AND sp.is_voided = false
+          AND sp.payment_method = 'CASH'
+      ) pagos ON pagos.pagado IS NOT NULL
+      WHERE si.company_id = $1
         AND si.ticket_type = 'SALE'
         AND si.is_deleted = false
-        AND sp.payment_method = 'CASH'
         AND COALESCE(si.sold_at, si.created_at) BETWEEN $2 AND $3
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
@@ -144,28 +154,40 @@ export async function fetchCashNotes(
   dateStart: Date,
   dateEnd: Date,
 ): Promise<NotesRow> {
+  // El costo de la nota se agrega en una SUBQUERY y la existencia de pago
+  // CASH se comprueba con EXISTS. Antes esto eran dos JOIN (a
+  // `credit_note_lines` y a `sale_payments`) y `SUM(cn.total)` se calculaba
+  // sobre el producto cartesiano: una nota de 3 líneas se restaba 3 veces, y
+  // otra vez por cada pago en efectivo de la factura. Medido en producción, el
+  // cierre del 08-may restaba 32.000 por una NC de 16.000 y sumaba 38.100 por
+  // una ND de 12.700.
   const rows = await dataSource.query<NotesRow[]>(
     `
       SELECT
         COALESCE(SUM(cn.total), 0)::float AS notes_total,
-        COALESCE(SUM(cnl.unit_cost * cnl.quantity), 0)::float AS notes_cost
+        COALESCE(SUM(cn_cost.note_cost), 0)::float AS notes_cost
       FROM credit_notes cn
       INNER JOIN sale_invoices si
         ON cn.sale_invoice_id = si.id
        AND si.company_id = $1
-      INNER JOIN sale_payments sp
-        ON sp.sale_invoice_id = si.id
-       AND sp.company_id = $1
-      LEFT JOIN credit_note_lines cnl
-        ON cnl.credit_note_id = cn.id
-       AND cnl.company_id = $1
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(cnl.unit_cost * cnl.quantity), 0) AS note_cost
+        FROM credit_note_lines cnl
+        WHERE cnl.credit_note_id = cn.id
+          AND cnl.company_id = $1
+      ) cn_cost ON true
       WHERE cn.company_id = $1
         AND cn.is_deleted = false
         AND cn.note_type = $2::note_type
-        AND sp.is_voided = false
-        AND sp.payment_method = 'CASH'
         AND si.is_deleted = false
         AND COALESCE(si.sold_at, si.created_at) BETWEEN $3 AND $4
+        AND EXISTS (
+          SELECT 1 FROM sale_payments sp
+          WHERE sp.sale_invoice_id = si.id
+            AND sp.company_id = $1
+            AND sp.is_voided = false
+            AND sp.payment_method = 'CASH'
+        )
         AND NOT EXISTS (
           SELECT 1 FROM sale_credits sc
           WHERE sc.sale_invoice_id = si.id
