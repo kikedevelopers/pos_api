@@ -21,15 +21,10 @@ export interface TopProductItem {
 interface AggRow {
   item_id: string;
   name: string;
+  // Ya NETAS de notas: la vista devuelve las líneas de la nota con su signo.
   qty: number;
   sales: number;
   cost: number;
-  c_qty: number;
-  c_sales: number;
-  c_cost: number;
-  d_qty: number;
-  d_sales: number;
-  d_cost: number;
 }
 
 /**
@@ -67,74 +62,45 @@ export class GetTopProductsAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(companyId: number, limit = 10): Promise<TopProductItem[]> {
+    // Una sola consulta contra la vista, que ya trae la venta con sus notas
+    // aplicadas. Antes esto eran dos CTE cosidas a mano, y ahí vivían dos
+    // defectos medidos en producción:
+    //
+    //   · la CTE de ventas excluía las anuladas pero la de notas no, así que de
+    //     una venta anulada no se sumaban sus líneas pero SÍ se restaba su nota
+    //     (NUEZ MOSCADA perdía 90.000 de 117.999,60);
+    //   · se agrupaba por (producto, descripción) y las notas cruzaban solo por
+    //     producto, así que un artículo renombrado salía dos veces en el ranking
+    //     y su nota se restaba en cada fila.
+    //
+    // La vista cierra los dos de raíz: la línea de la nota vive pegada a su
+    // venta, y el producto se identifica por su id. El nombre se resuelve
+    // aparte, tomando el más reciente.
     const rows = await this.dataSource.query<AggRow[]>(
       `
-      WITH sale_lines AS (
-        SELECT
-          il.product_id AS item_id,
-          il.description AS name,
-          SUM(il.quantity)::float AS qty,
-          SUM(il.total)::float AS sales,
-          SUM(il.unit_cost * il.quantity)::float AS cost
-        FROM sale_invoice_lines il
-        INNER JOIN sale_invoices si
-          ON si.id = il.sale_invoice_id
-         AND si.company_id = $1
-        WHERE il.company_id = $1
-          AND si.ticket_type = 'SALE'
-          AND si.is_deleted = false
-        GROUP BY il.product_id, il.description
-      ),
-      note_lines AS (
-        SELECT
-          cnl.product_id AS item_id,
-          cn.note_type::text AS note_type,
-          SUM(cnl.quantity)::float AS qty,
-          SUM(cnl.total)::float AS sales,
-          SUM(cnl.unit_cost * cnl.quantity)::float AS cost
-        FROM credit_note_lines cnl
-        INNER JOIN credit_notes cn
-          ON cn.id = cnl.credit_note_id
-         AND cn.company_id = $1
-        INNER JOIN sale_invoices si
-          ON si.id = cn.sale_invoice_id
-         AND si.company_id = $1
-        WHERE cnl.company_id = $1
-          AND cn.is_deleted = false
-          AND si.ticket_type = 'SALE'
-        GROUP BY cnl.product_id, cn.note_type
-      )
       SELECT
-        sl.item_id::text AS item_id,
-        sl.name AS name,
-        COALESCE(sl.qty, 0)::float AS qty,
-        COALESCE(sl.sales, 0)::float AS sales,
-        COALESCE(sl.cost, 0)::float AS cost,
-        COALESCE((SELECT qty FROM note_lines nl WHERE nl.item_id = sl.item_id AND nl.note_type = 'CREDIT'), 0)::float AS c_qty,
-        COALESCE((SELECT sales FROM note_lines nl WHERE nl.item_id = sl.item_id AND nl.note_type = 'CREDIT'), 0)::float AS c_sales,
-        COALESCE((SELECT cost  FROM note_lines nl WHERE nl.item_id = sl.item_id AND nl.note_type = 'CREDIT'), 0)::float AS c_cost,
-        COALESCE((SELECT qty FROM note_lines nl WHERE nl.item_id = sl.item_id AND nl.note_type = 'DEBIT'), 0)::float AS d_qty,
-        COALESCE((SELECT sales FROM note_lines nl WHERE nl.item_id = sl.item_id AND nl.note_type = 'DEBIT'), 0)::float AS d_sales,
-        COALESCE((SELECT cost  FROM note_lines nl WHERE nl.item_id = sl.item_id AND nl.note_type = 'DEBIT'), 0)::float AS d_cost
-      FROM sale_lines sl
+        l.product_id::text AS item_id,
+        COALESCE(p.name, 'Producto ' || l.product_id) AS name,
+        SUM(l.quantity)::float AS qty,
+        SUM(l.total)::float AS sales,
+        SUM(l.cost)::float AS cost
+      FROM v_sale_lines_consolidated l
+      LEFT JOIN products p
+        ON p.id = l.product_id
+       AND p.company_id = $1
+      WHERE l.company_id = $1
+        AND l.ticket_type = 'SALE'
+        AND l.is_deleted = false
+      GROUP BY l.product_id, p.name
       `,
       [String(companyId)],
     );
 
     const items: TopProductItem[] = rows.map((r) => {
-      const qty = toBig(r.qty);
-      const sales = toBig(r.sales);
-      const cost = toBig(r.cost);
-      const cQty = toBig(r.c_qty);
-      const cSales = toBig(r.c_sales);
-      const cCost = toBig(r.c_cost);
-      const dQty = toBig(r.d_qty);
-      const dSales = toBig(r.d_sales);
-      const dCost = toBig(r.d_cost);
-
-      const netQuantity = qty.minus(cQty).plus(dQty);
-      const netSales = sales.minus(cSales).plus(dSales);
-      const netCost = cost.minus(cCost).plus(dCost);
+      // Ya vienen netas de la vista: las líneas de la nota entran con su signo.
+      const netQuantity = toBig(r.qty);
+      const netSales = toBig(r.sales);
+      const netCost = toBig(r.cost);
       const netProfit = netSales.minus(netCost);
       const netMargin = netSales.gt(0) ? netProfit.div(netSales).times(100) : new Big(0);
 
