@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 
@@ -37,6 +38,9 @@ import { Customer } from './entities/customer.entity';
     // transacción de `CreateCustomerAdvanceAction`.
     CashRegisterModule,
     FinancialMovementsModule,
+    // Flag `include_orders_in_reports`: la gráfica del cliente cuenta los
+    // pedidos con el MISMO criterio que el informe de ventas.
+    AppSettingsModule,
   ],
   controllers: [CustomersController],
   providers: [

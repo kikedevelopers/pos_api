@@ -4,6 +4,7 @@ import type { Repository } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { Customer } from '@/modules/customers/entities/customer.entity';
+import { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 
 import { findCustomerInCompany } from '../internal/customer-lookups';
 
@@ -99,17 +100,30 @@ export class GetCustomerChartsAction {
   constructor(
     @InjectRepository(Customer)
     private readonly repo: Repository<Customer>,
+    // El mismo flag que decide si los pedidos cuentan como ingreso en los
+    // informes. Fijar el criterio aquí haría que la gráfica del cliente y el
+    // informe de ventas contaran cosas distintas del mismo negocio.
+    private readonly getIncludeOrdersInReports: GetIncludeOrdersInReportsAction,
   ) {}
 
   /**
    * Serie temporal de total/profit/margin diaria. Usa `generate_series` para
-   * asegurar que los días sin venta aparezcan como 0. La consolidación con
-   * notas crédito/débito se hace en una CTE:
+   * asegurar que los días sin venta aparezcan como 0.
    *
-   *   - Ventas activas (`sale_invoices.is_deleted = false`) cuentan al total.
-   *   - Sumas de `credit_notes.total` se restan al día de la NC si
-   *     `note_type = 'CREDIT'`.
-   *   - Sumas de `credit_notes.total` se SUMAN si `note_type = 'DEBIT'`.
+   * Cada venta se imputa a SU día por su CONSOLIDADO (venta ± sus notas), que
+   * es la regla de todos los informes. Antes se hacía en dos CTEs separadas y
+   * de ahí salían tres errores:
+   *
+   *   - la venta anulada se excluía por `is_deleted` pero su nota de anulación
+   *     se seguía restando, así que el día quedaba en NEGATIVO: el cliente
+   *     aparecía comprando menos que nada;
+   *   - el ajuste se cargaba al día de la NOTA, no al de la venta, y movía
+   *     dinero de un día a otro;
+   *   - el costo no se ajustaba con la nota, así que la ganancia del día salía
+   *     inflada aunque el total estuviera bien.
+   *
+   * El ajuste sale de `v_sale_note_adjustments`, la misma vista que usan los
+   * demás informes, para que no vuelva a haber dos maneras de sumar lo mismo.
    *
    * margin = total > 0 ? (profit / total) * 100 : 0.
    *
@@ -127,6 +141,7 @@ export class GetCustomerChartsAction {
 
     const cidParam = String(companyId);
     const customerParam = String(id);
+    const { enabled: includeOrders } = await this.getIncludeOrdersInReports.execute(companyId);
 
     // El generate_series usa `::date` para que coincida con el agrupado por
     // día. Hacemos LEFT JOIN para que los días sin ventas devuelvan 0.
@@ -136,8 +151,6 @@ export class GetCustomerChartsAction {
       day: string;
       total_sales: string | null;
       cost_sales: string | null;
-      total_credit: string | null;
-      total_debit: string | null;
     }> = await this.repo.query(
       `
       WITH days AS (
@@ -148,51 +161,38 @@ export class GetCustomerChartsAction {
         )::date AS day
       ),
       sales AS (
-        SELECT (created_at AT TIME ZONE 'UTC')::date AS day,
-               SUM(total)::numeric AS total_sales,
-               SUM(cost)::numeric  AS cost_sales
-          FROM sale_invoices
-         WHERE company_id = $3
-           AND customer_id = $4
-           AND is_deleted = false
-           AND (created_at AT TIME ZONE 'UTC')::date BETWEEN $1::date AND $2::date
-         GROUP BY 1
-      ),
-      credit_notes_agg AS (
-        SELECT (cn.created_at AT TIME ZONE 'UTC')::date AS day,
-               SUM(CASE WHEN cn.note_type = 'CREDIT' THEN cn.total ELSE 0 END)::numeric AS total_credit,
-               SUM(CASE WHEN cn.note_type = 'DEBIT'  THEN cn.total ELSE 0 END)::numeric AS total_debit
-          FROM credit_notes cn
-          JOIN sale_invoices si
-            ON si.id = cn.sale_invoice_id
-           AND si.company_id = cn.company_id
-         WHERE cn.company_id = $3
+        SELECT (si.created_at AT TIME ZONE 'UTC')::date AS day,
+               SUM(si.total + COALESCE(adj.total_adjustment, 0))::numeric AS total_sales,
+               SUM(si.cost  + COALESCE(adj.cost_adjustment, 0))::numeric  AS cost_sales
+          FROM sale_invoices si
+          LEFT JOIN v_sale_note_adjustments adj
+                 ON adj.sale_invoice_id = si.id
+                AND adj.company_id = si.company_id
+         WHERE si.company_id = $3
            AND si.customer_id = $4
-           AND cn.is_deleted = false
-           AND (cn.created_at AT TIME ZONE 'UTC')::date BETWEEN $1::date AND $2::date
+           AND (si.ticket_type = 'SALE' OR ($5::boolean AND si.ticket_type = 'ORDER'))
+           -- La anulada entra SOLO si lleva su nota, que la deja en cero. Sin
+           -- este par de condiciones el día salía negativo.
+           AND (si.is_deleted = false OR COALESCE(adj.notes_count, 0) > 0)
+           AND (si.created_at AT TIME ZONE 'UTC')::date BETWEEN $1::date AND $2::date
          GROUP BY 1
       )
       SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
              COALESCE(s.total_sales, 0)  AS total_sales,
-             COALESCE(s.cost_sales, 0)   AS cost_sales,
-             COALESCE(c.total_credit, 0) AS total_credit,
-             COALESCE(c.total_debit, 0)  AS total_debit
+             COALESCE(s.cost_sales, 0)   AS cost_sales
         FROM days d
         LEFT JOIN sales s ON s.day = d.day
-        LEFT JOIN credit_notes_agg c ON c.day = d.day
        ORDER BY d.day ASC
       `,
-      [range.startDate, range.endDate, cidParam, customerParam],
+      [range.startDate, range.endDate, cidParam, customerParam, includeOrders],
     );
 
     const points = rows.map((r) => {
-      const totalSales = toBig(r.total_sales ?? 0);
+      // El total ya viene consolidado desde la consulta, y el costo también:
+      // así la ganancia del día corresponde a lo que de verdad quedó vendido.
+      const total = toBig(r.total_sales ?? 0);
       const costSales = toBig(r.cost_sales ?? 0);
-      const credit = toBig(r.total_credit ?? 0);
-      const debit = toBig(r.total_debit ?? 0);
 
-      // Consolidación: + DEBIT, - CREDIT.
-      const total = totalSales.plus(debit).minus(credit);
       const profit = total.minus(costSales);
       const margin = total.gt(0) ? profit.div(total).times(100) : toBig(0);
 
