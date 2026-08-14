@@ -25,6 +25,9 @@ export type NoteFilter = (typeof NOTE_FILTERS)[number];
 export const TICKET_TYPE_VALUES = ['ORDER', 'SALE', 'NOTE'] as const;
 export type TicketTypeValue = (typeof TICKET_TYPE_VALUES)[number];
 
+export const SALES_DATE_FIELDS = ['created_at', 'sold_at'] as const;
+export type SalesDateField = (typeof SALES_DATE_FIELDS)[number];
+
 /**
  * Query del endpoint `GET /pos-reports/sales`. Espejo PlacePos.
  *
@@ -105,6 +108,21 @@ export class SalesReportQueryDto {
   @IsInt({ each: true, message: 'categoryIds contiene valores inválidos' })
   @Min(1, { each: true, message: 'categoryIds contiene valores inválidos' })
   categoryIds?: number[];
+
+  /**
+   * Fecha por la que se recorta el rango. Espejo PlacePos.
+   *
+   *   created_at (default) → cuándo se REGISTRÓ la factura.
+   *   sold_at              → cuándo se VENDIÓ, vía COALESCE(sold_at, created_at).
+   *
+   * Solo difieren en pedidos cobrados días después. El extracto mensual pide
+   * `sold_at` porque es el criterio del módulo Resumen y los dos documentos
+   * tienen que dar el mismo total.
+   */
+  @ApiPropertyOptional({ enum: SALES_DATE_FIELDS, example: 'sold_at' })
+  @IsOptional()
+  @IsIn([...SALES_DATE_FIELDS], { message: 'dateField inválido' })
+  dateField?: SalesDateField;
 }
 
 /**
