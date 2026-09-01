@@ -3,7 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 
-import type { AccountKind, AuthUser, JwtPayload, UserType } from '@/common/types/jwt-payload.type';
+import type {
+  AccountKind,
+  AuthUser,
+  JwtPayload,
+  TokenScope,
+  UserType,
+} from '@/common/types/jwt-payload.type';
 
 /**
  * Valores permitidos para los enums del payload. Repetidos aquí como literales
@@ -11,6 +17,7 @@ import type { AccountKind, AuthUser, JwtPayload, UserType } from '@/common/types
  */
 const VALID_USER_TYPES: readonly UserType[] = ['superadmin', 'owner', 'manager', 'employee'];
 const VALID_ACCOUNTS: readonly AccountKind[] = ['user', 'employee'];
+const VALID_SCOPES: readonly TokenScope[] = ['app', 'portal'];
 
 function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
@@ -81,6 +88,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('Token con payload inválido');
     }
 
+    // `scope` ausente = token `app` (todos los emitidos antes del portal). Un
+    // valor presente pero desconocido se rechaza en vez de asumirse `app`: es
+    // el claim que ACOTA privilegios, y ante la duda tiene que cerrar.
+    if (payload.scope !== undefined && !VALID_SCOPES.includes(payload.scope)) {
+      throw new UnauthorizedException('Token con payload inválido');
+    }
+
     return {
       user_id: payload.user_id,
       company_id: payload.company_id,
@@ -88,6 +102,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       lastname: payload.lastname,
       type: payload.type,
       account: payload.account,
+      scope: payload.scope ?? 'app',
     };
   }
 }

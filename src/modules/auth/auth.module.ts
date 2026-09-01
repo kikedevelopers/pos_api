@@ -113,6 +113,17 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   // `IssueActivationTokenAction` se exporta para el reenvío del enlace desde el
   // panel superadmin: reemitir es exactamente lo mismo que hace el registro, y
   // duplicar esa lógica sería la forma de que las dos se desincronizaran.
-  exports: [AuthService, RegisterAction, IssueActivationTokenAction],
+  // `JwtIssuerService` y `DummyHashService` los consume `PortalModule` para
+  // que el login del portal de facturación verifique credenciales y firme
+  // tokens con EXACTAMENTE la misma maquinaria que el login de la app. Dos
+  // implementaciones de eso terminan divergiendo, y la que se queda corta es la
+  // que deja entrar a quien no debe.
+  exports: [
+    AuthService,
+    RegisterAction,
+    IssueActivationTokenAction,
+    JwtIssuerService,
+    DummyHashService,
+  ],
 })
 export class AuthModule {}

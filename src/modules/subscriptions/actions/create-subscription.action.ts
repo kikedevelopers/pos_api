@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 
-import { Subscription } from '../entities/subscription.entity';
+import {
+  Subscription,
+  SubscriptionPlan,
+  SubscriptionStatus,
+} from '../entities/subscription.entity';
 import { addDays, SUBSCRIPTION_TRIAL_DAYS } from '../subscriptions.constants';
 
 /**
@@ -42,6 +46,13 @@ export class CreateSubscriptionAction {
       owner_user_id: String(input.ownerUserId),
       started_at: startedAt,
       expires_at: expiresAt,
+      // Explícitos aunque la columna tenga DEFAULT: TypeORM 0.3 no aplica el
+      // default SQL si el campo no aparece en `create()` — escribiría NULL en
+      // una columna NOT NULL y el registro entero fallaría.
+      plan: SubscriptionPlan.FREE,
+      status: SubscriptionStatus.TRIALING,
+      requested_plan: null,
+      plan_requested_at: null,
     });
     const saved = await repo.save(subscription);
 

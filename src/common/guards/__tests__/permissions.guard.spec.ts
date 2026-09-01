@@ -33,6 +33,7 @@ describe('PermissionsGuard', () => {
     lastname: 'User',
     type,
     account,
+    scope: 'app',
   });
 
   const buildContext = (user: AuthUser | undefined): ExecutionContext => {

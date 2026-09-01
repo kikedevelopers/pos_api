@@ -18,6 +18,20 @@
 export type UserType = 'superadmin' | 'owner' | 'manager' | 'employee';
 export type AccountKind = 'user' | 'employee';
 
+/**
+ * Alcance del token.
+ *
+ *   - `app`    — el token de siempre: abre TODO el API. Es el que emite
+ *                `POST /auth/user` y el que usan PlacePos y la PWA. Los tokens
+ *                ya emitidos no llevan el claim, y su ausencia significa `app`.
+ *   - `portal` — token del portal de facturación de la landing. Solo sirve en
+ *                las rutas `@PortalRoute()`. Existe porque ese login SÍ deja
+ *                entrar con la suscripción vencida (hay que poder pagar
+ *                estando bloqueado): sin acotar el alcance, vencer la
+ *                suscripción se convertiría en la forma de saltarse el bloqueo.
+ */
+export type TokenScope = 'app' | 'portal';
+
 export interface JwtPayload {
   user_id: number;
   company_id: number | null;
@@ -25,6 +39,8 @@ export interface JwtPayload {
   lastname: string;
   type: UserType;
   account: AccountKind;
+  /** Ausente en los tokens `app` (compatibilidad con los ya emitidos). */
+  scope?: TokenScope;
   /** Issued at — añadido por `jsonwebtoken` automáticamente. */
   iat?: number;
   /** Expiration — añadido por `jsonwebtoken` según `expiresIn`. */
@@ -44,4 +60,6 @@ export interface AuthUser {
   lastname: string;
   type: UserType;
   account: AccountKind;
+  /** Normalizado por `JwtStrategy`: un token sin claim es `app`. */
+  scope: TokenScope;
 }

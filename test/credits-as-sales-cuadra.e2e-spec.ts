@@ -44,6 +44,7 @@ const OWNER: AuthUser = {
   lastname: 'Owner',
   type: 'owner',
   account: 'user',
+  scope: 'app',
 };
 
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;

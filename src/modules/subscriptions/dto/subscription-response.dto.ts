@@ -1,6 +1,10 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import type { Subscription } from '../entities/subscription.entity';
+import type { Subscription, SubscriptionPlan } from '../entities/subscription.entity';
+import {
+  resolveEffectiveStatus,
+  type EffectiveSubscriptionStatus,
+} from '../internal/subscription-state';
 
 /**
  * Estado de la suscripción de la company actual. El endpoint `GET /subscription`
@@ -41,6 +45,31 @@ export class SubscriptionResponseDto {
 
   @ApiProperty({ example: false })
   is_expired!: boolean;
+
+  /**
+   * Campos de plan/cobro. Se AÑADEN al contrato existente (nunca se quitan ni
+   * se renombran los de arriba): el cliente PlacePos instalado sigue leyendo
+   * los suyos sin enterarse de estos.
+   */
+  @ApiProperty({ example: 'free', enum: ['free', 'monthly', 'annual'] })
+  plan!: SubscriptionPlan;
+
+  @ApiProperty({
+    example: 'trialing',
+    enum: ['trialing', 'active', 'payment_pending', 'payment_failed', 'canceled', 'expired'],
+    description: 'Estado de cobro ya cruzado con la vigencia. `expired` es derivado.',
+  })
+  status!: EffectiveSubscriptionStatus;
+
+  @ApiPropertyOptional({
+    example: 'annual',
+    nullable: true,
+    description: 'Plan solicitado y pendiente de pago. `null` si no hay nada pendiente.',
+  })
+  requested_plan!: SubscriptionPlan | null;
+
+  @ApiPropertyOptional({ example: '2026-08-15T10:00:00.000Z', nullable: true })
+  plan_requested_at!: string | null;
 }
 
 /**
@@ -74,5 +103,13 @@ export function toSubscriptionResponseDto(
     days_remaining: daysRemaining,
     progress,
     is_expired: isExpired,
+    plan: subscription.plan,
+    status: resolveEffectiveStatus({
+      status: subscription.status,
+      expires_at: subscription.expires_at,
+      now,
+    }),
+    requested_plan: subscription.requested_plan ?? null,
+    plan_requested_at: subscription.plan_requested_at?.toISOString() ?? null,
   };
 }

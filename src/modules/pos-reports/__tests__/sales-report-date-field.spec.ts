@@ -15,6 +15,7 @@ const OWNER: AuthUser = {
   lastname: 'Test',
   type: 'owner',
   account: 'user',
+  scope: 'app',
 };
 
 const SOLD_EXPR = 'COALESCE(si.sold_at, si.created_at)';

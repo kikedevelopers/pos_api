@@ -73,6 +73,10 @@ export const validationSchema = Joi.object({
     }),
   JWT_EXPIRES_OWNER: Joi.string().default('7d'),
   JWT_EXPIRES_EMPLOYEE: Joi.string().default('1d'),
+  // Portal de facturación de la landing. Mucho más corto que el de la app: se
+  // emite en un navegador (a veces prestado) y solo sirve para ver y cambiar el
+  // plan, así que una sesión de una semana ahí no le hace un favor a nadie.
+  JWT_EXPIRES_PORTAL: Joi.string().default('12h'),
 
   // Firma asimétrica para endpoints /admin/* (paneles externos, p.ej.
   // kdevs-admin). Clave pública Ed25519 en base64 (SPKI). Vacío = deshabilita

@@ -12,6 +12,7 @@ const user: AuthUser = {
   lastname: 'Pacheco',
   type: 'owner',
   account: 'user',
+  scope: 'app',
 };
 
 const makeRepo = (existing: AgreementAcceptance | null) => {

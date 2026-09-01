@@ -52,6 +52,8 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { PosDataModule } from './modules/pos-data/pos-data.module';
 import { PosReportsModule } from './modules/pos-reports/pos-reports.module';
 import { ProductHistoryModule } from './modules/product-history/product-history.module';
+import { PortalModule } from './modules/portal/portal.module';
+import { PortalScopeGuard } from './modules/portal/portal-scope.guard';
 import { ProductsModule } from './modules/products/products.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -276,6 +278,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // Auth al final (depende de Wallets/TicketSettings/AppSettings/Subscriptions
     // para sembrar valores iniciales al crear una company).
     AuthModule,
+    // Portal de facturación de la landing. Después de AuthModule porque lo
+    // importa (reutiliza su emisor de JWT y su hash dummy).
+    PortalModule,
   ],
   controllers: [AppController],
   providers: [
@@ -288,6 +293,14 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // Alcance del token: un JWT del portal de facturación solo vale en
+    // `/portal/*`. Va ANTES de SubscriptionGuard para que usarlo fuera de su
+    // sitio responda 403 (alcance) y no 402 (suscripción) — que es el motivo
+    // real y el que hay que decirle al cliente.
+    {
+      provide: APP_GUARD,
+      useClass: PortalScopeGuard,
     },
     {
       provide: APP_GUARD,
