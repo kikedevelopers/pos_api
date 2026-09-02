@@ -31,7 +31,16 @@ function build(opts: Options) {
   const dataSource = {
     transaction: jest.fn((cb: (m: unknown) => Promise<void>) => cb(manager)),
   };
-  return { action: new DeleteTenantAction(dataSource as never), del, query, dataSource };
+  // Doble del servicio de imágenes: registra a qué companies se les pidió
+  // limpiar el bucket (la cascada de la BD no llega hasta allí).
+  const removeAllForCompany = jest.fn((_companyId: number) => Promise.resolve());
+  return {
+    action: new DeleteTenantAction(dataSource as never, { removeAllForCompany } as never),
+    del,
+    query,
+    dataSource,
+    removeAllForCompany,
+  };
 }
 
 const PRINCIPAL = { id: '8', name: 'Esencia & Grano', is_branch: false };
@@ -59,6 +68,25 @@ describe('DeleteTenantAction', () => {
     await action.execute(8);
 
     expect(del).toHaveBeenCalledWith(['8', '12', '30']);
+  });
+
+  it('limpia del bucket las imágenes del tenant borrado', async () => {
+    // La cascada de la BD no llega a Google Cloud Storage: sin esto, las fotos
+    // del inventario se quedarían ahí para siempre y sin nadie que las
+    // referenciara.
+    const { action, removeAllForCompany } = build({ company: PRINCIPAL, branchIds: [] });
+
+    await action.execute(8);
+
+    expect(removeAllForCompany).toHaveBeenCalledWith(8);
+  });
+
+  it('limpia también las imágenes de las sucursales arrastradas', async () => {
+    const { action, removeAllForCompany } = build({ company: PRINCIPAL, branchIds: ['12', '30'] });
+
+    await action.execute(8);
+
+    expect(removeAllForCompany.mock.calls.map(([id]) => id)).toEqual([8, 12, 30]);
   });
 
   it('borra todo en la MISMA transacción', async () => {

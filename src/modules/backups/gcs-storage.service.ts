@@ -1,7 +1,8 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Storage, type Bucket, type StorageOptions } from '@google-cloud/storage';
+import { Storage, type Bucket } from '@google-cloud/storage';
 
+import { resolveGcsStorageOptions } from '@/common/gcs/gcs-credentials';
 import type { BackupsConfig } from '@/config/backups.config';
 
 /** Un objeto de respaldo tal como vive en el bucket. */
@@ -61,67 +62,12 @@ export class GcsStorageService {
   }
 
   /**
-   * Cómo se autentica contra GCS, según `GCS_CREDENTIALS_MODE`:
-   *
-   *   - `auto` (por defecto): en PRODUCCIÓN usa las credenciales propias de la
-   *     máquina (ADC: la service account que Google adjunta a la VM), sin
-   *     secretos en el `.env`. Fuera de producción usa el JSON/archivo local si
-   *     está configurado, que es como se trabaja en el Mac.
-   *   - `adc`: fuerza credenciales del entorno en cualquier NODE_ENV.
-   *   - `file` / `json`: fuerza el archivo o el JSON en línea (útil si la VM de
-   *     producción NO tiene identidad adjunta).
-   *
-   * El modo elegido se registra al construir el cliente: si un día falla la
-   * autenticación en la VM, el log dice de dónde se intentaron sacar las claves.
+   * Construye el cliente. La resolución de credenciales vive en
+   * `common/gcs/gcs-credentials.ts` porque es del PROYECTO, no de este módulo:
+   * las imágenes del inventario se autentican exactamente igual.
    */
-  private resolveCredentials(options: StorageOptions): string {
-    const explicitJson = this.config.credentialsJson.trim();
-    const explicitFile = this.config.credentialsFile.trim();
-    const isProduction = this.config.nodeEnv === 'production';
-    const mode = this.config.credentialsMode;
-
-    const useJson = mode === 'json' || (mode === 'auto' && !isProduction && !!explicitJson);
-    const useFile =
-      mode === 'file' || (mode === 'auto' && !isProduction && !explicitJson && !!explicitFile);
-
-    if (useJson) {
-      if (!explicitJson) {
-        throw new ServiceUnavailableException(
-          'GCS_CREDENTIALS_MODE=json pero GCS_CREDENTIALS_JSON está vacío.',
-        );
-      }
-      try {
-        options.credentials = JSON.parse(explicitJson) as StorageOptions['credentials'];
-      } catch {
-        throw new ServiceUnavailableException(
-          'GCS_CREDENTIALS_JSON no es un JSON válido de service account.',
-        );
-      }
-      return 'JSON en variable de entorno';
-    }
-
-    if (useFile) {
-      if (!explicitFile) {
-        throw new ServiceUnavailableException(
-          'GCS_CREDENTIALS_MODE=file pero GCS_CREDENTIALS_FILE está vacío.',
-        );
-      }
-      options.keyFilename = explicitFile;
-      return `archivo ${explicitFile}`;
-    }
-
-    return isProduction
-      ? 'credenciales de la máquina (ADC)'
-      : 'credenciales por defecto del entorno (ADC)';
-  }
-
   private buildStorage(): Storage {
-    const options: StorageOptions = {};
-    if (this.config.projectId) {
-      options.projectId = this.config.projectId;
-    }
-
-    const source = this.resolveCredentials(options);
+    const { options, source } = resolveGcsStorageOptions(this.config);
     this.logger.log(`Google Storage: autenticando con ${source} (bucket ${this.config.bucket}).`);
 
     return new Storage(options);

@@ -101,7 +101,9 @@ export class CreateProductAction {
         category_id: dto.category_id ? String(dto.category_id) : null,
         cost: resolvedCost,
         stock: isCombo ? 0 : dto.stock,
-        image: dto.image ?? null,
+        // La imagen se sube aparte (`POST /inventory/:id/image`): un producto
+        // nace sin ella y el formulario la envía en cuanto tiene el id.
+        image: null,
         show_in_pos: dto.show_in_pos !== false,
         is_purchasable: isCombo ? false : dto.is_purchasable === true,
         is_archived: false,

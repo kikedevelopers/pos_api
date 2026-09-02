@@ -76,6 +76,7 @@ import {
 import { formatTicketNumber } from '@/modules/ticket-settings/internal/format-ticket-number';
 import { User } from '@/modules/users/entities/user.entity';
 import { CreateDefaultWalletAction } from '@/modules/wallets/actions/create-default-wallet.action';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import type { MigrationSummaryDto } from '../dto/migration-summary.dto';
 import { seedEssentials } from '../internal/default-seeds';
@@ -277,6 +278,7 @@ export class ImportZipAction {
     private readonly createDefaultTicketSettingsAction: CreateDefaultTicketSettingsAction,
     private readonly createDefaultAppSettingsAction: CreateDefaultAppSettingsAction,
     private readonly createDefaultAlertConfigsAction: CreateDefaultAlertConfigsAction,
+    private readonly productImages: ProductImagesService,
   ) {}
 
   async execute(zip: ParsedZip, selectedInput: SelectableModule[]): Promise<MigrationSummaryDto> {
@@ -341,6 +343,16 @@ export class ImportZipAction {
 
       return { companyIdReal: company.id, userIdReal: user.id };
     });
+
+    // Re-migración de un negocio ya migrado: sus productos anteriores se
+    // borraron para reinsertarlos desde el ZIP, así que las imágenes que tenían
+    // en el bucket ya no las referencia nadie (las del ZIP llegan sin `image`:
+    // el placepos local no tiene almacenamiento de imágenes). Se limpian tras
+    // confirmar la transacción — si se hubiera revertido, el tenant conservaría
+    // sus fotos.
+    if (replacedCompanyId !== null) {
+      await this.productImages.removeAllForCompany(Number(replacedCompanyId));
+    }
 
     // El manifest del ZIP también lleva warnings — los anexamos al final.
     for (const w of zip.manifest.warnings) {
@@ -588,6 +600,9 @@ export class ImportZipAction {
           companyId,
         ]);
         await manager.query('DELETE FROM "products" WHERE company_id = $1', [companyId]);
+        // Sus imágenes quedan sin referencia; las limpia `execute` cuando la
+        // transacción confirma (borrarlas aquí dejaría al tenant sin fotos si la
+        // migración se revirtiera).
         continue;
       }
       await manager.query(`DELETE FROM "${table}" WHERE company_id = $1`, [companyId]);
@@ -916,7 +931,12 @@ export class ImportZipAction {
           stock: asNumber(row.stock),
           is_purchasable: asBoolean(row.is_purchasable, true),
           hash: asNullableString(row.hash),
-          image: asNullableString(row.image),
+          // La imagen NO se importa: `products.image` es una ruta del bucket
+          // (`inventory_items/<company_id>/<product_id>-…`) que apunta a la
+          // company de origen, y el placepos local del que sale este ZIP ni
+          // siquiera tiene almacenamiento de imágenes. Copiarla dejaría a este
+          // tenant apuntando al archivo de otro.
+          image: null,
           show_in_pos: asBoolean(row.show_in_pos, true),
           is_archived: isArchived,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,

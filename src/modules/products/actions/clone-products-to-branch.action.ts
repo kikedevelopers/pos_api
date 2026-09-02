@@ -4,6 +4,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
 import { resolveCategoryIdByName } from '@/modules/categories/internal/category-lookups';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import { assertSourceAndBranch } from '../internal/assert-source-branch';
 import { Product, ProductType } from '../entities/product.entity';
@@ -32,6 +33,15 @@ export interface CloneSkipped {
 export interface CloneProductsResult {
   created: number;
   skipped: CloneSkipped[];
+}
+
+/**
+ * Resultado interno de clonar UNA familia. Además del conteo lleva las copias
+ * de imagen pendientes: el archivo se duplica en el bucket DESPUÉS de confirmar
+ * la transacción, para no tener la BD bloqueada durante la latencia de red.
+ */
+interface CloneFamilyOutcome extends CloneProductsResult {
+  imageCopies: { sourceImage: string | null; targetProductId: number }[];
 }
 
 /**
@@ -117,7 +127,10 @@ interface SourcePrice {
 export class CloneProductsToBranchAction {
   private readonly logger = new Logger(CloneProductsToBranchAction.name);
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
+  ) {}
 
   async execute(
     sourceCompanyId: number,
@@ -138,6 +151,14 @@ export class CloneProductsToBranchAction {
         const outcome = await this.cloneFamily(sourceCompanyId, branchCompanyId, rootId, actor);
         result.created += outcome.created;
         result.skipped.push(...outcome.skipped);
+        // Las imágenes se duplican en el bucket ya con la familia confirmada.
+        // Cada copia es dueña de su archivo: compartir la ruta con el producto
+        // del principal haría que quitar la imagen allá rompiera la sucursal.
+        // Si la copia falla, el producto clonado queda sin foto (recuperable
+        // subiéndola) en vez de tumbar el clonado entero.
+        if (outcome.imageCopies.length > 0) {
+          await this.productImages.copyManyTo(outcome.imageCopies, branchCompanyId);
+        }
       } catch (err) {
         // Una familia que peta deja la TX de ESA familia en rollback (sin
         // estado parcial). Registramos y propagamos: un fallo inesperado en el
@@ -210,29 +231,30 @@ export class CloneProductsToBranchAction {
     branchCompanyId: number,
     rootId: string,
     actor: ProductCreator,
-  ): Promise<CloneProductsResult> {
-    return this.dataSource.transaction<CloneProductsResult>(async (manager) => {
+  ): Promise<CloneFamilyOutcome> {
+    return this.dataSource.transaction<CloneFamilyOutcome>(async (manager) => {
       const family = await this.loadFamily(manager, sourceCompanyId, rootId);
       if (family.length === 0) {
-        return { created: 0, skipped: [] };
+        return { created: 0, skipped: [], imageCopies: [] };
       }
       const root = family[0];
 
       // Un COMBO no se clona: su receta referencia productos del principal y
       // clonarlo sin ella daría un producto que se vende sin descontar stock.
       if (root.product_type === ProductType.COMBO) {
-        return { created: 0, skipped: [{ name: root.name, reason: 'combo' }] };
+        return { created: 0, skipped: [{ name: root.name, reason: 'combo' }], imageCopies: [] };
       }
 
       // Colisión: se evalúa sobre la RAÍZ. Si la sucursal ya tiene un activo con
       // el mismo name/sku/barcode, se omite la familia entera.
       const collision = await this.detectCollision(manager, branchCompanyId, root);
       if (collision) {
-        return { created: 0, skipped: [{ name: root.name, reason: collision }] };
+        return { created: 0, skipped: [{ name: root.name, reason: collision }], imageCopies: [] };
       }
 
       // Mapa oldId → newId para recablear parent_id de los hijos.
       const idMap = new Map<string, string>();
+      const imageCopies: CloneFamilyOutcome['imageCopies'] = [];
       let created = 0;
 
       // El padre primero (los hijos dependen de su new id).
@@ -248,10 +270,13 @@ export class CloneProductsToBranchAction {
           actor,
         );
         idMap.set(product.id, newId);
+        if (product.image) {
+          imageCopies.push({ sourceImage: product.image, targetProductId: Number(newId) });
+        }
         created += 1;
       }
 
-      return { created, skipped: [] };
+      return { created, skipped: [], imageCopies };
     });
   }
 
@@ -401,7 +426,9 @@ export class CloneProductsToBranchAction {
       stock: source.stock,
       is_purchasable: source.is_purchasable,
       show_in_pos: source.show_in_pos,
-      image: source.image,
+      // La ruta NO se copia: el archivo se duplica en el bucket tras confirmar
+      // la familia y ahí se apunta esta fila a su propia copia (ver `execute`).
+      image: null,
       hash: source.hash,
       is_archived: false,
       // Marca de COPIA: registra la company de origen (el principal) para que la

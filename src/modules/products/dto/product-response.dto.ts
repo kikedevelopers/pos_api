@@ -122,8 +122,21 @@ export class ProductResponseDto {
   @ApiPropertyOptional({ example: null, nullable: true })
   category_id!: number | null;
 
-  @ApiPropertyOptional({ example: null, nullable: true })
+  /**
+   * RUTA del objeto en el bucket, no una URL: el cliente NO la usa para pintar
+   * (no es accesible por sí sola). Viaja para que el front sepa si el item
+   * tiene imagen aunque la firma haya fallado.
+   */
+  @ApiPropertyOptional({ example: 'inventory_items/8/42-9f3c1a7b.jpg', nullable: true })
   image!: string | null;
+
+  /**
+   * URL firmada y temporal para mostrar la imagen. `null` cuando el item no
+   * tiene, cuando el servidor no tiene bucket configurado o cuando la firma
+   * falló (el front cae al placeholder — nunca rompe el listado).
+   */
+  @ApiPropertyOptional({ example: 'https://storage.googleapis.com/…', nullable: true })
+  image_url!: string | null;
 
   @ApiProperty({ example: true })
   show_in_pos!: boolean;
@@ -243,6 +256,10 @@ export function toProductResponseDto(
     packaging_id: p.packaging_id === null ? null : Number(p.packaging_id),
     category_id: p.category_id === null ? null : Number(p.category_id),
     image: p.image ?? null,
+    // La firma es asíncrona y se resuelve en lote fuera del mapper (ver
+    // `ProductsController.attachImageUrls`): firmar aquí obligaría a una
+    // llamada a Google por producto.
+    image_url: null,
     show_in_pos: p.show_in_pos,
     is_purchasable: p.is_purchasable,
     is_archived: p.is_archived,

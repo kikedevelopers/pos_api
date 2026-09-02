@@ -29,6 +29,7 @@ import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
 import { AdminSignatureGuard } from '@/common/guards/admin-signature.guard';
+import { ProductImagesModule } from '@/modules/product-images/product-images.module';
 
 import { ImportZipAction } from './actions/import-zip.action';
 import { MigrationImportController } from './migration-import.controller';
@@ -47,6 +48,8 @@ import { MigrationImportService } from './migration-import.service';
  */
 @Module({
   imports: [
+    // Para limpiar del bucket las imágenes del tenant que se re-migra.
+    ProductImagesModule,
     TypeOrmModule.forFeature([
       Company,
       User,

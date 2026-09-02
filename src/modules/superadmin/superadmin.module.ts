@@ -11,6 +11,8 @@ import { UsersModule } from '@/modules/users/users.module';
 
 import { ClearTenantInventoryAction } from './actions/clear-tenant-inventory.action';
 import { CreateTenantAction } from './actions/create-tenant.action';
+import { ProductImagesModule } from '@/modules/product-images/product-images.module';
+
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
@@ -47,6 +49,8 @@ import { SuperadminController } from './superadmin.controller';
  */
 @Module({
   imports: [
+    // Para limpiar del bucket las imágenes de un tenant que se borra.
+    ProductImagesModule,
     UsersModule,
     AuthModule,
     CompaniesModule,

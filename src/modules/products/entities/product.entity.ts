@@ -208,8 +208,24 @@ export class Product {
   @Column({ type: 'text', nullable: true })
   hash!: string | null;
 
+  /**
+   * RUTA del objeto en Google Cloud Storage
+   * (`inventory_items/<company_id>/<product_id>-<rnd>.<ext>`), no una URL: la
+   * URL se firma al leer y caduca, así que persistirla sería guardar un dato
+   * con fecha de vencimiento. La escribe SOLO el servidor (módulo
+   * `product-images`); ningún cliente la manda en el payload.
+   */
   @Column({ type: 'text', nullable: true })
   image!: string | null;
+
+  /**
+   * Instante a partir del cual la imagen puede borrarse del bucket. Se marca al
+   * ARCHIVAR el producto (hoy + los días de retención configurados) y un cron
+   * diario limpia lo vencido. `null` = sin purga programada, que es el estado de
+   * todo producto activo.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  image_purge_at!: Date | null;
 
   /**
    * Si el producto es una COPIA (clonada a una sucursal), la company de ORIGEN

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
+
 import { Product } from '../entities/product.entity';
 import { assertNotUsedInActiveCombos } from '../internal/combo-components.helper';
 
@@ -38,7 +40,10 @@ export interface BulkArchiveResult {
 export class BulkArchiveProductsAction {
   private readonly logger = new Logger(BulkArchiveProductsAction.name);
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
+  ) {}
 
   async execute(ids: number[], companyId: number): Promise<BulkArchiveResult> {
     // Dedup y filtrado básico — defensa contra payloads ruidosos del cliente.
@@ -76,6 +81,13 @@ export class BulkArchiveProductsAction {
           },
           { is_archived: true },
         );
+        // La imagen NO se borra ahora: archivar por error es común y una foto
+        // perdida no se recupera. Se le pone fecha de vencimiento y el cron
+        // diario la elimina cuando se cumpla el plazo de retención. Va en la
+        // MISMA transacción porque archivar y programar la purga son el mismo
+        // hecho: si una se aplicara sin la otra, la imagen quedaría huérfana
+        // para siempre o se borraría la de un producto que sigue activo.
+        await this.productImages.markArchivedForPurge(manager, companyId, idsToArchive);
       }
 
       this.logger.log({

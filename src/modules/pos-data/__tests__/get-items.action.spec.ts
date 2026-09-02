@@ -24,6 +24,8 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     show_in_pos: true,
     created_at: new Date('2026-05-12T14:30:00.000Z'),
     stock: '10.0000',
+    image: null,
+    description: null,
     packaging__id: '5',
     packaging__name: 'Caja x 12',
     packaging__value: '12.0000',
@@ -103,8 +105,35 @@ describe('GetItemsAction (SQL crudo)', () => {
         // FASE 2 (COMPARTIR): producto propio (company_id == activa).
         is_shared: false,
         owner_company_id: 42,
+        // Imagen: la action solo proyecta la RUTA. La URL firmada la resuelve
+        // `PosDataService` en lote contra el caché, por eso viaja en null.
+        image: null,
+        image_url: null,
+        description: null,
       },
     ]);
+  });
+
+  it('proyecta la ruta de la imagen y deja la URL para el lote del service', async () => {
+    const action = makeAction([rawRow({ image: 'inventory_items/42/10-abc.jpg' })]);
+    const [item] = await action.execute(42);
+
+    expect(item.image).toBe('inventory_items/42/10-abc.jpg');
+    expect(item.image_url).toBeNull();
+  });
+
+  it('proyecta la descripción del producto', async () => {
+    const action = makeAction([rawRow({ description: 'Bebida gaseosa sabor cola.' })]);
+    const [item] = await action.execute(42);
+
+    expect(item.description).toBe('Bebida gaseosa sabor cola.');
+  });
+
+  it('descripción ausente llega en null (no undefined)', async () => {
+    const action = makeAction([rawRow({ description: undefined })]);
+    const [item] = await action.execute(42);
+
+    expect(item.description).toBeNull();
   });
 
   it('packaging null y prices vacío con COALESCE', async () => {
@@ -180,6 +209,16 @@ describe('GetItemsAction (SQL crudo)', () => {
     expect(items[1].parent).toEqual({ id: 1, name: 'Coca-Cola 2L', stock: 10, cost: 2.5 });
     // Presentación: stock del PADRE (10) / packaging_value del HIJO (12).
     expect(items[1].stock).toBe(0.8333);
+  });
+
+  it('la descripción de un hijo es la suya, no la del padre', async () => {
+    const action = makeAction([
+      rawRow({ id: '1', parent_id: null, description: 'Descripción del padre' }),
+      rawRow({ id: '2', parent_id: '1', show_in_pos: true, description: 'Descripción del hijo' }),
+    ]);
+    const items = await action.execute(42);
+    expect(items[0].description).toBe('Descripción del padre');
+    expect(items[1].description).toBe('Descripción del hijo');
   });
 
   it('created_at string del driver se normaliza para el orden', async () => {

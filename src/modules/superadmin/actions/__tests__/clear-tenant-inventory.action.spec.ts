@@ -48,7 +48,21 @@ function buildAction(manager: unknown) {
   const dataSource = {
     transaction: (cb: (m: unknown) => Promise<unknown>) => cb(manager),
   };
-  return new ClearTenantInventoryAction(dataSource as never);
+  return new ClearTenantInventoryAction(dataSource as never, buildImagesStub().service);
+}
+
+/**
+ * Doble del servicio de imágenes: los productos de estos casos no tienen foto,
+ * así que solo hace falta que las llamadas no exploten.
+ */
+function buildImagesStub() {
+  const removeImages = jest.fn(() => Promise.resolve(0));
+  const markArchivedForPurge = jest.fn(() => Promise.resolve());
+  return {
+    removeImages,
+    markArchivedForPurge,
+    service: { removeImages, markArchivedForPurge } as never,
+  };
 }
 
 describe('ClearTenantInventoryAction', () => {

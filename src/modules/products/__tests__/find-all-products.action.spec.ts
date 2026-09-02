@@ -83,6 +83,9 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       packaging_id: 5,
       category_id: 3,
       image: null,
+      // La URL firmada la puebla el controller en lote (attachImageUrls); el
+      // mapper la deja en null a propósito para no firmar una por producto.
+      image_url: null,
       show_in_pos: true,
       is_purchasable: false,
       is_archived: false,

@@ -177,9 +177,10 @@ export class UpdateProductAction {
       if (!isCombo && dto.stock !== undefined) {
         patch.stock = dto.stock;
       }
-      if (dto.image !== undefined) {
-        patch.image = dto.image ?? null;
-      }
+      // `image` no se toca aquí: la gestiona el módulo `product-images`
+      // (`POST /inventory/:id/image` y `.../image/remove`), que además borra el
+      // archivo anterior del bucket. Escribirla desde el patch dejaría objetos
+      // huérfanos y permitiría apuntar a la carpeta de otro tenant.
       if (dto.show_in_pos !== undefined) {
         patch.show_in_pos = dto.show_in_pos;
       }

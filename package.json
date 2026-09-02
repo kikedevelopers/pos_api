@@ -61,6 +61,7 @@
     "joi": "^17.13.3",
     "jszip": "^3.10.1",
     "nestjs-pino": "^4.1.0",
+    "node-cache": "^5.1.2",
     "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

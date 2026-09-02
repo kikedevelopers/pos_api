@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 
 import { Company } from '@/modules/companies/entities/company.entity';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import { PRODUCT_TREE_CTE, PRODUCT_PROTECTION_CTE } from './tenant-inventory.sql';
 
@@ -42,10 +43,11 @@ export class ClearTenantInventoryAction {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
   ) {}
 
   async execute(companyId: number): Promise<ClearTenantInventoryResult> {
-    return this.dataSource.transaction(async (manager) => {
+    const { result, imagesToDelete } = await this.dataSource.transaction(async (manager) => {
       const company = await manager
         .getRepository(Company)
         .findOne({ where: { id: String(companyId) } });
@@ -55,7 +57,15 @@ export class ClearTenantInventoryAction {
 
       const { deletableIds, protectedIds } = await this.classify(manager, companyId);
 
+      // Las rutas de los que se van a BORRAR hay que leerlas ANTES: después del
+      // DELETE ya no queda quién apunte a esos archivos y se quedarían en el
+      // bucket para siempre.
+      const imagesToDelete = await this.loadImages(manager, deletableIds);
+
       const archived = await this.archive(manager, protectedIds);
+      // Los protegidos solo se archivan, así que su imagen entra en la misma
+      // cuenta regresiva que cualquier archivado normal (la borra el cron).
+      await this.productImages.markArchivedForPurge(manager, companyId, protectedIds.map(Number));
       const deleted = await this.deleteProducts(manager, deletableIds);
 
       const [{ remaining }] = await manager.query<{ remaining: string }[]>(
@@ -66,8 +76,29 @@ export class ClearTenantInventoryAction {
       this.logger.log(
         `Inventario vaciado (company ${companyId}): ${deleted} borrados, ${archived} archivados.`,
       );
-      return { deleted, archived, remaining: Number(remaining) };
+      return {
+        result: { deleted, archived, remaining: Number(remaining) },
+        imagesToDelete,
+      };
     });
+
+    // Fuera de la transacción: si el vaciado se revirtiera, los archivos ya no
+    // estarían. Un fallo del bucket no puede deshacer lo que ya se borró en BD.
+    await this.productImages.removeImages(imagesToDelete, companyId);
+
+    return result;
+  }
+
+  /** Rutas de imagen de los productos que se van a borrar (las que existan). */
+  private async loadImages(manager: EntityManager, ids: string[]): Promise<string[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await manager.query<{ image: string }[]>(
+      `SELECT image FROM products WHERE id = ANY($1::bigint[]) AND image IS NOT NULL`,
+      [ids],
+    );
+    return rows.map((r) => r.image);
   }
 
   /**

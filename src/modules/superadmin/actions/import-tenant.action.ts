@@ -5,6 +5,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { preciseNumber, toBig } from '@/common/utils/precision';
 
 import { resyncTicketCounters } from '@/modules/ticket-settings/internal/resync-ticket-counters';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import {
   BackupRow,
@@ -77,6 +78,7 @@ export class ImportTenantAction {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
   ) {}
 
   async execute(companyId: number, backup: TenantBackup): Promise<ImportResult> {
@@ -249,6 +251,12 @@ export class ImportTenantAction {
       inserted,
       skipped,
     });
+
+    // Los productos del DESTINO se borraron para dar paso a los del origen: sus
+    // imágenes se quedaron sin nadie que las referenciara. Las del origen NO se
+    // copian (la columna `image` se anula al importar, ver BUCKET_PATH_COLUMNS),
+    // así que la carpeta del destino queda vacía y limpia.
+    await this.productImages.removeAllForCompany(companyId);
 
     return {
       targetCompanyId: companyId,

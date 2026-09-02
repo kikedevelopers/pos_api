@@ -52,6 +52,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { PosDataModule } from './modules/pos-data/pos-data.module';
 import { PosReportsModule } from './modules/pos-reports/pos-reports.module';
 import { ProductHistoryModule } from './modules/product-history/product-history.module';
+import { ProductImagesModule } from './modules/product-images/product-images.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalScopeGuard } from './modules/portal/portal-scope.guard';
 import { ProductsModule } from './modules/products/products.module';
@@ -196,6 +197,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // la FK products.category_id apunte a una tabla ya migrada; en runtime
     // Nest no impone orden, pero conservamos coherencia conceptual).
     CategoriesModule,
+    // Imágenes de los items del inventario (GCS + caché de URLs firmadas +
+    // cron de purga). Se declara aparte de ProductsModule —que también lo
+    // importa— para dejar visible que este módulo tiene un cron propio.
+    ProductImagesModule,
     ProductsModule,
     // Fase 2A — Historial de costo/precio de productos (rutas absolutas
     // /products/:id/cost-history y /product-prices/:id/price-history).

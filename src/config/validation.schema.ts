@@ -110,6 +110,21 @@ export const validationSchema = Joi.object({
   // Retención: nunca puede haber más de este número de respaldos en el bucket.
   BACKUP_MAX_FILES: Joi.number().integer().min(1).max(365).default(7),
 
+  // ---------- Imágenes de items del inventario ----------
+  // Bucket y carpeta donde viven las fotos de productos. El bucket cae por
+  // defecto al de respaldos (mismo proyecto, misma identidad).
+  GCS_INVENTORY_BUCKET: Joi.string().allow('').default(''),
+  GCS_INVENTORY_PREFIX: Joi.string().allow('').default('inventory_items'),
+  // Tope de peso de la imagen (MB). El front valida el mismo número.
+  PRODUCT_IMAGE_MAX_MB: Joi.number().positive().max(25).default(2),
+  // Vigencia de la URL firmada. DEBE superar al TTL del caché para que una URL
+  // cacheada nunca llegue vencida al navegador.
+  PRODUCT_IMAGE_SIGNED_URL_TTL_S: Joi.number().integer().min(300).max(604800).default(86400),
+  // Cuánto vive una URL firmada en memoria antes de volver a firmarse.
+  PRODUCT_IMAGE_CACHE_TTL_S: Joi.number().integer().min(60).max(86400).default(21600),
+  // Días que la imagen sobrevive en el bucket tras archivar el producto.
+  PRODUCT_IMAGE_RETENTION_DAYS: Joi.number().integer().min(1).max(365).default(7),
+
   // PlacePOS IA (Google Gemini). Sin `GEMINI_API_KEY` el módulo /ai queda
   // deshabilitado (503) — la app cliente lo detecta y muestra el aviso.
   GEMINI_API_KEY: Joi.string().allow('').default(''),
