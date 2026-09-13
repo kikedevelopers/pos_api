@@ -137,6 +137,9 @@ export class GetTenantDetailAction {
         : null,
       counts: { ventas, compras, clientes, productos, proveedores, gastos },
       branches,
+      // Interruptor de FE del negocio. La FE no viene activa; se habilita desde
+      // el panel. El proceso de FE corre en el API externo (APIDIAN).
+      electronicBilling: { enabled: company.electronic_billing_enabled },
     };
   }
 

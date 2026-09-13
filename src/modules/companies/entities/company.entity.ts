@@ -102,6 +102,16 @@ export class Company {
   @Column({ type: 'boolean', default: false })
   is_branch!: boolean;
 
+  /**
+   * Gate de Facturación Electrónica del negocio. `false` por defecto: la FE no
+   * viene activa; se habilita explícitamente desde el panel superadmin. TODO el
+   * proceso de FE (armado, firma y envío a la DIAN) corre en el API externo de
+   * Laravel (APIDIAN) — este flag solo decide si el negocio puede emitir. La
+   * configuración fiscal restante se sumará a esta misma entidad más adelante.
+   */
+  @Column({ type: 'boolean', default: false })
+  electronic_billing_enabled!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 

@@ -34,6 +34,10 @@ import { ListTenantsAction } from './actions/list-tenants.action';
 import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
+import {
+  UpdateElectronicBillingAction,
+  type UpdateElectronicBillingResult,
+} from './actions/update-electronic-billing.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
@@ -41,6 +45,7 @@ import { CreateTenantDto } from './dto/create-tenant.dto';
 import { ImportTenantDto } from './dto/import-tenant.dto';
 import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
+import { UpdateElectronicBillingDto } from './dto/update-electronic-billing.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
 import {
@@ -89,6 +94,7 @@ export class SuperadminController {
     private readonly getTenantDetailAction: GetTenantDetailAction,
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
     private readonly updateBranchesAction: UpdateBranchesAction,
+    private readonly updateElectronicBillingAction: UpdateElectronicBillingAction,
     private readonly deleteTenantAction: DeleteTenantAction,
     private readonly createTenantAction: CreateTenantAction,
     private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
@@ -221,6 +227,31 @@ export class SuperadminController {
     @Body() dto: UpdateBranchesDto,
   ): Promise<UpdateBranchesResult> {
     return this.updateBranchesAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/electronic-billing
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/electronic-billing')
+  @ApiOperation({
+    summary: 'Activar/desactivar la Facturación Electrónica del negocio.',
+    description:
+      'Body: { enabled }. Se aplica sobre el negocio PRINCIPAL del tenant (400 si es una ' +
+      'sucursal). Solo mueve el interruptor: TODO el proceso de FE (armado, firma y envío a la ' +
+      'DIAN) lo ejecuta el API externo de Laravel (APIDIAN).',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Payload inválido o no es principal',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  updateElectronicBilling(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateElectronicBillingDto,
+  ): Promise<UpdateElectronicBillingResult> {
+    return this.updateElectronicBillingAction.execute(companyId, dto);
   }
 
   // --------------------------------------------------------------------------

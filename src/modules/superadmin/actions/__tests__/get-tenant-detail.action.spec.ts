@@ -21,6 +21,7 @@ const PRINCIPAL = {
   origin: 'web',
   created_at: new Date('2026-06-01T00:00:00.000Z'),
   is_branch: false,
+  electronic_billing_enabled: true,
 };
 
 const SUCURSAL = {
@@ -114,6 +115,7 @@ describe('GetTenantDetailAction · negocio principal', () => {
     expect(res.parent).toBeNull();
     expect(res.owner?.email).toBe('kike@esenciaygrano.com');
     expect(res.subscription?.expiresAt).toBe(SUB.expires_at.toISOString());
+    expect(res.electronicBilling).toEqual({ enabled: true });
   });
 
   it('404 si la company no existe', async () => {
