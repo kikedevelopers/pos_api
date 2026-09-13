@@ -120,6 +120,30 @@ export class ProductPrice {
   })
   iva_percentage!: number;
 
+  /**
+   * Base gravable del precio (el `sale_price` sin IVA). Invariante:
+   * `sale_price = taxable_base + tax_amount`. El precio se ingresa con IVA
+   * incluido; aquí solo se discrimina. Sin FE queda = sale_price (IVA 0).
+   */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  taxable_base!: number;
+
+  /** Valor del IVA contenido en `sale_price`. Sin FE queda en 0. */
+  @Column({
+    type: 'numeric',
+    precision: 15,
+    scale: 2,
+    default: 0,
+    transformer: NumericTransformer,
+  })
+  tax_amount!: number;
+
   @Column({ type: 'text', nullable: true })
   created_by!: string | null;
 

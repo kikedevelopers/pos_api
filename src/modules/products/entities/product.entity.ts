@@ -15,6 +15,7 @@ import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { Category } from '@/modules/categories/entities/category.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
+import { TaxRate } from '@/modules/taxes/entities/tax-rate.entity';
 
 import { ProductPrice } from './product-price.entity';
 
@@ -158,6 +159,23 @@ export class Product {
   })
   @JoinColumn({ name: 'category_id' })
   category!: Category | null;
+
+  /**
+   * FK al catálogo global `tax_rates` — tarifa de IVA del producto (solo
+   * relevante cuando el negocio es facturador electrónico). `null` = sin
+   * definir; la UI lo trata como Exento. La tarifa de aquí desglosa la base y el
+   * IVA de cada `product_price`. ON DELETE RESTRICT: el catálogo es permanente.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  tax_rate_id!: string | null;
+
+  @ManyToOne(() => TaxRate, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'tax_rate_id' })
+  tax_rate!: TaxRate | null;
 
   /**
    * Costo unitario. numeric(15,2). Dentro del service, vuélvelo a `Big`

@@ -92,6 +92,10 @@ export class QuickCreateProductAction {
         profit: 0,
         margin: 0,
         iva_percentage: 0,
+        // Quick-create nace sin tarifa (Exento): sin IVA, toda la venta es base.
+        // Mantiene la invariante base + iva = sale_price.
+        taxable_base: dto.cost,
+        tax_amount: 0,
         created_by: createdBy.fullName,
         created_by_id: String(createdBy.id),
       });

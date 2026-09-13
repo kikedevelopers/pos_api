@@ -998,6 +998,11 @@ export class ImportZipAction {
         continue;
       }
       const { created_at, updated_at } = readZipDates(row);
+      // Desglose base/IVA: los dumps offline (sin FE) no lo traen → toda la venta
+      // es base, IVA 0. Si un dump futuro lo incluye, se respeta. Mantiene la
+      // invariante base + iva = sale_price.
+      const hasBase = row.taxable_base !== undefined && row.taxable_base !== null;
+      const hasTax = row.tax_amount !== undefined && row.tax_amount !== null;
       const saved = await repo.save(
         repo.create({
           company_id: ctx.companyIdReal,
@@ -1007,6 +1012,8 @@ export class ImportZipAction {
           profit: Math.max(0, asNumber(row.profit)),
           margin: Math.max(0, asNumber(row.margin)),
           iva_percentage: asNumber(row.iva_percentage),
+          taxable_base: hasBase ? asNumber(row.taxable_base) : salePrice,
+          tax_amount: hasTax ? asNumber(row.tax_amount) : 0,
           created_by: asNullableString(row.created_by) ?? ctx.ownerFullName,
           created_by_id: this.remapUserId(ctx, row.created_by_id),
           ...(created_at !== null ? { created_at, updated_at: updated_at ?? created_at } : {}),

@@ -90,6 +90,13 @@ export class CompanyProfileItemDto {
    */
   @ApiProperty({ example: true })
   is_active!: boolean;
+
+  /**
+   * Facturación Electrónica habilitada para el negocio. El cliente lo lee del
+   * perfil para decidir si muestra la UI fiscal del formulario de producto.
+   */
+  @ApiProperty({ example: false })
+  electronic_billing_enabled!: boolean;
 }
 
 /**

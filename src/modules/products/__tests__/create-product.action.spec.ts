@@ -56,6 +56,28 @@ describe('buildPriceRow (helper)', () => {
     const row = buildPriceRow({ sale_price: 10 }, fakeProduct, 2, actor);
     expect(row.iva_percentage).toBe(0);
   });
+
+  it('sin tarifa (Exento): base = sale_price, IVA 0', () => {
+    const row = buildPriceRow({ sale_price: 11900 }, fakeProduct, 2, actor);
+    expect(row.iva_percentage).toBe(0);
+    expect(row.taxable_base).toBe(11900);
+    expect(row.tax_amount).toBe(0);
+  });
+
+  it('con tarifa 19% desglosa base/IVA del precio IVA-incluido y sincroniza iva_percentage', () => {
+    const row = buildPriceRow({ sale_price: 11900 }, fakeProduct, 2, actor, 19);
+    expect(row.iva_percentage).toBe(19);
+    expect(row.taxable_base).toBe(10000);
+    expect(row.tax_amount).toBe(1900);
+  });
+
+  it('ignora el iva_percentage del cliente: manda la tarifa del producto', () => {
+    // El cliente manda 99, pero la tarifa del producto (5%) es la que vale.
+    const row = buildPriceRow({ sale_price: 10500, iva_percentage: 99 }, fakeProduct, 2, actor, 5);
+    expect(row.iva_percentage).toBe(5);
+    expect(row.taxable_base).toBe(10000);
+    expect(row.tax_amount).toBe(500);
+  });
 });
 
 describe('CreateProductAction', () => {
@@ -115,6 +137,30 @@ describe('CreateProductAction', () => {
     }).compile();
 
     action = module.get(CreateProductAction);
+  });
+
+  it('rechaza asignar IVA (tax_rate_id) si la FE está apagada para el negocio', async () => {
+    // El managerMock.query devuelve [] → companies.electronic_billing_enabled
+    // ausente = FE apagada. Intentar asignar una tarifa debe cortar con 403
+    // ANTES de tocar precios (front rancio en una SPA).
+    await expect(
+      action.execute(
+        { name: 'X', cost: 1, stock: 0, tax_rate_id: 1, prices: [{ sale_price: 2 }] },
+        42,
+        { id: 7, fullName: 'Kike' },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    // No se insertó ningún precio: se cortó antes.
+    expect(insertedPrices).toBeNull();
+  });
+
+  it('crear SIN tarifa (Exento) NO exige FE: pasa aunque esté apagada', async () => {
+    await expect(
+      action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 42, {
+        id: 7,
+        fullName: 'Kike',
+      }),
+    ).resolves.toBeDefined();
   });
 
   it('asigna company_id desde el parámetro, NUNCA del DTO', async () => {

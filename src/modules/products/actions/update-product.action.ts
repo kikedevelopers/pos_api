@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-import { toBig } from '@/common/utils/precision';
+import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+import { computeTaxBreakdown, toBig } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 import {
   propagateComponentCostToCombos,
@@ -27,7 +28,9 @@ import {
   assertParentIsNotCombo,
   findProductInCompany,
 } from '../internal/product-lookups';
+import { resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
 import { syncProductPrices } from '../internal/sync-product-prices';
+import { ProductPrice } from '../entities/product-price.entity';
 
 import type { ProductCreator } from './create-product.action';
 
@@ -82,6 +85,24 @@ export class UpdateProductAction {
       await assertParentBelongsToCompany(manager, dto.parent_id ?? null, companyId);
       await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
+
+      // Asignar/cambiar la tarifa de IVA es una operación de FE: solo se permite
+      // con la FE ACTIVA ahora (validado contra la BD). Poner `null` (Exento) o
+      // editar el producto sin tocar la tarifa NO requiere FE. Cierra el hueco
+      // del front rancio en una SPA.
+      if (dto.tax_rate_id != null) {
+        await assertElectronicBillingEnabled(manager, companyId)
+      }
+
+      // Tarifa de IVA FINAL tras el patch: si el cliente la envía se usa esa;
+      // si no, se conserva la del producto. El porcentaje resuelto vuelve a
+      // desglosar la base/IVA de los precios (el precio ya incluye el IVA).
+      const finalTaxRateId =
+        dto.tax_rate_id !== undefined ? (dto.tax_rate_id ?? null) : existing.tax_rate_id;
+      const taxRatePercent = await resolveTaxRatePercent(
+        manager,
+        finalTaxRateId !== null ? Number(finalTaxRateId) : null,
+      );
 
       // Tipo FINAL del producto tras el patch (el cliente puede omitirlo).
       const finalProductType = dto.product_type ?? existing.product_type;
@@ -170,6 +191,9 @@ export class UpdateProductAction {
       if (dto.category_id !== undefined) {
         patch.category_id = dto.category_id ? String(dto.category_id) : null;
       }
+      if (dto.tax_rate_id !== undefined) {
+        patch.tax_rate_id = dto.tax_rate_id ? String(dto.tax_rate_id) : null;
+      }
       if (resolvedCost !== undefined) {
         patch.cost = resolvedCost;
       }
@@ -210,7 +234,8 @@ export class UpdateProductAction {
         await clearComboComponents(manager, companyId, id);
       }
 
-      // Sincronizar prices si el cliente los envió.
+      // Sincronizar prices si el cliente los envió (desglosando base/IVA con la
+      // tarifa final).
       if (dto.prices !== undefined) {
         await syncProductPrices({
           manager,
@@ -220,7 +245,20 @@ export class UpdateProductAction {
           incoming: dto.prices,
           existing: existing.prices ?? [],
           actor,
+          taxRatePercent,
         });
+      } else if (dto.tax_rate_id !== undefined) {
+        // Cambió solo la tarifa (sin reenviar precios): re-desglosar base/IVA de
+        // los precios existentes con la nueva tarifa, o el desglose quedaría
+        // obsoleto. El sale_price (total) no cambia.
+        for (const price of existing.prices ?? []) {
+          const { taxableBase, taxAmount } = computeTaxBreakdown(price.sale_price, taxRatePercent);
+          await manager.update(
+            ProductPrice,
+            { id: price.id, product_id: existing.id, company_id: String(companyId) },
+            { iva_percentage: taxRatePercent, taxable_base: taxableBase, tax_amount: taxAmount },
+          );
+        }
       }
 
       // Si cambia el costo de un producto BASE, propagar a sus presentaciones

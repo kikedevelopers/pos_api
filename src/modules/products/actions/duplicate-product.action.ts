@@ -97,6 +97,8 @@ export class DuplicateProductAction {
         bar_code: null,
         packaging_id: source.packaging_id,
         category_id: source.category_id,
+        // La copia hereda la misma tarifa de IVA que el original.
+        tax_rate_id: source.tax_rate_id,
         cost,
         stock: 0,
         // La imagen NO se copia como string: el archivo se duplica en el bucket
@@ -149,7 +151,11 @@ export class DuplicateProductAction {
             sale_price: price.sale_price,
             profit: calculateProfit(price.sale_price, cost),
             margin: calculateMargin(price.sale_price, cost),
+            // El desglose base/IVA se copia tal cual: mismo sale_price y misma
+            // tarifa que el original (invariante base + iva = sale_price intacta).
             iva_percentage: price.iva_percentage,
+            taxable_base: price.taxable_base,
+            tax_amount: price.tax_amount,
             created_by: actor.fullName,
             created_by_id: String(actor.id),
           })),

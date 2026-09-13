@@ -169,6 +169,19 @@ export class CreateProductDto {
   category_id?: number | null;
 
   @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description:
+      'ID de la tarifa de IVA del catálogo (tax_rates). Solo aplica a facturadores ' +
+      'electrónicos. null = sin definir (se trata como Exento).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'tax_rate_id debe ser entero' })
+  @Min(1, { message: 'tax_rate_id debe ser >= 1' })
+  tax_rate_id?: number | null;
+
+  @ApiPropertyOptional({
     example: 'a1b2c3d4',
     nullable: true,
     maxLength: 200,

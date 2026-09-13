@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+import { calculateMargin, calculateProfit, computeTaxBreakdown } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 
 import type { CreateProductDto } from '../dto/create-product.dto';
@@ -20,6 +21,7 @@ import {
   assertParentBelongsToCompany,
   assertParentIsNotCombo,
 } from '../internal/product-lookups';
+import { resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
 
 /**
  * Datos del actor creador. Evita propagar `AuthUser` completo.
@@ -65,6 +67,19 @@ export class CreateProductAction {
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
       await assertParentIsNotCombo(manager, dto.parent_id ?? null, companyId);
 
+      // Asignar una tarifa de IVA es una operación de FE: solo se permite si el
+      // negocio la tiene ACTIVA ahora (validado contra la BD, no contra el JWT).
+      // Enviar `null` (Exento) no requiere FE. Cierra el hueco del front rancio:
+      // si el superadmin apagó la FE hace segundos, esto ya rechaza.
+      if (dto.tax_rate_id != null) {
+        await assertElectronicBillingEnabled(manager, companyId)
+      }
+
+      // Tarifa de IVA del producto (catálogo global). null = Exento (0%). El
+      // porcentaje resuelto desglosa la base/IVA de cada precio; el precio se
+      // ingresa con IVA incluido.
+      const taxRatePercent = await resolveTaxRatePercent(manager, dto.tax_rate_id);
+
       // Un COMBO se arma con N productos base: su costo lo deriva SIEMPRE el
       // servidor de la receta, nunca el `cost` que teclee el cliente. Además
       // vive en la raíz, sin empaque ni stock propios, y no es comprable.
@@ -99,6 +114,7 @@ export class CreateProductAction {
         bar_code: trimmedBarcode,
         packaging_id: packagingId,
         category_id: dto.category_id ? String(dto.category_id) : null,
+        tax_rate_id: dto.tax_rate_id ? String(dto.tax_rate_id) : null,
         cost: resolvedCost,
         stock: isCombo ? 0 : dto.stock,
         // La imagen se sube aparte (`POST /inventory/:id/image`): un producto
@@ -125,9 +141,12 @@ export class CreateProductAction {
         await syncComboComponents(manager, companyId, Number(saved.id), comboComponents);
       }
 
-      // Insertar prices. Cada uno copia `company_id` (denormalizado) y
-      // recalcula profit/margin con Big.js — fuente de verdad servidor.
-      const priceRows = dto.prices.map((p) => buildPriceRow(p, saved, resolvedCost, createdBy));
+      // Insertar prices. Cada uno copia `company_id` (denormalizado),
+      // recalcula profit/margin y desglosa base/IVA con Big.js — fuente de
+      // verdad servidor.
+      const priceRows = dto.prices.map((p) =>
+        buildPriceRow(p, saved, resolvedCost, createdBy, taxRatePercent),
+      );
       await manager.insert(ProductPrice, priceRows);
 
       // Re-fetch con relations para devolver el product completo.
@@ -151,7 +170,12 @@ export function buildPriceRow(
   product: Product,
   cost: number,
   createdBy: ProductCreator,
+  taxRatePercent = 0,
 ): Partial<ProductPrice> {
+  // El precio se ingresa con IVA incluido: se desglosa base + IVA con la tarifa
+  // del producto. `iva_percentage` se mantiene sincronizada con esa tarifa (el
+  // input del cliente se ignora: la tarifa vive en el producto, no en el precio).
+  const { taxableBase, taxAmount } = computeTaxBreakdown(input.sale_price, taxRatePercent);
   return {
     company_id: product.company_id,
     product_id: product.id,
@@ -159,7 +183,9 @@ export function buildPriceRow(
     sale_price: input.sale_price,
     profit: calculateProfit(input.sale_price, cost),
     margin: calculateMargin(input.sale_price, cost),
-    iva_percentage: input.iva_percentage ?? 0,
+    iva_percentage: taxRatePercent,
+    taxable_base: taxableBase,
+    tax_amount: taxAmount,
     created_by: createdBy.fullName,
     created_by_id: String(createdBy.id),
   };

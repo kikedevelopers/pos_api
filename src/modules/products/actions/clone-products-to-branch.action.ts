@@ -58,6 +58,7 @@ interface SourceProduct {
   bar_code: string | null;
   packaging_id: string | null;
   category_id: string | null;
+  tax_rate_id: string | null;
   cost: number;
   stock: number;
   is_purchasable: boolean;
@@ -71,6 +72,8 @@ interface SourcePrice {
   name: string;
   sale_price: number;
   iva_percentage: number;
+  taxable_base: number;
+  tax_amount: number;
 }
 
 /**
@@ -299,6 +302,7 @@ export class CloneProductsToBranchAction {
         bar_code: string | null;
         packaging_id: string | null;
         category_id: string | null;
+        tax_rate_id: string | null;
         cost: string;
         stock: string;
         is_purchasable: boolean;
@@ -308,7 +312,7 @@ export class CloneProductsToBranchAction {
       }>
     >(
       `SELECT id, name, description, product_type, parent_id, sku_code, bar_code,
-              packaging_id, category_id, cost, stock, is_purchasable, show_in_pos, image, hash
+              packaging_id, category_id, tax_rate_id, cost, stock, is_purchasable, show_in_pos, image, hash
        FROM products
        WHERE company_id = $1 AND is_archived = false AND (id = $2 OR parent_id = $2)
        ORDER BY (parent_id IS NOT NULL), id`,
@@ -324,6 +328,7 @@ export class CloneProductsToBranchAction {
       bar_code: r.bar_code,
       packaging_id: r.packaging_id,
       category_id: r.category_id,
+      tax_rate_id: r.tax_rate_id,
       cost: Number(r.cost),
       stock: Number(r.stock),
       is_purchasable: r.is_purchasable,
@@ -422,6 +427,9 @@ export class CloneProductsToBranchAction {
       bar_code: source.bar_code,
       packaging_id: packagingId,
       category_id: categoryId,
+      // La tarifa de IVA vive en el catálogo GLOBAL (tax_rates): no es
+      // cross-tenant, la sucursal referencia la misma fila que el principal.
+      tax_rate_id: source.tax_rate_id,
       cost: source.cost,
       stock: source.stock,
       is_purchasable: source.is_purchasable,
@@ -452,7 +460,11 @@ export class CloneProductsToBranchAction {
           sale_price: p.sale_price,
           profit: calculateProfit(p.sale_price, source.cost),
           margin: calculateMargin(p.sale_price, source.cost),
+          // Mismo sale_price y misma tarifa (catálogo global): el desglose
+          // base/IVA se copia tal cual.
           iva_percentage: p.iva_percentage,
+          taxable_base: p.taxable_base,
+          tax_amount: p.tax_amount,
           created_by: actor.fullName,
           created_by_id: String(actor.id),
         })),
@@ -489,9 +501,16 @@ export class CloneProductsToBranchAction {
     productId: string,
   ): Promise<SourcePrice[]> {
     const rows = await manager.query<
-      Array<{ product_id: string; name: string; sale_price: string; iva_percentage: string }>
+      Array<{
+        product_id: string;
+        name: string;
+        sale_price: string;
+        iva_percentage: string;
+        taxable_base: string;
+        tax_amount: string;
+      }>
     >(
-      `SELECT product_id, name, sale_price, iva_percentage
+      `SELECT product_id, name, sale_price, iva_percentage, taxable_base, tax_amount
        FROM product_prices WHERE product_id = $1 ORDER BY id`,
       [productId],
     );
@@ -500,6 +519,8 @@ export class CloneProductsToBranchAction {
       name: r.name,
       sale_price: Number(r.sale_price),
       iva_percentage: Number(r.iva_percentage),
+      taxable_base: Number(r.taxable_base),
+      tax_amount: Number(r.tax_amount),
     }));
   }
 }

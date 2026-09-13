@@ -60,6 +60,15 @@ export class ProductPriceNestedDto {
 
   @ApiProperty({ example: 0 })
   iva_percentage!: number;
+
+  @ApiProperty({
+    example: 10000,
+    description: 'Base gravable (sale_price sin IVA). sale_price = taxable_base + tax_amount.',
+  })
+  taxable_base!: number;
+
+  @ApiProperty({ example: 1900, description: 'Valor del IVA contenido en sale_price.' })
+  tax_amount!: number;
 }
 
 /**
@@ -121,6 +130,13 @@ export class ProductResponseDto {
 
   @ApiPropertyOptional({ example: null, nullable: true })
   category_id!: number | null;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description: 'FK a la tarifa de IVA (tax_rates). null = sin definir (Exento).',
+  })
+  tax_rate_id!: number | null;
 
   /**
    * RUTA del objeto en el bucket, no una URL: el cliente NO la usa para pintar
@@ -255,6 +271,7 @@ export function toProductResponseDto(
     parent_id: p.parent_id === null ? null : Number(p.parent_id),
     packaging_id: p.packaging_id === null ? null : Number(p.packaging_id),
     category_id: p.category_id === null ? null : Number(p.category_id),
+    tax_rate_id: p.tax_rate_id === null || p.tax_rate_id === undefined ? null : Number(p.tax_rate_id),
     image: p.image ?? null,
     // La firma es asíncrona y se resuelve en lote fuera del mapper (ver
     // `ProductsController.attachImageUrls`): firmar aquí obligaría a una
@@ -325,6 +342,8 @@ function mapPriceNested(pp: ProductPrice): ProductPriceNestedDto {
     profit: Number(pp.profit),
     margin: Number(pp.margin),
     iva_percentage: Number(pp.iva_percentage),
+    taxable_base: Number(pp.taxable_base),
+    tax_amount: Number(pp.tax_amount),
   };
 }
 

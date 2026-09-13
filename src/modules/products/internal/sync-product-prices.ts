@@ -1,6 +1,6 @@
 import { type EntityManager, In } from 'typeorm';
 
-import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+import { calculateMargin, calculateProfit, computeTaxBreakdown } from '@/common/utils/precision';
 
 import type { ProductPriceInputDto } from '../dto/product-price.dto';
 import { ProductPrice } from '../entities/product-price.entity';
@@ -79,6 +79,12 @@ interface SyncProductPricesArgs {
   incoming: ProductPriceInputDto[];
   existing: ExistingPriceRef[];
   actor: { id: number; fullName: string };
+  /**
+   * Tarifa de IVA del producto (%). Desglosa base/IVA de cada precio (precio con
+   * IVA incluido) y se persiste como `iva_percentage`. Default 0 = Exento, para
+   * flujos sin FE que no la pasan.
+   */
+  taxRatePercent?: number;
 }
 
 /**
@@ -88,6 +94,7 @@ interface SyncProductPricesArgs {
  */
 export async function syncProductPrices(args: SyncProductPricesArgs): Promise<void> {
   const { manager, companyId, productId, cost, incoming, existing, actor } = args;
+  const taxRatePercent = args.taxRatePercent ?? 0;
 
   const { pairs, toDelete } = pairIncomingPrices(incoming, existing);
 
@@ -107,6 +114,10 @@ export async function syncProductPrices(args: SyncProductPricesArgs): Promise<vo
   for (const { input, targetId } of pairs) {
     const profit = calculateProfit(input.sale_price, cost);
     const margin = calculateMargin(input.sale_price, cost);
+    // El precio se ingresa con IVA incluido: se desglosa con la tarifa del
+    // producto. `iva_percentage` se sincroniza con esa tarifa (el input del
+    // cliente se ignora: la tarifa vive en el producto).
+    const { taxableBase, taxAmount } = computeTaxBreakdown(input.sale_price, taxRatePercent);
 
     if (targetId !== null) {
       // UPDATE — filtra por id + product_id + company_id (defensa en
@@ -119,7 +130,9 @@ export async function syncProductPrices(args: SyncProductPricesArgs): Promise<vo
           sale_price: input.sale_price,
           profit,
           margin,
-          iva_percentage: input.iva_percentage ?? 0,
+          iva_percentage: taxRatePercent,
+          taxable_base: taxableBase,
+          tax_amount: taxAmount,
         },
       );
     } else {
@@ -131,7 +144,9 @@ export async function syncProductPrices(args: SyncProductPricesArgs): Promise<vo
         sale_price: input.sale_price,
         profit,
         margin,
-        iva_percentage: input.iva_percentage ?? 0,
+        iva_percentage: taxRatePercent,
+        taxable_base: taxableBase,
+        tax_amount: taxAmount,
         created_by: actor.fullName,
         created_by_id: String(actor.id),
       });

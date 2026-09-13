@@ -56,6 +56,7 @@ import { ProductImagesModule } from './modules/product-images/product-images.mod
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalScopeGuard } from './modules/portal/portal-scope.guard';
 import { ProductsModule } from './modules/products/products.module';
+import { TaxesModule } from './modules/taxes/taxes.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -197,6 +198,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // la FK products.category_id apunte a una tabla ya migrada; en runtime
     // Nest no impone orden, pero conservamos coherencia conceptual).
     CategoriesModule,
+    // Catálogo global de tarifas de IVA (Facturación Electrónica). Lo importa
+    // ProductsModule para resolver la tarifa de un producto al desglosar
+    // base/IVA de sus precios.
+    TaxesModule,
     // Imágenes de los items del inventario (GCS + caché de URLs firmadas +
     // cron de purga). Se declara aparte de ProductsModule —que también lo
     // importa— para dejar visible que este módulo tiene un cron propio.
