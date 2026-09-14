@@ -1,16 +1,17 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 
 import { ResolveProductImageUrlsAction } from '../resolve-product-image-urls.action';
+import { ImageProxySigner } from '../../image-proxy-signer.service';
 import { ProductImageStorageService } from '../../product-image-storage.service';
 import { ProductImageUrlCache } from '../../product-image-url.cache';
 
 /**
- * Esta action es el motivo por el que existe el caché: un listado de inventario
- * o del POS pide TODAS las imágenes de golpe, y firmar una por producto en cada
- * refresco agotaría la cuota de Google.
+ * Esta action resuelve en lote las URLs-proxy de un listado (inventario o POS).
+ * Firmar es LOCAL (HMAC, ver ImageProxySigner): instantáneo y sin red, así que ya
+ * no hay lotes, concurrencia ni fallos de firma. El caché se mantiene para dar
+ * una URL ESTABLE (misma URL entre requests → el navegador la reutiliza).
  *
- * El caché aquí es real (no un doble) para verificar el comportamiento de punta
- * a punta: aciertos, fallos y repoblado.
+ * El caché aquí es real (no un doble) para verificar aciertos y repoblado.
  */
 
 const COMPANY_ID = 42;
@@ -26,13 +27,13 @@ const CONFIG = {
   retentionDaysAfterArchive: 7,
 };
 
-async function buildHarness(options: { isConfigured?: boolean; failFor?: string[] } = {}) {
-  const failFor = new Set(options.failFor ?? []);
-  const getSignedUrl = jest.fn((objectName: string) =>
-    failFor.has(objectName)
-      ? Promise.reject(new Error('permiso denegado'))
-      : Promise.resolve(`https://signed/${objectName}`),
-  );
+/** URL-proxy determinista por objeto (el firmante real usa HMAC + exp). */
+function proxyUrl(objectName: string): string {
+  return `/product-images/serve?o=${objectName}&e=1&s=sig`;
+}
+
+async function buildHarness(options: { isConfigured?: boolean } = {}) {
+  const buildUrl = jest.fn((objectName: string) => proxyUrl(objectName));
 
   const cache = new ProductImageUrlCache({ getOrThrow: () => CONFIG } as never);
 
@@ -44,14 +45,14 @@ async function buildHarness(options: { isConfigured?: boolean; failFor?: string[
         useValue: {
           prefix: 'inventory_items',
           isConfigured: options.isConfigured ?? true,
-          getSignedUrl,
         },
       },
       { provide: ProductImageUrlCache, useValue: cache },
+      { provide: ImageProxySigner, useValue: { buildUrl } },
     ],
   }).compile();
 
-  return { action: module.get(ResolveProductImageUrlsAction), getSignedUrl, cache };
+  return { action: module.get(ResolveProductImageUrlsAction), buildUrl, cache };
 }
 
 describe('ResolveProductImageUrlsAction · resolución en lote', () => {
@@ -60,8 +61,8 @@ describe('ResolveProductImageUrlsAction · resolución en lote', () => {
 
     const urls = await h.action.execute([IMG_A, IMG_B], COMPANY_ID);
 
-    expect(urls.get(IMG_A)).toBe(`https://signed/${IMG_A}`);
-    expect(urls.get(IMG_B)).toBe(`https://signed/${IMG_B}`);
+    expect(urls.get(IMG_A)).toBe(proxyUrl(IMG_A));
+    expect(urls.get(IMG_B)).toBe(proxyUrl(IMG_B));
   });
 
   it('ignora nulos y undefined del listado', async () => {
@@ -70,7 +71,7 @@ describe('ResolveProductImageUrlsAction · resolución en lote', () => {
     const urls = await h.action.execute([IMG_A, null, undefined, IMG_B], COMPANY_ID);
 
     expect(urls.size).toBe(2);
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(2);
+    expect(h.buildUrl).toHaveBeenCalledTimes(2);
   });
 
   it('deduplica: la misma ruta repetida se firma UNA vez', async () => {
@@ -78,48 +79,48 @@ describe('ResolveProductImageUrlsAction · resolución en lote', () => {
 
     await h.action.execute([IMG_A, IMG_A, IMG_A], COMPANY_ID);
 
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(1);
+    expect(h.buildUrl).toHaveBeenCalledTimes(1);
   });
 
-  it('un listado sin ninguna imagen no llama a GCS', async () => {
+  it('un listado sin ninguna imagen no firma nada', async () => {
     const h = await buildHarness();
 
     const urls = await h.action.execute([null, null], COMPANY_ID);
 
     expect(urls.size).toBe(0);
-    expect(h.getSignedUrl).not.toHaveBeenCalled();
+    expect(h.buildUrl).not.toHaveBeenCalled();
   });
 
-  it('resuelve lotes grandes por encima del tope de concurrencia', async () => {
+  it('resuelve listados grandes', async () => {
     const h = await buildHarness();
     const names = Array.from({ length: 25 }, (_, i) => `inventory_items/42/${i}-x.jpg`);
 
     const urls = await h.action.execute(names, COMPANY_ID);
 
     expect(urls.size).toBe(25);
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(25);
+    expect(h.buildUrl).toHaveBeenCalledTimes(25);
   });
 });
 
 describe('ResolveProductImageUrlsAction · caché', () => {
-  it('la segunda llamada NO vuelve a firmar (es el ahorro de cuota)', async () => {
+  it('la segunda llamada NO vuelve a firmar (URL estable)', async () => {
     const h = await buildHarness();
 
     await h.action.execute([IMG_A, IMG_B], COMPANY_ID);
     await h.action.execute([IMG_A, IMG_B], COMPANY_ID);
 
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(2);
+    expect(h.buildUrl).toHaveBeenCalledTimes(2);
   });
 
   it('solo firma lo que falta cuando el listado crece', async () => {
     const h = await buildHarness();
 
     await h.action.execute([IMG_A], COMPANY_ID);
-    h.getSignedUrl.mockClear();
+    h.buildUrl.mockClear();
     await h.action.execute([IMG_A, IMG_B], COMPANY_ID);
 
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(1);
-    expect(h.getSignedUrl).toHaveBeenCalledWith(IMG_B);
+    expect(h.buildUrl).toHaveBeenCalledTimes(1);
+    expect(h.buildUrl).toHaveBeenCalledWith(IMG_B);
   });
 
   it('una ruta invalidada se vuelve a firmar', async () => {
@@ -127,40 +128,19 @@ describe('ResolveProductImageUrlsAction · caché', () => {
 
     await h.action.execute([IMG_A], COMPANY_ID);
     h.cache.invalidate(IMG_A);
-    h.getSignedUrl.mockClear();
+    h.buildUrl.mockClear();
     await h.action.execute([IMG_A], COMPANY_ID);
 
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('ResolveProductImageUrlsAction · degradación', () => {
-  it('una firma fallida no rompe el listado: esa ruta queda fuera del mapa', async () => {
-    const h = await buildHarness({ failFor: [IMG_B] });
-
-    const urls = await h.action.execute([IMG_A, IMG_B], COMPANY_ID);
-
-    expect(urls.get(IMG_A)).toBe(`https://signed/${IMG_A}`);
-    expect(urls.has(IMG_B)).toBe(false);
+    expect(h.buildUrl).toHaveBeenCalledTimes(1);
   });
 
-  it('una firma fallida NO se cachea (se reintenta en el siguiente listado)', async () => {
-    const h = await buildHarness({ failFor: [IMG_B] });
-
-    await h.action.execute([IMG_B], COMPANY_ID);
-    h.getSignedUrl.mockClear();
-    await h.action.execute([IMG_B], COMPANY_ID);
-
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(1);
-  });
-
-  it('sin bucket configurado devuelve vacío sin intentar firmar', async () => {
+  it('sin bucket configurado devuelve vacío sin firmar', async () => {
     const h = await buildHarness({ isConfigured: false });
 
     const urls = await h.action.execute([IMG_A], COMPANY_ID);
 
     expect(urls.size).toBe(0);
-    expect(h.getSignedUrl).not.toHaveBeenCalled();
+    expect(h.buildUrl).not.toHaveBeenCalled();
   });
 });
 
@@ -178,7 +158,7 @@ describe('ResolveProductImageUrlsAction · aislamiento entre negocios', () => {
     const urls = await h.action.execute(['inventory_items/9/1-ajena.jpg'], COMPANY_ID);
 
     expect(urls.size).toBe(0);
-    expect(h.getSignedUrl).not.toHaveBeenCalled();
+    expect(h.buildUrl).not.toHaveBeenCalled();
   });
 
   it('firma las propias y descarta las ajenas en el mismo lote', async () => {
@@ -186,9 +166,9 @@ describe('ResolveProductImageUrlsAction · aislamiento entre negocios', () => {
 
     const urls = await h.action.execute([IMG_A, 'inventory_items/9/1-ajena.jpg'], COMPANY_ID);
 
-    expect(urls.get(IMG_A)).toBe(`https://signed/${IMG_A}`);
+    expect(urls.get(IMG_A)).toBe(proxyUrl(IMG_A));
     expect(urls.has('inventory_items/9/1-ajena.jpg')).toBe(false);
-    expect(h.getSignedUrl).toHaveBeenCalledTimes(1);
+    expect(h.buildUrl).toHaveBeenCalledTimes(1);
   });
 
   it('una company cuyo id es prefijo de otra no cuela (42 vs 421)', async () => {
@@ -205,6 +185,6 @@ describe('ResolveProductImageUrlsAction · aislamiento entre negocios', () => {
     const urls = await h.action.execute(['backups/prod-placepos-2026.dump'], COMPANY_ID);
 
     expect(urls.size).toBe(0);
-    expect(h.getSignedUrl).not.toHaveBeenCalled();
+    expect(h.buildUrl).not.toHaveBeenCalled();
   });
 });

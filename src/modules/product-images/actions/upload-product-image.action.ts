@@ -8,6 +8,7 @@ import { DataSource } from 'typeorm';
 
 import { Product } from '@/modules/products/entities/product.entity';
 
+import { ImageProxySigner } from '../image-proxy-signer.service';
 import { buildImageObjectName, isObjectOwnedByCompany } from '../internal/image-object-name';
 import { validateImageFile, type UploadedImageFile } from '../internal/image-file';
 import { ProductImageStorageService } from '../product-image-storage.service';
@@ -49,6 +50,7 @@ export class UploadProductImageAction {
     private readonly dataSource: DataSource,
     private readonly storage: ProductImageStorageService,
     private readonly cache: ProductImageUrlCache,
+    private readonly signer: ImageProxySigner,
   ) {}
 
   async execute(params: {
@@ -126,7 +128,9 @@ export class UploadProductImageAction {
       }
     }
 
-    const url = await this.storage.getSignedUrl(objectName);
+    // URL-proxy firmada por nosotros (HMAC local): no toca la API de firma de
+    // GCS, que en el proyecto de despliegue está deshabilitada.
+    const url = this.signer.buildUrl(objectName);
     this.cache.set(objectName, url);
 
     this.logger.log({

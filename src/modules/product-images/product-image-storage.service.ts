@@ -98,8 +98,21 @@ export class ProductImageStorageService {
   }
 
   /**
-   * URL firmada de lectura. Es la única forma de que el navegador vea la imagen
-   * sin abrir el bucket al público.
+   * Stream de lectura del objeto. Lo usa el proxy (`/product-images/serve`) para
+   * servir los bytes al navegador SIN firmar una URL de GCS: descargar solo pide
+   * permiso de LECTURA (`storage.objects.get`), que la SA de la VM ya tiene, y no
+   * toca la API `iam.signBlob`. El stream emite `error` si el objeto no existe
+   * (404) o la lectura falla; el controller lo maneja.
+   */
+  createReadStream(objectName: string): NodeJS.ReadableStream {
+    return this.getBucket().file(objectName).createReadStream();
+  }
+
+  /**
+   * URL firmada de lectura de GCS. Ya NO se usa para servir imágenes (ver
+   * `ImageProxySigner`): firmar v4 con ADC exige la API `iam.signBlob`, que en el
+   * proyecto de despliegue está deshabilitada. Se conserva por si algún entorno
+   * SÍ tiene clave privada y quisiera volver a las URLs firmadas nativas.
    */
   async getSignedUrl(objectName: string): Promise<string> {
     const [url] = await this.getBucket()

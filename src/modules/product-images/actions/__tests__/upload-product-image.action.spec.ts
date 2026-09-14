@@ -9,6 +9,7 @@ import { DataSource } from 'typeorm';
 import type { Product } from '@/modules/products/entities/product.entity';
 
 import { UploadProductImageAction } from '../upload-product-image.action';
+import { ImageProxySigner } from '../../image-proxy-signer.service';
 import { ProductImageStorageService } from '../../product-image-storage.service';
 import { ProductImageUrlCache } from '../../product-image-url.cache';
 
@@ -67,9 +68,6 @@ async function buildHarness(options: HarnessOptions) {
     return options.uploadFails ? Promise.reject(new Error('GCS caído')) : Promise.resolve();
   });
   const remove = jest.fn(() => Promise.resolve(true));
-  const getSignedUrl = jest.fn((objectName: string) =>
-    Promise.resolve(`https://signed/${objectName}`),
-  );
 
   const storageMock = {
     prefix: 'inventory_items',
@@ -77,8 +75,11 @@ async function buildHarness(options: HarnessOptions) {
     isConfigured: true,
     upload,
     remove,
-    getSignedUrl,
   };
+
+  // El firmante produce la URL-proxy (HMAC local); aquí un stub determinista.
+  const buildUrl = jest.fn((objectName: string) => `/product-images/serve?o=${objectName}&e=1&s=sig`);
+  const signerMock = { buildUrl };
 
   const cacheMock = { invalidate: jest.fn(), set: jest.fn() };
 
@@ -88,6 +89,7 @@ async function buildHarness(options: HarnessOptions) {
       { provide: DataSource, useValue: dataSourceMock },
       { provide: ProductImageStorageService, useValue: storageMock },
       { provide: ProductImageUrlCache, useValue: cacheMock },
+      { provide: ImageProxySigner, useValue: signerMock },
     ],
   }).compile();
 
@@ -96,7 +98,7 @@ async function buildHarness(options: HarnessOptions) {
     upload,
     uploadCalls: () => uploadCalls,
     remove,
-    getSignedUrl,
+    buildUrl,
     cache: cacheMock,
     updates: () => updates,
   };
@@ -122,7 +124,7 @@ describe('UploadProductImageAction · caso feliz', () => {
 
     expect(result.product_id).toBe(10);
     expect(result.image).toMatch(/^inventory_items\/42\/10-[0-9a-f]{16}\.jpg$/);
-    expect(result.image_url).toBe(`https://signed/${result.image}`);
+    expect(result.image_url).toBe(`/product-images/serve?o=${result.image}&e=1&s=sig`);
   });
 
   it('guarda la RUTA en la fila, no la URL (la URL caduca)', async () => {

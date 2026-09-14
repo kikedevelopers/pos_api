@@ -8,8 +8,10 @@ import { PurgeExpiredProductImagesAction } from './actions/purge-expired-product
 import { RemoveProductImageAction } from './actions/remove-product-image.action';
 import { ResolveProductImageUrlsAction } from './actions/resolve-product-image-urls.action';
 import { UploadProductImageAction } from './actions/upload-product-image.action';
+import { ImageProxySigner } from './image-proxy-signer.service';
 import { ProductImageStorageService } from './product-image-storage.service';
 import { ProductImageUrlCache } from './product-image-url.cache';
+import { ProductImagesController } from './product-images.controller';
 import { ProductImagesScheduler } from './product-images.scheduler';
 import { ProductImagesService } from './product-images.service';
 
@@ -20,15 +22,18 @@ import { ProductImagesService } from './product-images.service';
  * `ProductsModule` quien depende de este para subir/copiar/resolver, y una
  * dependencia en los dos sentidos sería un ciclo.
  *
- * El módulo no expone controller propio — los endpoints viven bajo `/inventory`
- * (en `ProductsController`) porque para el cliente la imagen es un atributo del
- * producto, no un recurso aparte.
+ * Los endpoints de ESCRITURA (subir/quitar) viven bajo `/inventory` (en
+ * `ProductsController`) porque para el cliente la imagen es un atributo del
+ * producto. El único controller propio es el proxy de LECTURA
+ * (`/product-images/serve`), público y firmado, que sirve los bytes.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Product])],
+  controllers: [ProductImagesController],
   providers: [
     ProductImageStorageService,
     ProductImageUrlCache,
+    ImageProxySigner,
     ProductImagesService,
     ProductImagesScheduler,
     UploadProductImageAction,
