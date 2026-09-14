@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-import { resolveTaxRatePercent } from '../resolve-tax-rate.helper';
+import { loadParentTaxRateId, resolveTaxRatePercent } from '../resolve-tax-rate.helper';
 
 // El catálogo tax_rates es global; el helper solo lee la tarifa por id.
 function managerReturning(tax: { rate: number } | null) {
@@ -30,5 +30,22 @@ describe('resolveTaxRatePercent', () => {
   it('id inexistente/inactivo → 400', async () => {
     const manager = managerReturning(null);
     await expect(resolveTaxRatePercent(manager, 999)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('loadParentTaxRateId', () => {
+  it('devuelve el tax_rate_id del base (para que el hijo lo herede)', async () => {
+    const manager = { findOne: jest.fn().mockResolvedValue({ id: '1', tax_rate_id: '3' }) } as never;
+    await expect(loadParentTaxRateId(manager, 1, 8)).resolves.toBe(3);
+  });
+
+  it('base sin tarifa (Exento) → null', async () => {
+    const manager = { findOne: jest.fn().mockResolvedValue({ id: '1', tax_rate_id: null }) } as never;
+    await expect(loadParentTaxRateId(manager, 1, 8)).resolves.toBeNull();
+  });
+
+  it('base inexistente → null', async () => {
+    const manager = { findOne: jest.fn().mockResolvedValue(null) } as never;
+    await expect(loadParentTaxRateId(manager, 999, 8)).resolves.toBeNull();
   });
 });

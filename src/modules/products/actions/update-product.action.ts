@@ -28,7 +28,8 @@ import {
   assertParentIsNotCombo,
   findProductInCompany,
 } from '../internal/product-lookups';
-import { resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
+import { loadParentTaxRateId, resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
+import { propagateTaxToChildren } from '../internal/propagate-tax.helper';
 import { syncProductPrices } from '../internal/sync-product-prices';
 import { ProductPrice } from '../entities/product-price.entity';
 
@@ -86,24 +87,6 @@ export class UpdateProductAction {
       await assertPackagingBelongsToCompany(manager, dto.packaging_id ?? null, companyId);
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
 
-      // Asignar/cambiar la tarifa de IVA es una operación de FE: solo se permite
-      // con la FE ACTIVA ahora (validado contra la BD). Poner `null` (Exento) o
-      // editar el producto sin tocar la tarifa NO requiere FE. Cierra el hueco
-      // del front rancio en una SPA.
-      if (dto.tax_rate_id != null) {
-        await assertElectronicBillingEnabled(manager, companyId)
-      }
-
-      // Tarifa de IVA FINAL tras el patch: si el cliente la envía se usa esa;
-      // si no, se conserva la del producto. El porcentaje resuelto vuelve a
-      // desglosar la base/IVA de los precios (el precio ya incluye el IVA).
-      const finalTaxRateId =
-        dto.tax_rate_id !== undefined ? (dto.tax_rate_id ?? null) : existing.tax_rate_id;
-      const taxRatePercent = await resolveTaxRatePercent(
-        manager,
-        finalTaxRateId !== null ? Number(finalTaxRateId) : null,
-      );
-
       // Tipo FINAL del producto tras el patch (el cliente puede omitirlo).
       const finalProductType = dto.product_type ?? existing.product_type;
       const isCombo = finalProductType === ProductType.COMBO;
@@ -123,6 +106,38 @@ export class UpdateProductAction {
         // nunca se tocarían).
         await assertNotUsedInActiveCombos(manager, companyId, [id], 'convertir en combo');
       }
+
+      // ── Configuración fiscal (IVA) tras el patch ──────────────────────────
+      // Parent FINAL del producto: un combo vive en raíz; si no, lo que mande el
+      // patch o lo que ya tenía.
+      const finalParentId = isCombo
+        ? null
+        : dto.parent_id !== undefined
+          ? (dto.parent_id ?? null)
+          : existing.parent_id === null
+            ? null
+            : Number(existing.parent_id);
+
+      // Presentación (tiene parent): SIEMPRE hereda el IVA del base — nunca tarifa
+      // propia (el cliente no la elige; el form la muestra solo informativa), así
+      // que se ignora `dto.tax_rate_id` y no aplica el gate de FE.
+      // Base/combo: usa `dto.tax_rate_id` si vino; asignar tarifa no nula es
+      // operación de FE → se valida contra la BD (front rancio en SPA).
+      let finalTaxRateId: number | null;
+      if (finalParentId !== null) {
+        finalTaxRateId = await loadParentTaxRateId(manager, finalParentId, companyId);
+      } else {
+        finalTaxRateId =
+          dto.tax_rate_id !== undefined
+            ? (dto.tax_rate_id ?? null)
+            : existing.tax_rate_id === null
+              ? null
+              : Number(existing.tax_rate_id);
+        if (dto.tax_rate_id != null) {
+          await assertElectronicBillingEnabled(manager, companyId);
+        }
+      }
+      const taxRatePercent = await resolveTaxRatePercent(manager, finalTaxRateId);
 
       // El costo de un COMBO lo calcula SIEMPRE el servidor desde su receta.
       //
@@ -191,9 +206,10 @@ export class UpdateProductAction {
       if (dto.category_id !== undefined) {
         patch.category_id = dto.category_id ? String(dto.category_id) : null;
       }
-      if (dto.tax_rate_id !== undefined) {
-        patch.tax_rate_id = dto.tax_rate_id ? String(dto.tax_rate_id) : null;
-      }
+      // La tarifa fiscal FINAL siempre se persiste: para una presentación es la
+      // heredada del base (se mantiene sincronizada), para un base la del patch,
+      // y en una conversión base⇄presentación queda coherente.
+      patch.tax_rate_id = finalTaxRateId !== null ? String(finalTaxRateId) : null;
       if (resolvedCost !== undefined) {
         patch.cost = resolvedCost;
       }
@@ -293,6 +309,23 @@ export class UpdateProductAction {
             companyId,
             componentId: id,
             actor: { id: actor.id, fullName: actor.fullName },
+          });
+        }
+      }
+
+      // Si cambió la TARIFA DE IVA de un producto BASE, toda su familia la sigue:
+      // cada presentación adopta la nueva tarifa y el desglose de sus precios se
+      // reajusta al nuevo % (sale_price intacto). Solo aplica a un base
+      // (finalParentId null) cuyo tax_rate_id realmente cambió.
+      if (finalParentId === null && dto.tax_rate_id !== undefined) {
+        const prevTaxRateId = existing.tax_rate_id === null ? null : Number(existing.tax_rate_id);
+        if (prevTaxRateId !== finalTaxRateId) {
+          await propagateTaxToChildren({
+            manager,
+            companyId,
+            parentId: id,
+            taxRateId: finalTaxRateId,
+            taxRatePercent,
           });
         }
       }

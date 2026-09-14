@@ -21,7 +21,7 @@ import {
   assertParentBelongsToCompany,
   assertParentIsNotCombo,
 } from '../internal/product-lookups';
-import { resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
+import { loadParentTaxRateId, resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
 
 /**
  * Datos del actor creador. Evita propagar `AuthUser` completo.
@@ -67,18 +67,24 @@ export class CreateProductAction {
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
       await assertParentIsNotCombo(manager, dto.parent_id ?? null, companyId);
 
-      // Asignar una tarifa de IVA es una operación de FE: solo se permite si el
-      // negocio la tiene ACTIVA ahora (validado contra la BD, no contra el JWT).
-      // Enviar `null` (Exento) no requiere FE. Cierra el hueco del front rancio:
-      // si el superadmin apagó la FE hace segundos, esto ya rechaza.
-      if (dto.tax_rate_id != null) {
-        await assertElectronicBillingEnabled(manager, companyId)
+      // Configuración fiscal (IVA) del producto:
+      //   - PRESENTACIÓN (tiene parent_id y no es combo): SIEMPRE hereda la
+      //     tarifa del base. No la elige el cliente (el form la muestra solo
+      //     informativa) y por eso NO se aplica el gate de FE aquí: es herencia
+      //     estructural, no una acción de FE del usuario.
+      //   - BASE/COMBO: usa `dto.tax_rate_id`. Asignar una tarifa (no nula) es
+      //     una operación de FE → se valida contra la BD (front rancio en SPA).
+      const isChild = !isCombo && dto.parent_id != null;
+      let effectiveTaxRateId: number | null = dto.tax_rate_id ?? null;
+      if (isChild) {
+        effectiveTaxRateId = await loadParentTaxRateId(manager, dto.parent_id as number, companyId);
+      } else if (dto.tax_rate_id != null) {
+        await assertElectronicBillingEnabled(manager, companyId);
       }
 
-      // Tarifa de IVA del producto (catálogo global). null = Exento (0%). El
-      // porcentaje resuelto desglosa la base/IVA de cada precio; el precio se
-      // ingresa con IVA incluido.
-      const taxRatePercent = await resolveTaxRatePercent(manager, dto.tax_rate_id);
+      // Tarifa porcentual resuelta: desglosa la base/IVA de cada precio (el
+      // precio se ingresa con IVA incluido). null = Exento (0%).
+      const taxRatePercent = await resolveTaxRatePercent(manager, effectiveTaxRateId);
 
       // Un COMBO se arma con N productos base: su costo lo deriva SIEMPRE el
       // servidor de la receta, nunca el `cost` que teclee el cliente. Además
@@ -114,7 +120,7 @@ export class CreateProductAction {
         bar_code: trimmedBarcode,
         packaging_id: packagingId,
         category_id: dto.category_id ? String(dto.category_id) : null,
-        tax_rate_id: dto.tax_rate_id ? String(dto.tax_rate_id) : null,
+        tax_rate_id: effectiveTaxRateId !== null ? String(effectiveTaxRateId) : null,
         cost: resolvedCost,
         stock: isCombo ? 0 : dto.stock,
         // La imagen se sube aparte (`POST /inventory/:id/image`): un producto
