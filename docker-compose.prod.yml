@@ -88,6 +88,17 @@ services:
       BACKUP_TIMEOUT_MS: ${BACKUP_TIMEOUT_MS:-600000}
       # Vacío = pg_dump del PATH (la imagen ya trae postgresql18-client).
       PG_DUMP_BIN: ${PG_DUMP_BIN:-}
+      # Facturación Electrónica (APIDIAN). pos_api solo consume los catálogos del
+      # API externo (proxy con caché); no firma ni envía a la DIAN. OJO: el
+      # default de la app es http://127.0.0.1:8081/api, que DENTRO del contenedor
+      # apunta al propio contenedor, NO a APIDIAN. Hay que fijar FE_API_BASE_URL
+      # en el .env de la VM a la URL donde este contenedor alcanza a APIDIAN (p.ej.
+      # http://host.docker.internal:8081/api si APIDIAN corre en la misma VM —
+      # requiere extra_hosts host-gateway— o su IP/host real). Sin FE activa en
+      # ningún negocio, dejarla vacía no rompe nada (el endpoint está gateado).
+      FE_API_BASE_URL: ${FE_API_BASE_URL:-}
+      FE_API_TIMEOUT_MS: ${FE_API_TIMEOUT_MS:-10000}
+      FE_CATALOG_CACHE_TTL_S: ${FE_CATALOG_CACHE_TTL_S:-86400}
     # Sin `ports:` — el acceso externo solo va por nginx (80/443).
     expose:
       - '${PORT:-3010}'

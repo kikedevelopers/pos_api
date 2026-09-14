@@ -1,34 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { ImageProxySigner } from '../image-proxy-signer.service';
 import { isObjectOwnedByCompany } from '../internal/image-object-name';
 import { ProductImageStorageService } from '../product-image-storage.service';
 import { ProductImageUrlCache } from '../product-image-url.cache';
 
 /**
- * Cuántas firmas se piden a la vez cuando el caché no las tiene.
+ * Resuelve en LOTE las URLs de un listado (inventario o POS).
  *
- * Importa sobre todo en la carga EN FRÍO: el caché nace vacío en cada
- * despliegue y en cada reinicio del contenedor, así que la primera apertura de
- * la app después de un release firma el catálogo entero dentro del request. Con
- * ADC —como corre producción— cada firma es una llamada a `iam.signBlob`, y con
- * lotes de 8 un catálogo de 500 fotos serían ~63 vueltas de red en serie.
+ * Cada URL es una URL-proxy firmada por NOSOTROS (HMAC local, ver
+ * {@link ImageProxySigner}), no una URL firmada de GCS: firmar en Google exige
+ * la API `iam.signBlob`, deshabilitada en el proyecto de despliegue. Firmar en
+ * local es instantáneo y NUNCA falla ni golpea la red.
  *
- * 24 baja eso a ~21 sin volverse agresivo con la cuota: firmar es una operación
- * liviana, muy lejos de lo que pesa subir o descargar un objeto.
- */
-const SIGN_CONCURRENCY = 24;
-
-/**
- * Resuelve en LOTE las URLs firmadas de un listado (inventario o POS).
- *
- * Es el punto donde el caché hace su trabajo: un catálogo de 500 productos con
- * foto se resuelve con 500 lecturas de memoria y CERO llamadas a Google
- * mientras las entradas sigan vivas. Solo se firma lo que falta, y con
- * concurrencia acotada para no abrir 500 conexiones de golpe.
- *
- * Nunca lanza: si una firma falla, ese producto viaja con `image_url: null` y
- * el front muestra el placeholder. Un bucket caído no puede tumbar el listado
- * del inventario ni dejar al POS sin vender.
+ * El caché se mantiene con otro propósito: dar una URL ESTABLE. Si se regenerara
+ * el `exp` en cada request, el `<img src>` cambiaría en cada render y el
+ * navegador re-descargaría la imagen. Cacheada por objeto, la misma URL se sirve
+ * durante toda la ventana del caché y el navegador la reutiliza.
  */
 @Injectable()
 export class ResolveProductImageUrlsAction {
@@ -37,6 +25,7 @@ export class ResolveProductImageUrlsAction {
   constructor(
     private readonly storage: ProductImageStorageService,
     private readonly cache: ProductImageUrlCache,
+    private readonly signer: ImageProxySigner,
   ) {}
 
   /**
@@ -79,31 +68,15 @@ export class ResolveProductImageUrlsAction {
       return resolved;
     }
 
-    let failures = 0;
-    for (let i = 0; i < missing.length; i += SIGN_CONCURRENCY) {
-      const batch = missing.slice(i, i + SIGN_CONCURRENCY);
-      const urls = await Promise.all(
-        batch.map(async (objectName) => {
-          try {
-            return await this.storage.getSignedUrl(objectName);
-          } catch (e) {
-            failures += 1;
-            this.logger.warn(`No se pudo firmar ${objectName}: ${(e as Error).message}`);
-            return null;
-          }
-        }),
-      );
-      batch.forEach((objectName, index) => {
-        const url = urls[index];
-        if (url) {
-          this.cache.set(objectName, url);
-          resolved.set(objectName, url);
-        }
-      });
+    // Firmar es local e instantáneo: se hace en línea, sin lotes ni concurrencia.
+    for (const objectName of missing) {
+      const url = this.signer.buildUrl(objectName);
+      this.cache.set(objectName, url);
+      resolved.set(objectName, url);
     }
 
     this.logger.debug?.(
-      `Imágenes resueltas: ${owned.length} pedidas, ${missing.length} firmadas, ${failures} fallidas.`,
+      `Imágenes resueltas: ${owned.length} pedidas, ${missing.length} firmadas en local.`,
     );
 
     return resolved;
