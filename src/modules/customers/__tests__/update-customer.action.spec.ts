@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
@@ -20,8 +20,12 @@ describe('UpdateCustomerAction', () => {
   let dbCustomers: Customer[];
   let lastUpdateWhere: Record<string, string> | null;
   let lastUpdatePatch: Partial<Customer> | null;
+  let feEnabled: boolean;
+  let queryMock: jest.Mock;
 
   beforeEach(async () => {
+    feEnabled = true;
+    queryMock = jest.fn(() => Promise.resolve([{ electronic_billing_enabled: feEnabled }]));
     dbCustomers = [
       {
         id: '1',
@@ -73,6 +77,7 @@ describe('UpdateCustomerAction', () => {
           return Promise.resolve();
         },
       ),
+      query: queryMock,
     };
 
     const dataSourceMock = {
@@ -106,5 +111,39 @@ describe('UpdateCustomerAction', () => {
     await action.execute(1, { email: undefined }, 42);
     // `undefined` significa "no tocar". El patch debe ser {}.
     expect(lastUpdatePatch).toBeNull();
+  });
+
+  describe('identidad fiscal (Facturación Electrónica)', () => {
+    it('sin campos fiscales: no consulta el gate', async () => {
+      await action.execute(1, { name: 'Juan II' }, 42);
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+
+    it('con FE activa: patchea los campos fiscales (solo los enviados)', async () => {
+      await action.execute(
+        1,
+        { type_document_identification_id: 6, dv: '3', municipality_id: 149 },
+        42,
+      );
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      expect(lastUpdatePatch).toEqual({
+        type_document_identification_id: 6,
+        dv: '3',
+        municipality_id: 149,
+      });
+    });
+
+    it('con FE activa: null explícito limpia un campo fiscal', async () => {
+      await action.execute(1, { type_liability_id: null as unknown as number }, 42);
+      expect(lastUpdatePatch).toEqual({ type_liability_id: null });
+    });
+
+    it('con FE apagada: 403 al intentar asignar identidad fiscal', async () => {
+      feEnabled = false;
+      await expect(
+        action.execute(1, { type_document_identification_id: 6 }, 42),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(lastUpdatePatch).toBeNull();
+    });
   });
 });

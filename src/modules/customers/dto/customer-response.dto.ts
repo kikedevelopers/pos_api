@@ -39,6 +39,25 @@ export class CustomerResponseDto {
   @ApiPropertyOptional({ example: 'Av. Principal #123, Caracas', nullable: true })
   address!: string | null;
 
+  // Identidad fiscal (FE). null cuando el negocio no factura electrónicamente.
+  @ApiPropertyOptional({ example: 6, nullable: true })
+  type_document_identification_id!: number | null;
+
+  @ApiPropertyOptional({ example: '7', nullable: true })
+  dv!: string | null;
+
+  @ApiPropertyOptional({ example: 2, nullable: true })
+  type_regime_id!: number | null;
+
+  @ApiPropertyOptional({ example: 117, nullable: true })
+  type_liability_id!: number | null;
+
+  @ApiPropertyOptional({ example: 149, nullable: true })
+  municipality_id!: number | null;
+
+  @ApiPropertyOptional({ example: '0000000-00', nullable: true })
+  merchant_registration!: string | null;
+
   @ApiProperty({
     example: 0,
     description: 'SIGNED. >0: la company le debe al cliente. <0: el cliente le debe a la company.',
@@ -91,6 +110,12 @@ export function toCustomerResponseDto(customer: Customer): CustomerResponseDto {
     phone: customer.phone,
     doc_number: customer.doc_number,
     address: customer.address,
+    type_document_identification_id: customer.type_document_identification_id,
+    dv: customer.dv,
+    type_regime_id: customer.type_regime_id,
+    type_liability_id: customer.type_liability_id,
+    municipality_id: customer.municipality_id,
+    merchant_registration: customer.merchant_registration,
     balance: customer.balance,
     is_archived: customer.is_archived,
     advance_balance: customer.advance_balance,

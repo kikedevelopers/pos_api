@@ -57,6 +57,7 @@ import { PortalModule } from './modules/portal/portal.module';
 import { PortalScopeGuard } from './modules/portal/portal-scope.guard';
 import { ProductsModule } from './modules/products/products.module';
 import { TaxesModule } from './modules/taxes/taxes.module';
+import { FeCatalogsModule } from './modules/fe-catalogs/fe-catalogs.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -202,6 +203,10 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // ProductsModule para resolver la tarifa de un producto al desglosar
     // base/IVA de sus precios.
     TaxesModule,
+    // Proxy con caché de los catálogos de Facturación Electrónica (APIDIAN):
+    // tipos de documento, organización, régimen, responsabilidades, municipios.
+    // Los consume el formulario de cliente cuando el negocio es facturador.
+    FeCatalogsModule,
     // Imágenes de los items del inventario (GCS + caché de URLs firmadas +
     // cron de purga). Se declara aparte de ProductsModule —que también lo
     // importa— para dejar visible que este módulo tiene un cron propio.

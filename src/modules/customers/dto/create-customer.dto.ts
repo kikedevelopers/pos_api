@@ -3,10 +3,13 @@ import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsOptional,
+  IsPositive,
   IsString,
   MaxLength,
+  Matches,
   MinLength,
 } from 'class-validator';
 
@@ -79,4 +82,50 @@ export class CreateCustomerDto {
   @IsString()
   @MaxLength(500)
   address?: string;
+
+  // --------------------------------------------------------------------------
+  // Identidad fiscal (Facturación Electrónica) — opcional, solo con FE activa.
+  // --------------------------------------------------------------------------
+  //   Referencian catálogos de APIDIAN (los sirve `GET /fe/catalogs`). Enviar
+  //   cualquiera de estos campos con valor requiere que el negocio tenga la FE
+  //   habilitada AHORA (validado en el action contra la BD, no el front rancio).
+  //   `type_organization_id` no se acepta: se deriva de `person_type`.
+
+  @ApiPropertyOptional({ example: 6, description: 'Ref a type_document_identifications de APIDIAN.' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  type_document_identification_id?: number;
+
+  @ApiPropertyOptional({ example: '7', description: 'Dígito de verificación DIAN (solo NIT).' })
+  @IsOptional()
+  @Transform(emptyToUndefined)
+  @IsString()
+  @Matches(/^[0-9]$/, { message: 'dv debe ser un único dígito (0-9)' })
+  dv?: string;
+
+  @ApiPropertyOptional({ example: 2, description: 'Ref a type_regimes de APIDIAN.' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  type_regime_id?: number;
+
+  @ApiPropertyOptional({ example: 117, description: 'Ref a type_liabilities de APIDIAN.' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  type_liability_id?: number;
+
+  @ApiPropertyOptional({ example: 149, description: 'Ref a municipalities de APIDIAN.' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  municipality_id?: number;
+
+  @ApiPropertyOptional({ example: '0000000-00', maxLength: 100, nullable: true })
+  @IsOptional()
+  @Transform(emptyToUndefined)
+  @IsString()
+  @MaxLength(100)
+  merchant_registration?: string;
 }

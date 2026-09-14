@@ -2,6 +2,7 @@ import aiConfig, { type AiConfig } from './ai.config';
 import appConfig, { type AppConfig } from './app.config';
 import backupsConfig, { type BackupsConfig } from './backups.config';
 import databaseConfig, { type DatabaseConfig } from './database.config';
+import feConfig, { type FeConfig } from './fe.config';
 import mailConfig, { type MailConfig } from './mail.config';
 import productImagesConfig, { type ProductImagesConfig } from './product-images.config';
 
@@ -16,6 +17,7 @@ export const configurationLoaders = [
   productImagesConfig,
   aiConfig,
   mailConfig,
+  feConfig,
 ];
 
 export type AppConfiguration = {
@@ -25,9 +27,18 @@ export type AppConfiguration = {
   productImages: ProductImagesConfig;
   ai: AiConfig;
   mail: MailConfig;
+  fe: FeConfig;
 };
 
-export { appConfig, databaseConfig, backupsConfig, productImagesConfig, aiConfig, mailConfig };
+export {
+  appConfig,
+  databaseConfig,
+  backupsConfig,
+  productImagesConfig,
+  aiConfig,
+  mailConfig,
+  feConfig,
+};
 export type {
   AppConfig,
   DatabaseConfig,
@@ -35,4 +46,5 @@ export type {
   ProductImagesConfig,
   AiConfig,
   MailConfig,
+  FeConfig,
 };

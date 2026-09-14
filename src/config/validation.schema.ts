@@ -169,4 +169,10 @@ export const validationSchema = Joi.object({
   // `allow('')` es imprescindible: el `.env.example` documenta el valor vacío
   // como "dedúcelo", y sin esto copiar el ejemplo impide arrancar el servidor.
   SMTP_SECURE: Joi.boolean().allow('').optional(),
+
+  // Facturación Electrónica (APIDIAN). Solo consumo de catálogos + delegación;
+  // pos_api no firma ni envía a la DIAN. Vacío = localhost del docker-compose.
+  FE_API_BASE_URL: Joi.string().allow('').default('http://127.0.0.1:8081/api'),
+  FE_API_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(10000),
+  FE_CATALOG_CACHE_TTL_S: Joi.number().integer().min(60).max(604800).default(86400),
 });

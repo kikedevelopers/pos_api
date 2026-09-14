@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
@@ -22,10 +23,17 @@ describe('CreateCustomerAction', () => {
   let action: CreateCustomerAction;
   let savedCustomer: Customer | null;
   let createdInput: Partial<Customer> | null;
+  // Estado de FE del negocio que devuelve el mock de `manager.query` (usado por
+  // el gate `assertElectronicBillingEnabled`). Por defecto activa.
+  let feEnabled: boolean;
+  let queryMock: jest.Mock;
 
   beforeEach(async () => {
     savedCustomer = null;
     createdInput = null;
+    feEnabled = true;
+
+    queryMock = jest.fn(() => Promise.resolve([{ electronic_billing_enabled: feEnabled }]));
 
     const managerMock = {
       create: jest.fn((_entity: unknown, input: Partial<Customer>) => {
@@ -42,6 +50,7 @@ describe('CreateCustomerAction', () => {
         };
         return Promise.resolve(savedCustomer);
       }),
+      query: queryMock,
     };
 
     const dataSourceMock = {
@@ -115,5 +124,61 @@ describe('CreateCustomerAction', () => {
     await action.execute({ name: 'X' }, 1, { id: 17, fullName: 'Kike Pacheco' });
     expect(createdInput?.created_by).toBe('Kike Pacheco');
     expect(createdInput?.created_by_id).toBe('17');
+  });
+
+  describe('identidad fiscal (Facturación Electrónica)', () => {
+    it('sin campos fiscales: NO consulta el gate y deja los fiscales en null', async () => {
+      await action.execute({ name: 'Sin FE' }, 1, { id: 1, fullName: 'Owner' });
+
+      // El gate solo se dispara si el DTO trae identidad fiscal.
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(createdInput?.type_document_identification_id).toBeNull();
+      expect(createdInput?.dv).toBeNull();
+      expect(createdInput?.type_regime_id).toBeNull();
+      expect(createdInput?.type_liability_id).toBeNull();
+      expect(createdInput?.municipality_id).toBeNull();
+      expect(createdInput?.merchant_registration).toBeNull();
+    });
+
+    it('con FE activa: persiste los campos fiscales', async () => {
+      feEnabled = true;
+      await action.execute(
+        {
+          name: 'Acme S.A.',
+          person_type: PersonType.COMPANY,
+          doc_number: '900123456',
+          type_document_identification_id: 6,
+          dv: '3',
+          type_regime_id: 1,
+          type_liability_id: 7,
+          municipality_id: 149,
+          merchant_registration: '  0000123-45  ',
+        },
+        1,
+        { id: 1, fullName: 'Owner' },
+      );
+
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      expect(createdInput?.type_document_identification_id).toBe(6);
+      expect(createdInput?.dv).toBe('3');
+      expect(createdInput?.type_regime_id).toBe(1);
+      expect(createdInput?.type_liability_id).toBe(7);
+      expect(createdInput?.municipality_id).toBe(149);
+      // Se hace trim de la matrícula mercantil.
+      expect(createdInput?.merchant_registration).toBe('0000123-45');
+    });
+
+    it('con FE apagada: 403 al intentar asignar identidad fiscal', async () => {
+      feEnabled = false;
+      await expect(
+        action.execute({ name: 'Acme', type_document_identification_id: 6 }, 1, {
+          id: 1,
+          fullName: 'Owner',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      // No debe llegar a guardar.
+      expect(savedCustomer).toBeNull();
+    });
   });
 });
