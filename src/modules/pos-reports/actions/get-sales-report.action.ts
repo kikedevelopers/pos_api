@@ -14,6 +14,7 @@ import {
   groupNotes,
   mapNoteToTicket,
   round2,
+  salesDateFieldExpr,
   toIsoStr,
   zeroBig,
   type NoteRow,
@@ -32,6 +33,12 @@ interface InvoiceRow {
   created_by: string | null;
   is_deleted: boolean;
   created_at: Date;
+  // COALESCE(sold_at, created_at): cuándo se REALIZÓ la venta. En un pedido
+  // cobrado días después no coincide con created_at. Paridad placepos.
+  sold_at: Date;
+  // Ajuste por notas ya agregado (NC resta, ND suma). Viene de la vista.
+  note_adjustment: number;
+  note_cost_adjustment: number;
   notes_count: string | number;
   note_types: string | null;
   is_credit: boolean;
@@ -268,6 +275,26 @@ export class GetSalesReportAction {
     // pagos (medio de pago sin definir): la distinción la da `is_credit`, no el
     // medio con que luego se abone.
     const paymentType = inv.is_credit ? 'CREDIT' : derivePaymentType(inv.payment_methods);
+
+    // Consolidado de la fila. El margen se recalcula sobre el total ya neteado:
+    // arrastrar el margen previo a las notas dejaría un porcentaje que no
+    // corresponde a las cifras impresas a su lado.
+    const consolidatedTotal = round2(
+      toBig(inv.original_total).plus(toBig(inv.note_adjustment)).toNumber(),
+    );
+    const consolidatedCost = round2(
+      toBig(inv.original_cost).plus(toBig(inv.note_cost_adjustment)).toNumber(),
+    );
+    const consolidatedProfit = round2(toBig(consolidatedTotal).minus(consolidatedCost).toNumber());
+    const consolidated = {
+      total: consolidatedTotal,
+      cost: consolidatedCost,
+      profit: consolidatedProfit,
+      margin:
+        consolidatedTotal > 0
+          ? round2(toBig(consolidatedProfit).div(consolidatedTotal).times(100).toNumber())
+          : 0,
+    };
     return {
       id: Number(inv.id),
       rowType: 'INVOICE',
@@ -275,10 +302,15 @@ export class GetSalesReportAction {
       ticketNumber: inv.ticket_number,
       saleNumber: inv.sale_number,
       originalTotal: Number(inv.original_total),
-      consolidatedTotal: Number(inv.original_total),
-      cost: Number(inv.original_cost),
-      profit: Number(inv.original_profit),
-      margin: Number(inv.original_margin),
+      // La fila lleva el CONSOLIDADO: la venta con sus notas ya aplicadas.
+      // "Una venta de 200.000 a la que se le quitan 50.000 ahora se entiende
+      // por 150.000". Las notas se siguen listando debajo como detalle, pero
+      // aportan 0 a la suma (ver `mapNoteToTicket`): su valor ya está aquí, y
+      // contarlas otra vez descuadraría la columna contra el total.
+      consolidatedTotal: consolidated.total,
+      cost: consolidated.cost,
+      profit: consolidated.profit,
+      margin: consolidated.margin,
       customerName: inv.customer_name ?? 'CONSUMIDOR FINAL',
       createdBy: inv.created_by ?? null,
       synced: true,
@@ -286,6 +318,9 @@ export class GetSalesReportAction {
       notesCount: Number(inv.notes_count),
       noteTypes: inv.note_types,
       createdAt: toIsoStr(inv.created_at),
+      // Fecha de la venta propiamente dicha. El extracto mensual agrupa por
+      // esta, no por la de registro. Paridad placepos.
+      soldAt: toIsoStr(inv.sold_at ?? inv.created_at),
       noteNumber: null,
       noteType: null,
       operationType: null,
@@ -319,10 +354,11 @@ export class GetSalesReportAction {
       `si.company_id = $1`,
     ];
 
+    const dateExpr = salesDateFieldExpr(filters.dateField);
     const fromPh = placeholder(dateFrom);
-    conditions.push(`si.created_at >= ${fromPh}`);
+    conditions.push(`${dateExpr} >= ${fromPh}`);
     const toPh = placeholder(dateTo);
-    conditions.push(`si.created_at <= ${toPh}`);
+    conditions.push(`${dateExpr} <= ${toPh}`);
 
     if (filters.search?.trim()) {
       // MED-2 auditoría Fase 11: escapar wildcards de ILIKE (`%`, `_`, `\`)
@@ -397,6 +433,11 @@ export class GetSalesReportAction {
         si.created_by,
         si.is_deleted,
         si.created_at,
+        COALESCE(si.sold_at, si.created_at) AS sold_at,
+        -- Ajuste de las notas, agregado por la vista consolidada: NC resta, ND
+        -- suma. Es lo que convierte la fila en el CONSOLIDADO de la venta.
+        COALESCE(adj.total_adjustment, 0)::float AS note_adjustment,
+        COALESCE(adj.cost_adjustment, 0)::float AS note_cost_adjustment,
         COALESCE(na.notes_count, 0) AS notes_count,
         na.note_types,
         (sc.id IS NOT NULL) AS is_credit,
@@ -417,13 +458,16 @@ export class GetSalesReportAction {
             AND sp.is_voided = false
         ) AS payment_methods
       FROM sale_invoices si
+      LEFT JOIN "v_sale_note_adjustments" adj
+        ON adj.sale_invoice_id = si.id
+       AND adj.company_id = si.company_id
       LEFT JOIN sale_credits sc
         ON sc.sale_invoice_id = si.id
        AND sc.company_id = $1
       LEFT JOIN note_agg na
         ON na.sale_invoice_id = si.id
       WHERE ${conditions.join(' AND ')}
-      ORDER BY si.created_at DESC
+      ORDER BY ${dateExpr} DESC
     `;
 
     return { sql, params };
@@ -538,6 +582,7 @@ export class GetSalesReportAction {
         cn.created_at,
         si.ticket_number AS parent_ticket_number,
         si.sale_number AS parent_sale_number,
+        COALESCE(si.sold_at, si.created_at) AS parent_sold_at,
         si.customer_name,
         COALESCE((
           SELECT SUM(cnl.unit_cost * cnl.quantity)

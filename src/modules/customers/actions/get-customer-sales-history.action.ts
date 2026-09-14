@@ -134,11 +134,15 @@ export class GetCustomerSalesHistoryAction {
                si.ticket_type,
                si.created_at,
                si.created_by,
-               si.total,
-               si.cost,
-               si.profit,
-               si.margin
+               -- CONSOLIDADO: la venta con sus notas ya aplicadas. Mostrar el
+               -- total persistido decía que el cliente compró (y debe) más de
+               -- lo que quedó facturado tras una anulación parcial.
+               (si.total + COALESCE(adj.total_adjustment, 0)) AS total,
+               (si.cost  + COALESCE(adj.cost_adjustment, 0))  AS cost
           FROM sale_invoices si
+          LEFT JOIN v_sale_note_adjustments adj
+                 ON adj.sale_invoice_id = si.id
+                AND adj.company_id = si.company_id
          WHERE si.company_id = $1
            AND si.customer_id = $2
            AND si.is_deleted = false
@@ -179,8 +183,11 @@ export class GetCustomerSalesHistoryAction {
              b.created_by,
              b.total,
              b.cost,
-             b.profit,
-             b.margin,
+             -- Ganancia y margen se derivan del consolidado en vez de arrastrar
+             -- los persistidos: dejarlos como estaban imprimiría un porcentaje
+             -- que no corresponde a las cifras de al lado.
+             (b.total - b.cost) AS profit,
+             CASE WHEN b.total > 0 THEN ((b.total - b.cost) / b.total) * 100 ELSE 0 END AS margin,
              p.payment_method,
              (c.id IS NOT NULL)          AS is_credit,
              c.credit_status,
@@ -198,10 +205,11 @@ export class GetCustomerSalesHistoryAction {
     );
 
     const invoices: CustomerSalesHistoryInvoice[] = rows.map((r) => {
-      // Paridad EXACTA con el backend offline de PlacePos: se devuelven los
-      // valores PERSISTIDOS de la factura (total/cost/profit/margin), SIN
-      // consolidar NC/ND. El offline no consolida aquí, así que el cloud
-      // tampoco — de lo contrario las cifras divergen entre modos.
+      // Cifras CONSOLIDADAS (venta ± sus notas), calculadas en la consulta.
+      // Antes se devolvía el valor persistido "por paridad con el offline": una
+      // venta de 200.000 a la que se le quitaron 50.000 seguía apareciendo en
+      // 200.000 en el historial del cliente y en el modal de créditos del POS,
+      // que es donde se le dice a alguien cuánto debe.
       const total = toBig(r.total);
       const cost = toBig(r.cost);
       const profit = toBig(r.profit);

@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { PackagingsModule } from '@/modules/packagings/packagings.module';
+import { ProductImagesModule } from '@/modules/product-images/product-images.module';
+import { TaxesModule } from '@/modules/taxes/taxes.module';
 
 import { BulkArchiveProductsAction } from './actions/bulk-archive-products.action';
 import { BulkProcessProductsAction } from './actions/bulk-process-products.action';
@@ -43,6 +45,12 @@ import { ProductsService } from './products.service';
   imports: [
     TypeOrmModule.forFeature([Product, ProductPrice, InventoryMovement, InventoryShare]),
     PackagingsModule,
+    // Imágenes de los items: subir/quitar desde `/inventory/:id/image`, firmar
+    // las URLs de los listados y copiar el archivo al duplicar o clonar.
+    ProductImagesModule,
+    // Catálogo de IVA: resolver la tarifa de un producto para desglosar
+    // base/IVA de sus precios (Facturación Electrónica).
+    TaxesModule,
   ],
   controllers: [ProductsController],
   providers: [

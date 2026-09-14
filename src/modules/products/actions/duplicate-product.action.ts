@@ -3,6 +3,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
 import { normalizeNameSql } from '@/modules/categories/internal/category-lookups';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import { ComboComponent } from '../entities/combo-component.entity';
 import { Product, ProductType } from '../entities/product.entity';
@@ -59,10 +60,13 @@ import type { ProductCreator } from './create-product.action';
  */
 @Injectable()
 export class DuplicateProductAction {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
+  ) {}
 
   async execute(id: number, companyId: number, actor: ProductCreator): Promise<Product> {
-    return this.dataSource.transaction<Product>(async (manager) => {
+    const copy = await this.dataSource.transaction<Product>(async (manager) => {
       const source = await findProductInCompany(manager, id, companyId);
 
       const name = await resolveCopyName(source.name, (candidate) =>
@@ -93,9 +97,15 @@ export class DuplicateProductAction {
         bar_code: null,
         packaging_id: source.packaging_id,
         category_id: source.category_id,
+        // La copia hereda la misma tarifa de IVA que el original.
+        tax_rate_id: source.tax_rate_id,
         cost,
         stock: 0,
-        image: source.image,
+        // La imagen NO se copia como string: el archivo se duplica en el bucket
+        // fuera de esta transacción (ver abajo) para que cada producto sea dueño
+        // del suyo. Compartir ruta haría que quitar la imagen de uno borrara la
+        // del otro.
+        image: null,
         show_in_pos: source.show_in_pos,
         is_purchasable: source.is_purchasable,
         is_archived: false,
@@ -141,15 +151,38 @@ export class DuplicateProductAction {
             sale_price: price.sale_price,
             profit: calculateProfit(price.sale_price, cost),
             margin: calculateMargin(price.sale_price, cost),
+            // El desglose base/IVA se copia tal cual: mismo sale_price y misma
+            // tarifa que el original (invariante base + iva = sale_price intacta).
             iva_percentage: price.iva_percentage,
+            taxable_base: price.taxable_base,
+            tax_amount: price.tax_amount,
             created_by: actor.fullName,
             created_by_id: String(actor.id),
           })),
         );
       }
 
-      return saved;
+      // `sourceImage` viaja adjunto al POJO para copiar el archivo después de
+      // confirmar la transacción (I/O de red fuera del lock de la BD).
+      return Object.assign(saved, { __sourceImage: source.image ?? null });
     });
+
+    // Copia del archivo DESPUÉS del commit: hablar con GCS dentro de la
+    // transacción alargaría el lock por toda la latencia de red, y si la copia
+    // falla preferimos una copia sin foto (el usuario la sube) antes que perder
+    // el duplicado entero.
+    const sourceImage = (copy as Product & { __sourceImage?: string | null }).__sourceImage ?? null;
+    delete (copy as Product & { __sourceImage?: string | null }).__sourceImage;
+    if (sourceImage) {
+      const newImage = await this.productImages.copyTo({
+        sourceImage,
+        targetProductId: Number(copy.id),
+        targetCompanyId: companyId,
+      });
+      copy.image = newImage;
+    }
+
+    return copy;
   }
 }
 

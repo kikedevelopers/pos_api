@@ -75,6 +75,7 @@ export class FindAllProductsAction {
         p.bar_code        AS bar_code,
         p.packaging_id    AS packaging_id,
         p.category_id     AS category_id,
+        p.tax_rate_id     AS tax_rate_id,
         p.cost            AS cost,
         p.stock           AS stock,
         p.is_purchasable  AS is_purchasable,
@@ -118,7 +119,9 @@ export class FindAllProductsAction {
             'sale_price',     pp.sale_price,
             'profit',         pp.profit,
             'margin',         pp.margin,
-            'iva_percentage', pp.iva_percentage
+            'iva_percentage', pp.iva_percentage,
+            'taxable_base',   pp.taxable_base,
+            'tax_amount',     pp.tax_amount
           ) ORDER BY pp.id
         ) AS prices
         FROM product_prices pp
@@ -155,6 +158,7 @@ interface RawProductRow {
   bar_code: string | null;
   packaging_id: string | null;
   category_id: string | null;
+  tax_rate_id: string | null;
   cost: string | number;
   stock: string | number;
   is_purchasable: boolean;
@@ -182,6 +186,8 @@ interface RawPriceJson {
   profit: number | string;
   margin: number | string;
   iva_percentage: number | string;
+  taxable_base: number | string;
+  tax_amount: number | string;
 }
 
 /**
@@ -219,6 +225,7 @@ function mapRawToProduct(r: RawProductRow, activeCompanyId: number): Product {
     bar_code: r.bar_code,
     packaging_id: r.packaging_id,
     category_id: r.category_id,
+    tax_rate_id: r.tax_rate_id,
     cost: r.cost,
     stock: r.stock,
     is_purchasable: r.is_purchasable,
@@ -259,6 +266,8 @@ function mapRawToProduct(r: RawProductRow, activeCompanyId: number): Product {
       profit: pp.profit,
       margin: pp.margin,
       iva_percentage: pp.iva_percentage,
+      taxable_base: pp.taxable_base,
+      tax_amount: pp.tax_amount,
     })),
   };
   // El shape plano contiene todas las propiedades que el mapper lee; el cast

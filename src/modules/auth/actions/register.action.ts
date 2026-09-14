@@ -5,6 +5,10 @@ import { DataSource, QueryFailedError } from 'typeorm';
 import { ARGON2_OPTIONS } from '@/common/utils/argon2-options';
 import { CompanyMember } from '@/modules/companies/entities/company-member.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
+import { ConfigService } from '@nestjs/config';
+
+import type { AppConfig } from '@/config/app.config';
+import { SendWelcomeEmailAction } from '@/modules/mail/actions/send-welcome-email.action';
 import { seedSystemRolesForCompany } from '@/modules/roles/internal/system-roles';
 import { CreateSubscriptionAction } from '@/modules/subscriptions/actions/create-subscription.action';
 import {
@@ -13,8 +17,10 @@ import {
 } from '@/modules/subscriptions/subscriptions.constants';
 import { User, UserType } from '@/modules/users/entities/user.entity';
 
-import type { AuthResponseDto } from '../dto/auth-response.dto';
+import type { AuthResponseDto, RegisterResponseDto } from '../dto/auth-response.dto';
 import type { RegisterDto } from '../dto/register.dto';
+import { buildActivationUrl } from '../internal/activation-token';
+import { IssueActivationTokenAction } from './issue-activation-token.action';
 import { userToAuthUserDto } from '../internal/auth-mappers';
 import { JwtIssuerService } from '../internal/jwt-issuer.service';
 import { PG_UNIQUE_VIOLATION } from '../internal/pg-errors';
@@ -44,9 +50,21 @@ export class RegisterAction {
     private readonly jwtIssuer: JwtIssuerService,
     private readonly seedCompanyAction: SeedCompanyAction,
     private readonly createSubscriptionAction: CreateSubscriptionAction,
+    private readonly sendWelcomeEmailAction: SendWelcomeEmailAction,
+    private readonly issueActivationTokenAction: IssueActivationTokenAction,
+    private readonly configService: ConfigService,
   ) {}
 
-  async execute(dto: RegisterDto): Promise<AuthResponseDto> {
+  /**
+   * `skipActivation` = la cuenta nace ACTIVA y se devuelve el JWT, como antes.
+   * Lo usa el panel superadmin: ahí el operador ya habló con el cliente, y
+   * obligarlo a un correo de ida y vuelta solo estorbaría.
+   */
+  async execute(
+    dto: RegisterDto,
+    options: { skipActivation?: boolean } = {},
+  ): Promise<AuthResponseDto | RegisterResponseDto> {
+    const skipActivation = options.skipActivation === true;
     // Hashing FUERA de la transacción: argon2 toma ~50-100ms y mantener una
     // conexión abierta esperándolo bloquea el pool. Si la transacción falla
     // después, el hash se descarta — costo aceptable.
@@ -56,6 +74,10 @@ export class RegisterAction {
     // cloud: marca la company y acorta el trial. Flag auto-protegido (pedir
     // MENOS días no abre superficie de abuso), por eso es público sin gating.
     const fromOfflineMigration = dto.from_offline_migration === true;
+
+    // El token del correo se emite DENTRO de la transacción, junto al usuario:
+    // si algo falla después, no queda un enlace de activación huérfano.
+    let activationToken: string | null = null;
 
     const savedUser = await this.dataSource.transaction<User>(async (manager) => {
       // 1. Fast-path: verificar que el email no esté tomado antes de insertar.
@@ -100,6 +122,9 @@ export class RegisterAction {
         company_id: savedCompany.id,
         // TypeORM 0.3 no aplica defaults SQL si el campo no aparece en create().
         balance: 0,
+        // NULL = sin activar: el login la rechaza hasta que se canjee el
+        // enlace del correo de bienvenida.
+        activated_at: skipActivation ? new Date() : null,
       });
 
       let saved: User;
@@ -158,8 +183,35 @@ export class RegisterAction {
         durationDays: fromOfflineMigration ? SUBSCRIPTION_MIGRATION_DAYS : SUBSCRIPTION_TRIAL_DAYS,
       });
 
+      if (!skipActivation) {
+        const issued = await this.issueActivationTokenAction.execute(manager, saved.id);
+        activationToken = issued.token;
+      }
+
       return saved;
     });
+
+    // Bienvenida FUERA de la transacción y SIN esperar la respuesta: el correo
+    // no puede alargar el registro (un proveedor lento tarda segundos) ni
+    // tumbarlo si falla. La action captura sus propios errores, así que este
+    // `void` no deja ninguna promesa rechazada suelta.
+    if (activationToken) {
+      const baseUrl = this.configService.getOrThrow<AppConfig>('app').activationBaseUrl;
+      void this.sendWelcomeEmailAction.execute({
+        customer_name: savedUser.name,
+        customer_email: savedUser.email,
+        company_name: dto.company_name,
+        activation_url: buildActivationUrl(baseUrl, activationToken),
+      });
+    }
+
+    const user = userToAuthUserDto(savedUser, this.logger);
+
+    // Sin activación NO hay sesión: devolver un JWT aquí dejaría entrar al
+    // dashboard justo a quien todavía no ha probado que el correo es suyo.
+    if (!skipActivation) {
+      return { activation_required: true, email: savedUser.email, user };
+    }
 
     const access_token = await this.jwtIssuer.sign({
       userId: savedUser.id,
@@ -170,9 +222,6 @@ export class RegisterAction {
       account: 'user',
     });
 
-    return {
-      access_token,
-      user: userToAuthUserDto(savedUser, this.logger),
-    };
+    return { access_token, user };
   }
 }

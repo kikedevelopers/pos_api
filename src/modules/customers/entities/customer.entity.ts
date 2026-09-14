@@ -108,6 +108,40 @@ export class Customer {
   @Column({ type: 'text', nullable: true })
   address!: string | null;
 
+  // --------------------------------------------------------------------------
+  // Identidad fiscal (Facturación Electrónica) — CLOUD-ONLY.
+  // --------------------------------------------------------------------------
+  //   Campos que APIDIAN exige en el objeto `customer` del payload de factura.
+  //   Los ids referencian catálogos que viven en el API externo (APIDIAN), NO
+  //   en pos_api: aquí solo se guarda la elección del usuario. Todos NULL: la FE
+  //   es opt-in por negocio. `type_organization_id` no se persiste — se deriva
+  //   de `person_type` al armar el payload. Ausentes en el shape de PlacePos
+  //   local (paridad suspendida; el offline no factura).
+
+  /** Ref a `type_document_identifications` de APIDIAN (CC, NIT, CE…). */
+  @Column({ type: 'integer', nullable: true })
+  type_document_identification_id!: number | null;
+
+  /** Dígito de verificación DIAN (solo NIT). Calculado desde el documento. */
+  @Column({ type: 'varchar', length: 1, nullable: true })
+  dv!: string | null;
+
+  /** Ref a `type_regimes` de APIDIAN (Responsable / No responsable de IVA). */
+  @Column({ type: 'integer', nullable: true })
+  type_regime_id!: number | null;
+
+  /** Ref a `type_liabilities` de APIDIAN (responsabilidad tributaria). */
+  @Column({ type: 'integer', nullable: true })
+  type_liability_id!: number | null;
+
+  /** Ref a `municipalities` de APIDIAN (municipio del adquirente). */
+  @Column({ type: 'integer', nullable: true })
+  municipality_id!: number | null;
+
+  /** Matrícula mercantil del adquirente (texto libre, opcional). */
+  @Column({ type: 'text', nullable: true })
+  merchant_registration!: string | null;
+
   /**
    * SIGNED. Ver JSDoc del header. Mutación solo en fases 6/8/9.
    */

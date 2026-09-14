@@ -53,6 +53,19 @@ export interface PosItem {
   is_shared: boolean;
   /** Company DUEÑA real del producto (el principal si es compartido). */
   owner_company_id: number;
+  /** Ruta del objeto en el bucket. `null` si el item no tiene imagen. */
+  image: string | null;
+  /**
+   * URL firmada temporal para pintar la imagen en la tarjeta del POS. La
+   * resuelve en lote `PosDataService` contra el caché en memoria. `null` = sin
+   * imagen o firma no disponible (el POS pinta el placeholder).
+   */
+  image_url: string | null;
+  /**
+   * Descripción libre del producto. La usa el modal de detalle del catálogo
+   * (PWA); el POS no la muestra en la tarjeta. `null` si nunca se cargó.
+   */
+  description: string | null;
 }
 
 /**
@@ -95,6 +108,8 @@ interface RawPosItemRow {
   /** Stock CRUDO en unidad mínima; el post-proceso lo convierte a display. */
   stock: string | number;
   company_id: string;
+  image: string | null;
+  description: string | null;
   prices:
     | {
         id: number | string;
@@ -131,6 +146,8 @@ export class GetItemsAction {
         p.created_at    AS created_at,
         p.stock         AS stock,
         p.company_id    AS company_id,
+        p.image         AS image,
+        p.description   AS description,
         pk.id           AS packaging__id,
         pk.name         AS packaging__name,
         pk.value        AS packaging__value,
@@ -191,6 +208,8 @@ export class GetItemsAction {
       stock: Number(p.stock),
       owner_company_id: Number(p.company_id),
       is_shared: Number(p.company_id) !== companyId,
+      image: p.image ?? null,
+      description: p.description ?? null,
     }));
 
     const allParents = normalized.filter((p) => p.parent_id === null);
@@ -256,6 +275,10 @@ export class GetItemsAction {
           },
           is_shared: child.is_shared,
           owner_company_id: child.owner_company_id,
+          image: child.image,
+          // La firma se resuelve en lote fuera de esta action (PosDataService).
+          image_url: null,
+          description: child.description,
         };
       });
       if (parent.show_in_pos) {
@@ -279,6 +302,9 @@ export class GetItemsAction {
           parent: null,
           is_shared: parent.is_shared,
           owner_company_id: parent.owner_company_id,
+          image: parent.image,
+          image_url: null,
+          description: parent.description,
         });
       }
       items.push(...children);

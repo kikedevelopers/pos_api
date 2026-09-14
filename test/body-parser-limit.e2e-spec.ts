@@ -3,7 +3,6 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { Request } from 'express';
-import type { Server } from 'node:http';
 import request from 'supertest';
 
 /**

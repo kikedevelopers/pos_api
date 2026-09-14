@@ -31,6 +31,7 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     bar_code: '7591001234567',
     packaging_id: '5',
     category_id: '3',
+    tax_rate_id: null,
     cost: '2.50',
     stock: '10.0000',
     is_purchasable: false,
@@ -48,7 +49,16 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     category__id: '3',
     category__name: 'Bebidas',
     prices: [
-      { id: 100, name: 'Detal', sale_price: 10.5, profit: 8, margin: 76.1905, iva_percentage: 0 },
+      {
+        id: 100,
+        name: 'Detal',
+        sale_price: 10.5,
+        profit: 8,
+        margin: 76.1905,
+        iva_percentage: 0,
+        taxable_base: 10.5,
+        tax_amount: 0,
+      },
     ],
     ...over,
   };
@@ -82,7 +92,11 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       parent_id: null,
       packaging_id: 5,
       category_id: 3,
+      tax_rate_id: null,
       image: null,
+      // La URL firmada la puebla el controller en lote (attachImageUrls); el
+      // mapper la deja en null a propósito para no firmar una por producto.
+      image_url: null,
       show_in_pos: true,
       is_purchasable: false,
       is_archived: false,
@@ -94,7 +108,16 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       packaging: { id: 5, name: 'Caja x 12', value: 12, is_auto: false },
       category: { id: 3, name: 'Bebidas' },
       prices: [
-        { id: 100, name: 'Detal', sale_price: 10.5, profit: 8, margin: 76.1905, iva_percentage: 0 },
+        {
+          id: 100,
+          name: 'Detal',
+          sale_price: 10.5,
+          profit: 8,
+          margin: 76.1905,
+          iva_percentage: 0,
+          taxable_base: 10.5,
+          tax_amount: 0,
+        },
       ],
       // El fixture no trae last_purchase_date → null (el front cae a created_at).
       last_purchase_date: null,

@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
 import { Company } from '@/modules/companies/entities/company.entity';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 /**
  * Borra una company COMPLETA (y todo su tenant por cascada) desde el panel
@@ -22,16 +23,23 @@ import { Company } from '@/modules/companies/entities/company.entity';
  * dentro. Se resuelven ANTES de borrar y se eliminan en la MISMA transacción.
  *
  * Borrar una sucursal, en cambio, no toca al principal: solo se va ella.
+ *
+ * IMÁGENES. La cascada de la BD no llega al bucket: las fotos del inventario
+ * viven en Google Cloud Storage y su única referencia eran las filas que se
+ * acaban de borrar. Se eliminan por carpeta DESPUÉS del commit (si la
+ * transacción se revirtiera, los archivos ya no estarían) y sin bloquear el
+ * resultado: el tenant ya se fue y un fallo del bucket no puede deshacerlo.
  */
 @Injectable()
 export class DeleteTenantAction {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
   ) {}
 
   async execute(companyId: number): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
+    const deletedCompanyIds = await this.dataSource.transaction<string[]>(async (manager) => {
       const companyRepo = manager.getRepository(Company);
       const company = await companyRepo.findOne({ where: { id: String(companyId) } });
       if (!company) {
@@ -54,6 +62,13 @@ export class DeleteTenantAction {
 
       // El DELETE de cada fila de companies dispara la cascada total en DB.
       await companyRepo.delete(ids);
+      return ids;
     });
+
+    // Fuera de la transacción: las imágenes de cada company borrada (principal
+    // y sucursales) ya no tienen quien las referencie.
+    for (const id of deletedCompanyIds) {
+      await this.productImages.removeAllForCompany(Number(id));
+    }
   }
 }

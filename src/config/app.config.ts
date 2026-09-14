@@ -10,6 +10,12 @@ export interface AppConfig {
   logLevel: string;
   corsOrigins: string[];
   swaggerEnabled: boolean;
+  /**
+   * Base pública donde vive la página de activación de cuenta (`/activar`).
+   * En producción es la landing; en desarrollo, el servidor local que la sirva.
+   * Es lo que se pone en el botón del correo de bienvenida.
+   */
+  activationBaseUrl: string;
   throttle: {
     ttl: number;
     limit: number;
@@ -52,6 +58,9 @@ export default registerAs<AppConfig>('app', () => ({
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0),
   swaggerEnabled: process.env.SWAGGER_ENABLED === 'true',
+  activationBaseUrl: (
+    process.env.ACTIVATION_BASE_URL?.trim() || 'https://placepos.kikedevs.com'
+  ).replace(/\/+$/, ''),
   throttle: {
     ttl: parseInt(process.env.THROTTLE_TTL ?? '60000', 10),
     limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),

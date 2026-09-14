@@ -355,6 +355,24 @@ export class SaleResponseDto {
       'venta es de mostrador o el sistema de puntos está deshabilitado.',
   })
   customerPoints!: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Cra 4ta #20-109',
+    nullable: true,
+    description:
+      'Dirección del cliente, tal como está en su ficha. `null` si no la tiene ' +
+      'o si la venta es de mostrador. El recibo la pinta como "-" cuando falta.',
+  })
+  customerAddress!: string | null;
+
+  @ApiPropertyOptional({
+    example: '3015955518',
+    nullable: true,
+    description:
+      'Teléfono del cliente. `null` si no lo tiene o si la venta es de ' +
+      'mostrador. El recibo lo pinta como "-" cuando falta.',
+  })
+  customerPhone!: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +544,8 @@ export function toSaleResponseDto(
   pointsEnabled = false,
   customerPoints: number | null = null,
   statusHistory: SaleStatusHistory[] = [],
+  customerAddress: string | null = null,
+  customerPhone: string | null = null,
 ): SaleResponseDto {
   const sortedNotes = [...creditNotes].sort(
     (a, b) => a.created_at.getTime() - b.created_at.getTime(),
@@ -568,6 +588,8 @@ export function toSaleResponseDto(
     documents: buildInvoiceDocuments(sale, lines, sortedNotes),
     pointsEnabled,
     customerPoints,
+    customerAddress,
+    customerPhone,
     // Ya llega ordenado por created_at ASC, id ASC desde la action; el `.map`
     // preserva ese orden para la línea de tiempo del TicketViewer.
     statusHistory: statusHistory.map(toStatusHistory),

@@ -42,6 +42,10 @@ export interface SaleAggregate {
    * deshabilitados — no tiene sentido leer el saldo si no se va a mostrar.
    */
   customerPoints: number | null;
+  /** Dirección del cliente. `null` si no la tiene o si es venta de mostrador. */
+  customerAddress: string | null;
+  /** Teléfono del cliente. `null` si no lo tiene o si es venta de mostrador. */
+  customerPhone: string | null;
   /**
    * Línea de tiempo de las transiciones de estado de la venta, ordenada
    * cronológicamente (created_at ASC, id ASC). Alimenta el bloque
@@ -115,12 +119,23 @@ export class FindSaleAction {
     const pointsConfig = await getCustomerPointsConfig(manager, companyId);
     const pointsEnabled = pointsConfig.enabled;
     let customerPoints: number | null = null;
-    if (pointsEnabled && sale.customer_id) {
+    let customerAddress: string | null = null;
+    let customerPhone: string | null = null;
+
+    // UNA sola lectura del cliente para todo lo que el recibo necesita de él.
+    // La dirección y el teléfono se piden SIEMPRE que la venta tenga cliente
+    // (van en el recibo impreso y en pantalla); los puntos, solo si el sistema
+    // está habilitado. Filtrado por `company_id` — anti-IDOR.
+    if (sale.customer_id) {
       const customer = await manager.findOne(Customer, {
         where: { id: sale.customer_id, company_id: String(companyId) },
-        select: { points: true },
+        select: { points: true, address: true, phone: true },
       });
-      customerPoints = customer ? customer.points : null;
+      if (customer) {
+        customerPoints = pointsEnabled ? customer.points : null;
+        customerAddress = customer.address;
+        customerPhone = customer.phone;
+      }
     }
 
     return {
@@ -131,6 +146,8 @@ export class FindSaleAction {
       creditNotes,
       pointsEnabled,
       customerPoints,
+      customerAddress,
+      customerPhone,
       statusHistory,
     };
   }

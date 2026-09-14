@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-import { calculateMargin, calculateProfit } from '@/common/utils/precision';
+import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+import { calculateMargin, calculateProfit, computeTaxBreakdown } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 
 import type { CreateProductDto } from '../dto/create-product.dto';
@@ -20,6 +21,7 @@ import {
   assertParentBelongsToCompany,
   assertParentIsNotCombo,
 } from '../internal/product-lookups';
+import { loadParentTaxRateId, resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
 
 /**
  * Datos del actor creador. Evita propagar `AuthUser` completo.
@@ -65,6 +67,25 @@ export class CreateProductAction {
       await assertCategoryBelongsToCompany(manager, dto.category_id ?? null, companyId);
       await assertParentIsNotCombo(manager, dto.parent_id ?? null, companyId);
 
+      // Configuración fiscal (IVA) del producto:
+      //   - PRESENTACIÓN (tiene parent_id y no es combo): SIEMPRE hereda la
+      //     tarifa del base. No la elige el cliente (el form la muestra solo
+      //     informativa) y por eso NO se aplica el gate de FE aquí: es herencia
+      //     estructural, no una acción de FE del usuario.
+      //   - BASE/COMBO: usa `dto.tax_rate_id`. Asignar una tarifa (no nula) es
+      //     una operación de FE → se valida contra la BD (front rancio en SPA).
+      const isChild = !isCombo && dto.parent_id != null;
+      let effectiveTaxRateId: number | null = dto.tax_rate_id ?? null;
+      if (isChild) {
+        effectiveTaxRateId = await loadParentTaxRateId(manager, dto.parent_id as number, companyId);
+      } else if (dto.tax_rate_id != null) {
+        await assertElectronicBillingEnabled(manager, companyId);
+      }
+
+      // Tarifa porcentual resuelta: desglosa la base/IVA de cada precio (el
+      // precio se ingresa con IVA incluido). null = Exento (0%).
+      const taxRatePercent = await resolveTaxRatePercent(manager, effectiveTaxRateId);
+
       // Un COMBO se arma con N productos base: su costo lo deriva SIEMPRE el
       // servidor de la receta, nunca el `cost` que teclee el cliente. Además
       // vive en la raíz, sin empaque ni stock propios, y no es comprable.
@@ -99,9 +120,12 @@ export class CreateProductAction {
         bar_code: trimmedBarcode,
         packaging_id: packagingId,
         category_id: dto.category_id ? String(dto.category_id) : null,
+        tax_rate_id: effectiveTaxRateId !== null ? String(effectiveTaxRateId) : null,
         cost: resolvedCost,
         stock: isCombo ? 0 : dto.stock,
-        image: dto.image ?? null,
+        // La imagen se sube aparte (`POST /inventory/:id/image`): un producto
+        // nace sin ella y el formulario la envía en cuanto tiene el id.
+        image: null,
         show_in_pos: dto.show_in_pos !== false,
         is_purchasable: isCombo ? false : dto.is_purchasable === true,
         is_archived: false,
@@ -123,9 +147,12 @@ export class CreateProductAction {
         await syncComboComponents(manager, companyId, Number(saved.id), comboComponents);
       }
 
-      // Insertar prices. Cada uno copia `company_id` (denormalizado) y
-      // recalcula profit/margin con Big.js — fuente de verdad servidor.
-      const priceRows = dto.prices.map((p) => buildPriceRow(p, saved, resolvedCost, createdBy));
+      // Insertar prices. Cada uno copia `company_id` (denormalizado),
+      // recalcula profit/margin y desglosa base/IVA con Big.js — fuente de
+      // verdad servidor.
+      const priceRows = dto.prices.map((p) =>
+        buildPriceRow(p, saved, resolvedCost, createdBy, taxRatePercent),
+      );
       await manager.insert(ProductPrice, priceRows);
 
       // Re-fetch con relations para devolver el product completo.
@@ -149,7 +176,12 @@ export function buildPriceRow(
   product: Product,
   cost: number,
   createdBy: ProductCreator,
+  taxRatePercent = 0,
 ): Partial<ProductPrice> {
+  // El precio se ingresa con IVA incluido: se desglosa base + IVA con la tarifa
+  // del producto. `iva_percentage` se mantiene sincronizada con esa tarifa (el
+  // input del cliente se ignora: la tarifa vive en el producto, no en el precio).
+  const { taxableBase, taxAmount } = computeTaxBreakdown(input.sale_price, taxRatePercent);
   return {
     company_id: product.company_id,
     product_id: product.id,
@@ -157,7 +189,9 @@ export function buildPriceRow(
     sale_price: input.sale_price,
     profit: calculateProfit(input.sale_price, cost),
     margin: calculateMargin(input.sale_price, cost),
-    iva_percentage: input.iva_percentage ?? 0,
+    iva_percentage: taxRatePercent,
+    taxable_base: taxableBase,
+    tax_amount: taxAmount,
     created_by: createdBy.fullName,
     created_by_id: String(createdBy.id),
   };

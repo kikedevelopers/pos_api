@@ -103,6 +103,18 @@ export const SOFT_USER_ID_COLUMNS = new Set<string>(['created_by_id', 'updated_b
 export const SOFT_USER_NAME_COLUMNS = new Set<string>(['created_by', 'updated_by']);
 
 /**
+ * Columnas que apuntan a un ARCHIVO en el bucket y NO se pueden importar.
+ *
+ * `products.image` guarda la ruta `inventory_items/<company_id>/<product_id>-…`:
+ * lleva dentro la company y el id de producto del ORIGEN. Copiarla verbatim
+ * dejaría a la company destino sirviendo —firmada— la foto de otra empresa, y
+ * además el id de producto cambia al importar (la BD asigna ids nuevos), así que
+ * la ruta ni siquiera describiría a esta fila. Los productos importados nacen
+ * sin imagen y el usuario la vuelve a subir.
+ */
+export const BUCKET_PATH_COLUMNS = new Set<string>(['image']);
+
+/**
  * Parte el universo de tablas presentes en el respaldo en el conjunto que se
  * REEMPLAZA (borrar del destino + importar del origen) vs. el que se conserva o
  * ignora. Mantiene el orden de entrada.
@@ -418,6 +430,10 @@ export function remapRowForImport(
       out = isNil ? null : ctx.ownerUserId;
     } else if (SOFT_USER_NAME_COLUMNS.has(col)) {
       out = isNil ? null : ctx.ownerName;
+    } else if (BUCKET_PATH_COLUMNS.has(col)) {
+      // Ruta a un archivo del bucket que pertenece a la company de ORIGEN.
+      // Ver `BUCKET_PATH_COLUMNS`.
+      out = null;
     }
 
     columns.push(col);

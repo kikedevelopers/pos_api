@@ -680,6 +680,12 @@ function buildPriceInsert(
     profit: price.profit,
     margin: price.margin,
     iva_percentage: 0,
+    // El import Excel no trae IVA: el producto queda Exento → toda la venta es
+    // base, IVA 0. Mantiene la invariante base + iva = sale_price y evita el
+    // NOT NULL de las columnas fiscales. (La tarifa se asigna luego desde el
+    // formulario de producto, que además propaga a las presentaciones.)
+    taxable_base: price.sale_price,
+    tax_amount: 0,
     created_by: actor.fullName,
     created_by_id: String(actor.id),
   };

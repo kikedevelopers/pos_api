@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import Big from 'big.js';
 import type { DataSource } from 'typeorm';
 
+import type { ProductImagesService } from '@/modules/product-images/product-images.service';
 import { CloneProductsToBranchAction } from '@/modules/products/actions/clone-products-to-branch.action';
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 
@@ -37,6 +38,16 @@ const PRINCIPAL = '__E2E_CLONE_MAIN__';
 const BRANCH = '__E2E_CLONE_BRANCH__';
 const OTHER = '__E2E_CLONE_OTHER__';
 
+/**
+ * Doble inerte del servicio de imágenes: los productos de este e2e nacen sin
+ * imagen, así que copiar archivos no aplica. Devuelve 0 copias sin tocar GCS.
+ */
+function buildInertProductImagesService(): ProductImagesService {
+  return {
+    copyManyTo: () => Promise.resolve(0),
+  } as unknown as ProductImagesService;
+}
+
 const round2 = (b: Big): number => b.round(2, Big.roundHalfUp).toNumber();
 const round4 = (b: Big): number => b.round(4, Big.roundHalfUp).toNumber();
 
@@ -55,7 +66,10 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
       console.warn('[e2e] pos_db no disponible — clone-products e2e SKIPPED.');
       return;
     }
-    action = new CloneProductsToBranchAction(ds);
+    // Sin bucket configurado el servicio de imágenes es inerte (`copyManyTo`
+    // devuelve 0 sin tocar la red), que es justo lo que quiere este e2e: mide
+    // el clonado de datos, no el de archivos.
+    action = new CloneProductsToBranchAction(ds, buildInertProductImagesService());
     principalId = await createDisposableCompany(ds, PRINCIPAL); // is_branch=false
     branchId = await createDisposableBranch(ds, BRANCH); // is_branch=true
     const userId = await insertOwnerUser(ds, principalId, 'clone');

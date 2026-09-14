@@ -45,13 +45,19 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { FinancialMovementsModule } from './modules/financial-movements/financial-movements.module';
 import { TreasuryModule } from './modules/treasury/treasury.module';
 import { FixedExpensesModule } from './modules/fixed-expenses/fixed-expenses.module';
+import { MailModule } from './modules/mail/mail.module';
 import { MigrationImportModule } from './modules/migration-import/migration-import.module';
 import { PackagingsModule } from './modules/packagings/packagings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PosDataModule } from './modules/pos-data/pos-data.module';
 import { PosReportsModule } from './modules/pos-reports/pos-reports.module';
 import { ProductHistoryModule } from './modules/product-history/product-history.module';
+import { ProductImagesModule } from './modules/product-images/product-images.module';
+import { PortalModule } from './modules/portal/portal.module';
+import { PortalScopeGuard } from './modules/portal/portal-scope.guard';
 import { ProductsModule } from './modules/products/products.module';
+import { TaxesModule } from './modules/taxes/taxes.module';
+import { FeCatalogsModule } from './modules/fe-catalogs/fe-catalogs.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -171,6 +177,11 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     DatabaseModule,
     HealthModule,
 
+    // Correo saliente. `@Global`: cualquier módulo puede inyectar `MailService`
+    // sin importarlo. Va temprano porque es infraestructura, no dominio, y
+    // porque los módulos de dominio que envíen correos deben encontrarlo listo.
+    MailModule,
+
     // Módulos de dominio — Fase 0 a Fase 5.
     // Orden: dependencias antes que dependientes. `AuthModule` va último
     // porque importa `WalletsModule` para el seed de la wallet "Efectivo"
@@ -188,6 +199,18 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // la FK products.category_id apunte a una tabla ya migrada; en runtime
     // Nest no impone orden, pero conservamos coherencia conceptual).
     CategoriesModule,
+    // Catálogo global de tarifas de IVA (Facturación Electrónica). Lo importa
+    // ProductsModule para resolver la tarifa de un producto al desglosar
+    // base/IVA de sus precios.
+    TaxesModule,
+    // Proxy con caché de los catálogos de Facturación Electrónica (APIDIAN):
+    // tipos de documento, organización, régimen, responsabilidades, municipios.
+    // Los consume el formulario de cliente cuando el negocio es facturador.
+    FeCatalogsModule,
+    // Imágenes de los items del inventario (GCS + caché de URLs firmadas +
+    // cron de purga). Se declara aparte de ProductsModule —que también lo
+    // importa— para dejar visible que este módulo tiene un cron propio.
+    ProductImagesModule,
     ProductsModule,
     // Fase 2A — Historial de costo/precio de productos (rutas absolutas
     // /products/:id/cost-history y /product-prices/:id/price-history).
@@ -270,6 +293,9 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // Auth al final (depende de Wallets/TicketSettings/AppSettings/Subscriptions
     // para sembrar valores iniciales al crear una company).
     AuthModule,
+    // Portal de facturación de la landing. Después de AuthModule porque lo
+    // importa (reutiliza su emisor de JWT y su hash dummy).
+    PortalModule,
   ],
   controllers: [AppController],
   providers: [
@@ -282,6 +308,14 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // Alcance del token: un JWT del portal de facturación solo vale en
+    // `/portal/*`. Va ANTES de SubscriptionGuard para que usarlo fuera de su
+    // sitio responda 403 (alcance) y no 402 (suscripción) — que es el motivo
+    // real y el que hay que decirle al cliente.
+    {
+      provide: APP_GUARD,
+      useClass: PortalScopeGuard,
     },
     {
       provide: APP_GUARD,

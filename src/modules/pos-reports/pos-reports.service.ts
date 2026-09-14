@@ -14,6 +14,7 @@ import {
   GetDashboardSalesAction,
   type DashboardSalesResult,
 } from './actions/get-dashboard-sales.action';
+import { GetSalesMonthsAction, type SalesMonthsResult } from './actions/get-sales-months.action';
 import { GetSalesReportAction, type SalesReportResult } from './actions/get-sales-report.action';
 import type { ComparativeByDayQueryDto } from './dto/comparative-by-day-query.dto';
 import type { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
@@ -23,6 +24,7 @@ export type {
   ComparativeByDayResult,
   ComparativeReportResult,
   DashboardSalesResult,
+  SalesMonthsResult,
   SalesReportResult,
 };
 
@@ -36,6 +38,7 @@ export class PosReportsService {
     private readonly dashboardSales: GetDashboardSalesAction,
     private readonly comparativeReport: GetComparativeReportAction,
     private readonly comparativeByDayReport: GetComparativeByDayReportAction,
+    private readonly salesMonths: GetSalesMonthsAction,
   ) {}
 
   getSalesReport(
@@ -44,6 +47,10 @@ export class PosReportsService {
     actor: AuthUser,
   ): Promise<SalesReportResult> {
     return this.salesReport.execute(companyId, filters, actor);
+  }
+
+  getSalesMonths(companyId: number, actor: AuthUser): Promise<SalesMonthsResult> {
+    return this.salesMonths.execute(companyId, actor);
   }
 
   getDashboardSales(

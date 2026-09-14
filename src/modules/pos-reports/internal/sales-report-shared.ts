@@ -19,8 +19,19 @@ export interface NoteRow {
   created_at: Date;
   parent_ticket_number: string;
   parent_sale_number: string | null;
+  // Fecha de la venta a la que ajusta la nota. Cuando cae en otro mes, el
+  // extracto la saca a su propia tabla: si no, aparecería una nota suelta que
+  // resta de un ticket que no está en el documento. Paridad placepos.
+  parent_sold_at: Date;
   customer_name: string | null;
 }
+
+/**
+ * Expresión SQL de la fecha con la que se recorta el rango del informe.
+ * Sargable: hay índice sobre el COALESCE. Espejo placepos (`dateFieldExpr`).
+ */
+export const salesDateFieldExpr = (field: 'created_at' | 'sold_at' | undefined): string =>
+  field === 'sold_at' ? 'COALESCE(si.sold_at, si.created_at)' : 'si.created_at';
 
 export const round2 = (n: unknown): number => Number(toBig(n).round(2).toString());
 
@@ -55,9 +66,15 @@ export function mapNoteToTicket(note: NoteRow): Record<string, unknown> {
     ticketNumber: note.note_number,
     saleNumber: null,
     originalTotal: Number(note.total),
-    consolidatedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
+    // La nota se LISTA (con su número, su tipo y su valor en `originalTotal` y
+    // en `signedTotal`) pero aporta 0 a la suma: su efecto ya está dentro del
+    // consolidado de la venta de arriba. Sumarla otra vez descuadraría la
+    // columna contra el total del informe.
+    consolidatedTotal: 0,
+    signedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
     cost: noteCost,
-    profit: note.note_type === 'CREDIT' ? -noteProfit : noteProfit,
+    profit: 0,
+    signedProfit: note.note_type === 'CREDIT' ? -noteProfit : noteProfit,
     margin: noteMargin,
     customerName: note.customer_name ?? 'CONSUMIDOR FINAL',
     createdBy: note.created_by ?? null,
@@ -70,6 +87,12 @@ export function mapNoteToTicket(note: NoteRow): Record<string, unknown> {
     noteType: note.note_type,
     operationType: note.operation_type,
     parentInvoiceId: Number(note.sale_invoice_id),
+    // Identidad de la venta ajustada. Ya venían en la consulta y se perdían
+    // aquí; el extracto las necesita para explicar una nota cuyo ticket es de
+    // otro mes. Paridad placepos.
+    parentTicketNumber: note.parent_ticket_number,
+    parentSaleNumber: note.parent_sale_number,
+    parentSoldAt: toIsoStr(note.parent_sold_at ?? note.created_at),
     balanceDue: 0,
     isPending: false,
     paymentType: 'UNDEFINED',

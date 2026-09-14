@@ -5,6 +5,7 @@ import { Bank } from '@/modules/banks/entities/bank.entity';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+import { ProductImagesModule } from '@/modules/product-images/product-images.module';
 import { Product } from '@/modules/products/entities/product.entity';
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
@@ -30,6 +31,8 @@ import { PosDataService } from './pos-data.service';
     TypeOrmModule.forFeature([Product, Customer, Bank, Wallet]),
     FinancialMovementsModule,
     CashRegisterModule,
+    // Para firmar (con caché) las imágenes de las tarjetas del POS.
+    ProductImagesModule,
   ],
   controllers: [PosDataController],
   providers: [

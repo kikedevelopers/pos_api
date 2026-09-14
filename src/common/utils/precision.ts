@@ -53,3 +53,34 @@ export function calculateMargin(salePrice: unknown, cost: unknown): number {
   const profit = price.minus(toBig(cost));
   return preciseNumber(profit.div(price).times(100), 4);
 }
+
+/**
+ * Desglose de IVA de un precio de venta cuando el valor ingresado YA INCLUYE el
+ * IVA (convención colombiana: el precio de góndola es el total base + IVA).
+ *
+ *   - `taxableBase` = precio / (1 + tarifa/100) — la base gravable.
+ *   - `taxAmount`   = precio − base — para que `base + iva === precio` EXACTO
+ *     al centavo (se resta la base ya redondeada, nunca se redondean ambos por
+ *     separado).
+ *
+ * Exento y 0% caen en el mismo camino (tarifa ≤ 0): no hay IVA, toda la venta
+ * es base. Escala monetaria (2 decimales).
+ */
+export interface TaxBreakdown {
+  taxableBase: number;
+  taxAmount: number;
+}
+
+export function computeTaxBreakdown(finalPrice: unknown, ratePercent: unknown): TaxBreakdown {
+  const price = toBig(finalPrice);
+  const rate = toBig(ratePercent);
+
+  if (rate.lte(0)) {
+    return { taxableBase: preciseNumber(price, 2), taxAmount: 0 };
+  }
+
+  const divisor = rate.div(100).plus(1); // 1 + tarifa/100
+  const taxableBase = preciseNumber(price.div(divisor), 2);
+  const taxAmount = preciseNumber(price.minus(taxableBase), 2);
+  return { taxableBase, taxAmount };
+}

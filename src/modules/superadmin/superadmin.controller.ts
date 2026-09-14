@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   HttpStatus,
   Logger,
   Param,
@@ -30,8 +31,13 @@ import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
+import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
+import {
+  UpdateElectronicBillingAction,
+  type UpdateElectronicBillingResult,
+} from './actions/update-electronic-billing.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
@@ -39,6 +45,7 @@ import { CreateTenantDto } from './dto/create-tenant.dto';
 import { ImportTenantDto } from './dto/import-tenant.dto';
 import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
+import { UpdateElectronicBillingDto } from './dto/update-electronic-billing.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
 import {
@@ -56,6 +63,7 @@ import {
   toSuperadminClearInventoryResponseDto,
   toSuperadminTenantInventoryDto,
 } from './dto/superadmin-tenant-inventory.dto';
+import { SuperadminResendActivationResponseDto } from './dto/superadmin-resend-activation-response.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
@@ -86,10 +94,12 @@ export class SuperadminController {
     private readonly getTenantDetailAction: GetTenantDetailAction,
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
     private readonly updateBranchesAction: UpdateBranchesAction,
+    private readonly updateElectronicBillingAction: UpdateElectronicBillingAction,
     private readonly deleteTenantAction: DeleteTenantAction,
     private readonly createTenantAction: CreateTenantAction,
     private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
     private readonly resetTenantOwnerPasswordAction: ResetTenantOwnerPasswordAction,
+    private readonly resendActivationAction: ResendActivationAction,
     private readonly updateTenantCompanyAction: UpdateTenantCompanyAction,
     private readonly exportTenantAction: ExportTenantAction,
     private readonly importTenantAction: ImportTenantAction,
@@ -220,6 +230,31 @@ export class SuperadminController {
   }
 
   // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/electronic-billing
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/electronic-billing')
+  @ApiOperation({
+    summary: 'Activar/desactivar la Facturación Electrónica del negocio.',
+    description:
+      'Body: { enabled }. Se aplica sobre el negocio PRINCIPAL del tenant (400 si es una ' +
+      'sucursal). Solo mueve el interruptor: TODO el proceso de FE (armado, firma y envío a la ' +
+      'DIAN) lo ejecuta el API externo de Laravel (APIDIAN).',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Payload inválido o no es principal',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  updateElectronicBilling(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateElectronicBillingDto,
+  ): Promise<UpdateElectronicBillingResult> {
+    return this.updateElectronicBillingAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
   // PATCH /superadmin/tenants/:companyId/owner
   // --------------------------------------------------------------------------
 
@@ -258,6 +293,32 @@ export class SuperadminController {
     @Body() dto: ResetOwnerPasswordDto,
   ): Promise<{ success: boolean }> {
     return this.resetTenantOwnerPasswordAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /superadmin/tenants/:companyId/resend-activation
+  // --------------------------------------------------------------------------
+
+  @Post('tenants/:companyId/resend-activation')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reenviar el correo de activación al dueño de un tenant.',
+    description:
+      'Emite un enlace nuevo (invalidando el anterior) y reenvía el correo de ' +
+      'bienvenida. A diferencia del resto de correos del sistema, este espera ' +
+      'el envío y falla si el proveedor lo rechaza: el operador necesita saber ' +
+      'si el correo salió de verdad.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminResendActivationResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'La cuenta ya está activada, o el correo no pudo salir',
+  })
+  resendActivation(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ): Promise<SuperadminResendActivationResponseDto> {
+    return this.resendActivationAction.execute(companyId);
   }
 
   // --------------------------------------------------------------------------

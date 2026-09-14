@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+
 import type { UpdateCustomerDto } from '../dto/update-customer.dto';
 import { Customer } from '../entities/customer.entity';
+import { buildFiscalPatch, hasAnyFiscalField } from '../internal/customer-fiscal.helper';
 import { findCustomerInCompany } from '../internal/customer-lookups';
 
 /**
@@ -31,10 +34,16 @@ export class UpdateCustomerAction {
     return this.dataSource.transaction<Customer>(async (manager) => {
       const existing = await findCustomerInCompany(manager, id, companyId);
 
+      // Asignar identidad fiscal es operación de FE: se revalida contra la BD.
+      // 403 si el negocio no tiene FE activa AHORA (front SPA rancio).
+      if (hasAnyFiscalField(dto)) {
+        await assertElectronicBillingEnabled(manager, companyId);
+      }
+
       // Construimos el patch solo con campos DEFINIDOS para no nullificar
       // accidentalmente columnas no enviadas. `null` explícito en email/phone/
       // doc_number/address sí se respeta — el cliente puede limpiar campos.
-      const patch: Partial<Customer> = {};
+      const patch: Partial<Customer> = { ...buildFiscalPatch(dto) };
       if (dto.person_type !== undefined) {
         patch.person_type = dto.person_type;
       }

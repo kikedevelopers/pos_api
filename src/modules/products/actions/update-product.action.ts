@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-import { toBig } from '@/common/utils/precision';
+import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+import { computeTaxBreakdown, toBig } from '@/common/utils/precision';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
 import {
   propagateComponentCostToCombos,
@@ -27,7 +28,10 @@ import {
   assertParentIsNotCombo,
   findProductInCompany,
 } from '../internal/product-lookups';
+import { loadParentTaxRateId, resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
+import { propagateTaxToChildren } from '../internal/propagate-tax.helper';
 import { syncProductPrices } from '../internal/sync-product-prices';
+import { ProductPrice } from '../entities/product-price.entity';
 
 import type { ProductCreator } from './create-product.action';
 
@@ -103,6 +107,38 @@ export class UpdateProductAction {
         await assertNotUsedInActiveCombos(manager, companyId, [id], 'convertir en combo');
       }
 
+      // ── Configuración fiscal (IVA) tras el patch ──────────────────────────
+      // Parent FINAL del producto: un combo vive en raíz; si no, lo que mande el
+      // patch o lo que ya tenía.
+      const finalParentId = isCombo
+        ? null
+        : dto.parent_id !== undefined
+          ? (dto.parent_id ?? null)
+          : existing.parent_id === null
+            ? null
+            : Number(existing.parent_id);
+
+      // Presentación (tiene parent): SIEMPRE hereda el IVA del base — nunca tarifa
+      // propia (el cliente no la elige; el form la muestra solo informativa), así
+      // que se ignora `dto.tax_rate_id` y no aplica el gate de FE.
+      // Base/combo: usa `dto.tax_rate_id` si vino; asignar tarifa no nula es
+      // operación de FE → se valida contra la BD (front rancio en SPA).
+      let finalTaxRateId: number | null;
+      if (finalParentId !== null) {
+        finalTaxRateId = await loadParentTaxRateId(manager, finalParentId, companyId);
+      } else {
+        finalTaxRateId =
+          dto.tax_rate_id !== undefined
+            ? (dto.tax_rate_id ?? null)
+            : existing.tax_rate_id === null
+              ? null
+              : Number(existing.tax_rate_id);
+        if (dto.tax_rate_id != null) {
+          await assertElectronicBillingEnabled(manager, companyId);
+        }
+      }
+      const taxRatePercent = await resolveTaxRatePercent(manager, finalTaxRateId);
+
       // El costo de un COMBO lo calcula SIEMPRE el servidor desde su receta.
       //
       // `components` ausente en un producto que YA es combo = patch parcial
@@ -170,6 +206,10 @@ export class UpdateProductAction {
       if (dto.category_id !== undefined) {
         patch.category_id = dto.category_id ? String(dto.category_id) : null;
       }
+      // La tarifa fiscal FINAL siempre se persiste: para una presentación es la
+      // heredada del base (se mantiene sincronizada), para un base la del patch,
+      // y en una conversión base⇄presentación queda coherente.
+      patch.tax_rate_id = finalTaxRateId !== null ? String(finalTaxRateId) : null;
       if (resolvedCost !== undefined) {
         patch.cost = resolvedCost;
       }
@@ -177,9 +217,10 @@ export class UpdateProductAction {
       if (!isCombo && dto.stock !== undefined) {
         patch.stock = dto.stock;
       }
-      if (dto.image !== undefined) {
-        patch.image = dto.image ?? null;
-      }
+      // `image` no se toca aquí: la gestiona el módulo `product-images`
+      // (`POST /inventory/:id/image` y `.../image/remove`), que además borra el
+      // archivo anterior del bucket. Escribirla desde el patch dejaría objetos
+      // huérfanos y permitiría apuntar a la carpeta de otro tenant.
       if (dto.show_in_pos !== undefined) {
         patch.show_in_pos = dto.show_in_pos;
       }
@@ -209,7 +250,8 @@ export class UpdateProductAction {
         await clearComboComponents(manager, companyId, id);
       }
 
-      // Sincronizar prices si el cliente los envió.
+      // Sincronizar prices si el cliente los envió (desglosando base/IVA con la
+      // tarifa final).
       if (dto.prices !== undefined) {
         await syncProductPrices({
           manager,
@@ -219,7 +261,20 @@ export class UpdateProductAction {
           incoming: dto.prices,
           existing: existing.prices ?? [],
           actor,
+          taxRatePercent,
         });
+      } else if (dto.tax_rate_id !== undefined) {
+        // Cambió solo la tarifa (sin reenviar precios): re-desglosar base/IVA de
+        // los precios existentes con la nueva tarifa, o el desglose quedaría
+        // obsoleto. El sale_price (total) no cambia.
+        for (const price of existing.prices ?? []) {
+          const { taxableBase, taxAmount } = computeTaxBreakdown(price.sale_price, taxRatePercent);
+          await manager.update(
+            ProductPrice,
+            { id: price.id, product_id: existing.id, company_id: String(companyId) },
+            { iva_percentage: taxRatePercent, taxable_base: taxableBase, tax_amount: taxAmount },
+          );
+        }
       }
 
       // Si cambia el costo de un producto BASE, propagar a sus presentaciones
@@ -254,6 +309,23 @@ export class UpdateProductAction {
             companyId,
             componentId: id,
             actor: { id: actor.id, fullName: actor.fullName },
+          });
+        }
+      }
+
+      // Si cambió la TARIFA DE IVA de un producto BASE, toda su familia la sigue:
+      // cada presentación adopta la nueva tarifa y el desglose de sus precios se
+      // reajusta al nuevo % (sale_price intacto). Solo aplica a un base
+      // (finalParentId null) cuyo tax_rate_id realmente cambió.
+      if (finalParentId === null && dto.tax_rate_id !== undefined) {
+        const prevTaxRateId = existing.tax_rate_id === null ? null : Number(existing.tax_rate_id);
+        if (prevTaxRateId !== finalTaxRateId) {
+          await propagateTaxToChildren({
+            manager,
+            companyId,
+            parentId: id,
+            taxRateId: finalTaxRateId,
+            taxRatePercent,
           });
         }
       }

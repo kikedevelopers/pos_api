@@ -24,6 +24,7 @@ describe('RolesGuard', () => {
     lastname: 'User',
     type,
     account: type === 'employee' ? 'employee' : 'user',
+    scope: 'app',
   });
 
   const buildContext = (user: AuthUser | undefined): ExecutionContext => {

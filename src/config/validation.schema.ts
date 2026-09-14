@@ -51,6 +51,10 @@ export const validationSchema = Joi.object({
   // Swagger
   SWAGGER_ENABLED: Joi.boolean().default(true),
 
+  // Base pública de la página de activación de cuenta (`/activar`). Es lo que
+  // se pone en el botón del correo de bienvenida. Vacío = la landing.
+  ACTIVATION_BASE_URL: Joi.string().allow('').default(''),
+
   // CORS
   CORS_ORIGINS: Joi.string().default(''),
 
@@ -69,6 +73,10 @@ export const validationSchema = Joi.object({
     }),
   JWT_EXPIRES_OWNER: Joi.string().default('7d'),
   JWT_EXPIRES_EMPLOYEE: Joi.string().default('1d'),
+  // Portal de facturación de la landing. Mucho más corto que el de la app: se
+  // emite en un navegador (a veces prestado) y solo sirve para ver y cambiar el
+  // plan, así que una sesión de una semana ahí no le hace un favor a nadie.
+  JWT_EXPIRES_PORTAL: Joi.string().default('12h'),
 
   // Firma asimétrica para endpoints /admin/* (paneles externos, p.ej.
   // kdevs-admin). Clave pública Ed25519 en base64 (SPKI). Vacío = deshabilita
@@ -102,6 +110,21 @@ export const validationSchema = Joi.object({
   // Retención: nunca puede haber más de este número de respaldos en el bucket.
   BACKUP_MAX_FILES: Joi.number().integer().min(1).max(365).default(7),
 
+  // ---------- Imágenes de items del inventario ----------
+  // Bucket y carpeta donde viven las fotos de productos. El bucket cae por
+  // defecto al de respaldos (mismo proyecto, misma identidad).
+  GCS_INVENTORY_BUCKET: Joi.string().allow('').default(''),
+  GCS_INVENTORY_PREFIX: Joi.string().allow('').default('inventory_items'),
+  // Tope de peso de la imagen (MB). El front valida el mismo número.
+  PRODUCT_IMAGE_MAX_MB: Joi.number().positive().max(25).default(2),
+  // Vigencia de la URL firmada. DEBE superar al TTL del caché para que una URL
+  // cacheada nunca llegue vencida al navegador.
+  PRODUCT_IMAGE_SIGNED_URL_TTL_S: Joi.number().integer().min(300).max(604800).default(86400),
+  // Cuánto vive una URL firmada en memoria antes de volver a firmarse.
+  PRODUCT_IMAGE_CACHE_TTL_S: Joi.number().integer().min(60).max(86400).default(21600),
+  // Días que la imagen sobrevive en el bucket tras archivar el producto.
+  PRODUCT_IMAGE_RETENTION_DAYS: Joi.number().integer().min(1).max(365).default(7),
+
   // PlacePOS IA (Google Gemini). Sin `GEMINI_API_KEY` el módulo /ai queda
   // deshabilitado (503) — la app cliente lo detecta y muestra el aviso.
   GEMINI_API_KEY: Joi.string().allow('').default(''),
@@ -115,4 +138,41 @@ export const validationSchema = Joi.object({
   GEMINI_MAX_OUTPUT_TOKENS: Joi.number().integer().min(256).max(32768).default(4096),
   GEMINI_REQUEST_TIMEOUT_MS: Joi.number().integer().min(5000).max(600000).default(120000),
   GEMINI_MAX_TOOL_ROUNDS: Joi.number().integer().min(0).max(10).default(4),
+
+  // ---------------------------------------------------------------------------
+  // Correo saliente (módulo `mail`)
+  // ---------------------------------------------------------------------------
+  // Proveedor activo. Vacío = se resuelve solo: `resend` si hay API key,
+  // `smtp` si hay host, y `log` (escribe el correo en el log, no lo envía) si
+  // no hay nada. Añadir un proveedor = añadir su valor aquí y su driver.
+  MAIL_DRIVER: Joi.string().valid('resend', 'smtp', 'log', '').default(''),
+  // Remitente por defecto: `Nombre <correo@dominio>`. En producción el dominio
+  // DEBE estar verificado en el proveedor o ningún correo saldrá.
+  MAIL_FROM: Joi.string().allow('').default(''),
+  MAIL_REPLY_TO: Joi.string().allow('').default(''),
+  MAIL_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(15000),
+  // Base pública de los assets del correo (el logo). Vacío = la landing.
+  MAIL_ASSETS_BASE_URL: Joi.string().allow('').default(''),
+  // URL exacta del logo. Vacío = <assets>/logo-email.png.
+  MAIL_LOGO_URL: Joi.string().allow('').default(''),
+
+  // Resend (producción).
+  RESEND_API_KEY: Joi.string().allow('').default(''),
+  RESEND_BASE_URL: Joi.string().allow('').default('https://api.resend.com'),
+
+  // SMTP genérico (Mailtrap en desarrollo, o cualquier servidor SMTP).
+  SMTP_HOST: Joi.string().allow('').default(''),
+  SMTP_PORT: Joi.number().integer().min(1).max(65535).default(2525),
+  SMTP_USERNAME: Joi.string().allow('').default(''),
+  SMTP_PASSWORD: Joi.string().allow('').default(''),
+  // Vacío = se deduce del puerto (465 → TLS implícito, resto → STARTTLS).
+  // `allow('')` es imprescindible: el `.env.example` documenta el valor vacío
+  // como "dedúcelo", y sin esto copiar el ejemplo impide arrancar el servidor.
+  SMTP_SECURE: Joi.boolean().allow('').optional(),
+
+  // Facturación Electrónica (APIDIAN). Solo consumo de catálogos + delegación;
+  // pos_api no firma ni envía a la DIAN. Vacío = localhost del docker-compose.
+  FE_API_BASE_URL: Joi.string().allow('').default('http://127.0.0.1:8081/api'),
+  FE_API_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(10000),
+  FE_CATALOG_CACHE_TTL_S: Joi.number().integer().min(60).max(604800).default(86400),
 });

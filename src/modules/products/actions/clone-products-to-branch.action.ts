@@ -4,6 +4,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
 import { resolveCategoryIdByName } from '@/modules/categories/internal/category-lookups';
 import { resolveAutoPackagingId } from '@/modules/packagings/internal/resolve-auto-packaging.helper';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import { assertSourceAndBranch } from '../internal/assert-source-branch';
 import { Product, ProductType } from '../entities/product.entity';
@@ -35,6 +36,15 @@ export interface CloneProductsResult {
 }
 
 /**
+ * Resultado interno de clonar UNA familia. Además del conteo lleva las copias
+ * de imagen pendientes: el archivo se duplica en el bucket DESPUÉS de confirmar
+ * la transacción, para no tener la BD bloqueada durante la latencia de red.
+ */
+interface CloneFamilyOutcome extends CloneProductsResult {
+  imageCopies: { sourceImage: string | null; targetProductId: number }[];
+}
+
+/**
  * Fila de producto del ORIGEN (principal) que se va a clonar. Proyección
  * mínima para construir el INSERT en la sucursal.
  */
@@ -48,6 +58,7 @@ interface SourceProduct {
   bar_code: string | null;
   packaging_id: string | null;
   category_id: string | null;
+  tax_rate_id: string | null;
   cost: number;
   stock: number;
   is_purchasable: boolean;
@@ -61,6 +72,8 @@ interface SourcePrice {
   name: string;
   sale_price: number;
   iva_percentage: number;
+  taxable_base: number;
+  tax_amount: number;
 }
 
 /**
@@ -117,7 +130,10 @@ interface SourcePrice {
 export class CloneProductsToBranchAction {
   private readonly logger = new Logger(CloneProductsToBranchAction.name);
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly productImages: ProductImagesService,
+  ) {}
 
   async execute(
     sourceCompanyId: number,
@@ -138,6 +154,14 @@ export class CloneProductsToBranchAction {
         const outcome = await this.cloneFamily(sourceCompanyId, branchCompanyId, rootId, actor);
         result.created += outcome.created;
         result.skipped.push(...outcome.skipped);
+        // Las imágenes se duplican en el bucket ya con la familia confirmada.
+        // Cada copia es dueña de su archivo: compartir la ruta con el producto
+        // del principal haría que quitar la imagen allá rompiera la sucursal.
+        // Si la copia falla, el producto clonado queda sin foto (recuperable
+        // subiéndola) en vez de tumbar el clonado entero.
+        if (outcome.imageCopies.length > 0) {
+          await this.productImages.copyManyTo(outcome.imageCopies, branchCompanyId);
+        }
       } catch (err) {
         // Una familia que peta deja la TX de ESA familia en rollback (sin
         // estado parcial). Registramos y propagamos: un fallo inesperado en el
@@ -210,29 +234,30 @@ export class CloneProductsToBranchAction {
     branchCompanyId: number,
     rootId: string,
     actor: ProductCreator,
-  ): Promise<CloneProductsResult> {
-    return this.dataSource.transaction<CloneProductsResult>(async (manager) => {
+  ): Promise<CloneFamilyOutcome> {
+    return this.dataSource.transaction<CloneFamilyOutcome>(async (manager) => {
       const family = await this.loadFamily(manager, sourceCompanyId, rootId);
       if (family.length === 0) {
-        return { created: 0, skipped: [] };
+        return { created: 0, skipped: [], imageCopies: [] };
       }
       const root = family[0];
 
       // Un COMBO no se clona: su receta referencia productos del principal y
       // clonarlo sin ella daría un producto que se vende sin descontar stock.
       if (root.product_type === ProductType.COMBO) {
-        return { created: 0, skipped: [{ name: root.name, reason: 'combo' }] };
+        return { created: 0, skipped: [{ name: root.name, reason: 'combo' }], imageCopies: [] };
       }
 
       // Colisión: se evalúa sobre la RAÍZ. Si la sucursal ya tiene un activo con
       // el mismo name/sku/barcode, se omite la familia entera.
       const collision = await this.detectCollision(manager, branchCompanyId, root);
       if (collision) {
-        return { created: 0, skipped: [{ name: root.name, reason: collision }] };
+        return { created: 0, skipped: [{ name: root.name, reason: collision }], imageCopies: [] };
       }
 
       // Mapa oldId → newId para recablear parent_id de los hijos.
       const idMap = new Map<string, string>();
+      const imageCopies: CloneFamilyOutcome['imageCopies'] = [];
       let created = 0;
 
       // El padre primero (los hijos dependen de su new id).
@@ -248,10 +273,13 @@ export class CloneProductsToBranchAction {
           actor,
         );
         idMap.set(product.id, newId);
+        if (product.image) {
+          imageCopies.push({ sourceImage: product.image, targetProductId: Number(newId) });
+        }
         created += 1;
       }
 
-      return { created, skipped: [] };
+      return { created, skipped: [], imageCopies };
     });
   }
 
@@ -274,6 +302,7 @@ export class CloneProductsToBranchAction {
         bar_code: string | null;
         packaging_id: string | null;
         category_id: string | null;
+        tax_rate_id: string | null;
         cost: string;
         stock: string;
         is_purchasable: boolean;
@@ -283,7 +312,7 @@ export class CloneProductsToBranchAction {
       }>
     >(
       `SELECT id, name, description, product_type, parent_id, sku_code, bar_code,
-              packaging_id, category_id, cost, stock, is_purchasable, show_in_pos, image, hash
+              packaging_id, category_id, tax_rate_id, cost, stock, is_purchasable, show_in_pos, image, hash
        FROM products
        WHERE company_id = $1 AND is_archived = false AND (id = $2 OR parent_id = $2)
        ORDER BY (parent_id IS NOT NULL), id`,
@@ -299,6 +328,7 @@ export class CloneProductsToBranchAction {
       bar_code: r.bar_code,
       packaging_id: r.packaging_id,
       category_id: r.category_id,
+      tax_rate_id: r.tax_rate_id,
       cost: Number(r.cost),
       stock: Number(r.stock),
       is_purchasable: r.is_purchasable,
@@ -397,11 +427,16 @@ export class CloneProductsToBranchAction {
       bar_code: source.bar_code,
       packaging_id: packagingId,
       category_id: categoryId,
+      // La tarifa de IVA vive en el catálogo GLOBAL (tax_rates): no es
+      // cross-tenant, la sucursal referencia la misma fila que el principal.
+      tax_rate_id: source.tax_rate_id,
       cost: source.cost,
       stock: source.stock,
       is_purchasable: source.is_purchasable,
       show_in_pos: source.show_in_pos,
-      image: source.image,
+      // La ruta NO se copia: el archivo se duplica en el bucket tras confirmar
+      // la familia y ahí se apunta esta fila a su propia copia (ver `execute`).
+      image: null,
       hash: source.hash,
       is_archived: false,
       // Marca de COPIA: registra la company de origen (el principal) para que la
@@ -425,7 +460,11 @@ export class CloneProductsToBranchAction {
           sale_price: p.sale_price,
           profit: calculateProfit(p.sale_price, source.cost),
           margin: calculateMargin(p.sale_price, source.cost),
+          // Mismo sale_price y misma tarifa (catálogo global): el desglose
+          // base/IVA se copia tal cual.
           iva_percentage: p.iva_percentage,
+          taxable_base: p.taxable_base,
+          tax_amount: p.tax_amount,
           created_by: actor.fullName,
           created_by_id: String(actor.id),
         })),
@@ -462,9 +501,16 @@ export class CloneProductsToBranchAction {
     productId: string,
   ): Promise<SourcePrice[]> {
     const rows = await manager.query<
-      Array<{ product_id: string; name: string; sale_price: string; iva_percentage: string }>
+      Array<{
+        product_id: string;
+        name: string;
+        sale_price: string;
+        iva_percentage: string;
+        taxable_base: string;
+        tax_amount: string;
+      }>
     >(
-      `SELECT product_id, name, sale_price, iva_percentage
+      `SELECT product_id, name, sale_price, iva_percentage, taxable_base, tax_amount
        FROM product_prices WHERE product_id = $1 ORDER BY id`,
       [productId],
     );
@@ -473,6 +519,8 @@ export class CloneProductsToBranchAction {
       name: r.name,
       sale_price: Number(r.sale_price),
       iva_percentage: Number(r.iva_percentage),
+      taxable_base: Number(r.taxable_base),
+      tax_amount: Number(r.tax_amount),
     }));
   }
 }

@@ -2,7 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 
-import type { JwtPayload, UserType as JwtUserType } from '@/common/types/jwt-payload.type';
+import type {
+  JwtPayload,
+  UserType as JwtUserType,
+  TokenScope,
+} from '@/common/types/jwt-payload.type';
 
 import { bigintToNumber } from './bigint-to-number';
 
@@ -24,6 +28,12 @@ export interface SignTokenInput {
   lastname: string;
   type: JwtUserType;
   account: 'user' | 'employee';
+  /**
+   * Alcance del token. Omitido = `app` (el de siempre, abre todo el API). El
+   * portal de facturación de la landing firma `portal`, que solo vale en las
+   * rutas `@PortalRoute()`.
+   */
+  scope?: TokenScope;
 }
 
 /**
@@ -47,9 +57,16 @@ export class JwtIssuerService {
     // puede representar a un employee ('manager' | 'employee'). Comparar enum
     // vs unión dispara `no-unsafe-enum-comparison`.
     const isOwnerLike = input.type === 'owner' || input.type === 'superadmin';
-    const expiresIn = isOwnerLike
-      ? (this.configService.get<string>('JWT_EXPIRES_OWNER') ?? '7d')
-      : (this.configService.get<string>('JWT_EXPIRES_EMPLOYEE') ?? '1d');
+    // El token del portal vive MUCHO menos que el de la app: se emite en un
+    // navegador (no en el equipo del negocio) y solo sirve para mirar y cambiar
+    // el plan. Una sesión de facturación de una semana en un computador
+    // compartido no le hace ningún favor a nadie.
+    const expiresIn =
+      input.scope === 'portal'
+        ? (this.configService.get<string>('JWT_EXPIRES_PORTAL') ?? '12h')
+        : isOwnerLike
+          ? (this.configService.get<string>('JWT_EXPIRES_OWNER') ?? '7d')
+          : (this.configService.get<string>('JWT_EXPIRES_EMPLOYEE') ?? '1d');
 
     const payload: JwtPayload = {
       user_id: bigintToNumber(
@@ -63,6 +80,9 @@ export class JwtIssuerService {
       lastname: input.lastname,
       type: input.type,
       account: input.account,
+      // Solo se escribe cuando acota: un token `app` sale byte a byte igual que
+      // antes de que existiera el portal.
+      ...(input.scope === 'portal' ? { scope: 'portal' as const } : {}),
     };
 
     // `expiresIn` viene de env como string libre ('7d', '1d', etc). El tipo

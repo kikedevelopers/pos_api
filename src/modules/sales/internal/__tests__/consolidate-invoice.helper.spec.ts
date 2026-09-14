@@ -149,6 +149,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
           unit_price: 10,
           quantity: 2,
           total: 20,
+          profit: 12, // (10 − 4) × 2
           packaging_value: 10,
         },
         {
@@ -158,6 +159,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
           unit_price: 10,
           quantity: 3,
           total: 30,
+          profit: 18, // (10 − 4) × 3
           packaging_value: null,
         },
       ],
@@ -170,7 +172,9 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
     expect(line.quantity).toBe(5);
     expect(line.total).toBe(50);
     expect(line.packaging_value).toBe(10); // conservado del primero
-    expect(line.profit).toBe(30); // (10 - 4) × 5
+    // La ganancia se SUMA de cada línea (12 + 18) en vez de recalcularse con un
+    // solo precio: dos líneas del mismo producto pueden llevar precios distintos.
+    expect(line.profit).toBe(30);
     // El total consolidado refleja la suma (no la última línea sola).
     expect(result!.total).toBe(50);
   });
@@ -468,6 +472,224 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
       expect(stripped.lines[0]).not.toHaveProperty('combo_recipe');
       expect(stripped.lines[0]).toMatchObject({ item_id: 9, quantity: 5 });
       expect(JSON.stringify(stripped)).not.toContain('combo_recipe');
+    });
+  });
+
+  /**
+   * Un producto vendido POR MONTO se registra como `1 × 27.000`. Si después se
+   * le añade producto, la nota débito llega en la unidad real (`499 × 54`).
+   * Fusionar las dos por `product_id` y recalcular `precio × cantidad` daba
+   * `27.000 × 500` = 13.500.000 en una venta de 53.946.
+   *
+   * Las cifras de estos tests son las de las dos ventas reales que salieron
+   * afectadas (PED-2607 y PED-112).
+   */
+  describe('consolidado con precios unitarios distintos en el mismo producto', () => {
+    it('la ND en otra unidad NO se fusiona con la venta por monto', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 47614,
+            description: 'ANIS ESTRELLADO X GRAMO',
+            unit_cost: 46.81,
+            unit_price: 27000,
+            quantity: 1,
+            total: 27000,
+            profit: 26953.19,
+            packaging_value: null,
+          },
+        ],
+        notes: [
+          {
+            id: 15,
+            note_type: NoteType.DEBIT,
+            lines: [
+              {
+                product_id: 47614,
+                description: 'ANIS ESTRELLADO X GRAMO',
+                unit_cost: 46.81,
+                unit_price: 54,
+                quantity: 499,
+                total: 26946,
+                packaging_value: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+
+      // Dos líneas: es lo que de verdad pasó en la venta.
+      expect(result!.lines).toHaveLength(2);
+      // Y el total es el consolidado real, no trece millones y medio.
+      expect(result!.total).toBe(53946);
+      expect(result!.total).not.toBe(13500000);
+    });
+
+    it('PED-112: el mismo caso con otras cifras da 7.968, no 500.000', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 5001,
+            description: 'CONDIMENTO PARA CARNES X GRAMO',
+            unit_cost: 20,
+            unit_price: 4000,
+            quantity: 1,
+            total: 4000,
+            profit: 3980,
+            packaging_value: null,
+          },
+        ],
+        notes: [
+          {
+            id: 2,
+            note_type: NoteType.DEBIT,
+            lines: [
+              {
+                product_id: 5001,
+                description: 'CONDIMENTO PARA CARNES X GRAMO',
+                unit_cost: 20,
+                unit_price: 32,
+                quantity: 124,
+                total: 3968,
+                packaging_value: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+
+      expect(result!.total).toBe(7968);
+      expect(result!.total).not.toBe(500000);
+    });
+
+    it('la ND al MISMO precio sí se acumula en una sola línea', async () => {
+      // El caso normal no puede haberse roto por el arreglo: añadir 3 unidades
+      // más del mismo producto al mismo precio sigue siendo la misma línea.
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'Arroz',
+            unit_cost: 4,
+            unit_price: 10,
+            quantity: 2,
+            total: 20,
+            profit: 12,
+            packaging_value: null,
+          },
+        ],
+        notes: [
+          {
+            id: 5,
+            note_type: NoteType.DEBIT,
+            lines: [
+              {
+                product_id: 100,
+                description: 'Arroz',
+                unit_cost: 4,
+                unit_price: 10,
+                quantity: 3,
+                total: 30,
+                packaging_value: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+
+      expect(result!.lines).toHaveLength(1);
+      expect(result!.lines[0].quantity).toBe(5);
+      expect(result!.total).toBe(50);
+      expect(result!.lines[0].profit).toBe(30);
+    });
+
+    it('la NC en otra unidad descuenta el VALOR, no precio × cantidad', async () => {
+      // Sin el descuento por valor, quitar 100 gramos de una venta por monto
+      // recalcularía con el precio del monto y dejaría un total inventado.
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 47614,
+            description: 'ANIS ESTRELLADO X GRAMO',
+            unit_cost: 46.81,
+            unit_price: 27000,
+            quantity: 500,
+            total: 27000,
+            profit: 3595,
+            packaging_value: null,
+          },
+        ],
+        notes: [
+          {
+            id: 20,
+            note_type: NoteType.CREDIT,
+            lines: [
+              {
+                product_id: 47614,
+                description: 'ANIS ESTRELLADO X GRAMO',
+                unit_cost: 46.81,
+                unit_price: 54,
+                quantity: 100,
+                total: 5400,
+                packaging_value: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+
+      expect(result!.lines).toHaveLength(1);
+      expect(result!.lines[0].quantity).toBe(400);
+      expect(result!.total).toBe(21600); // 27.000 − 5.400
+    });
+
+    it('la NC que se lleva toda la cantidad elimina la línea', async () => {
+      // La anulación total tiene que dejar el consolidado en cero: si la línea
+      // sobreviviera, la venta seguiría contando en los informes.
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'Arroz',
+            unit_cost: 4,
+            unit_price: 10,
+            quantity: 2,
+            total: 20,
+            profit: 12,
+            packaging_value: null,
+          },
+        ],
+        notes: [
+          {
+            id: 21,
+            note_type: NoteType.CREDIT,
+            lines: [
+              {
+                product_id: 100,
+                description: 'Arroz',
+                unit_cost: 4,
+                unit_price: 10,
+                quantity: 2,
+                total: 20,
+                packaging_value: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+
+      expect(result!.lines).toHaveLength(0);
+      expect(result!.total).toBe(0);
     });
   });
 });

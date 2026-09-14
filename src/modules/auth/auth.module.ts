@@ -19,7 +19,11 @@ import { CreateBranchAction } from './actions/create-branch.action';
 import { GetMeAction } from './actions/get-me.action';
 import { GetProfileAction } from './actions/get-profile.action';
 import { ListBranchesAction } from './actions/list-branches.action';
+import { ActivateAccountAction } from './actions/activate-account.action';
+import { IssueActivationTokenAction } from './actions/issue-activation-token.action';
 import { LoginAction } from './actions/login.action';
+import { RequestPasswordResetAction } from './actions/request-password-reset.action';
+import { ResetPasswordAction } from './actions/reset-password.action';
 import { RegisterAction } from './actions/register.action';
 import { SeedCompanyAction } from './actions/seed-company.action';
 import { SetActiveBranchesAction } from './actions/set-active-branches.action';
@@ -84,6 +88,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     // Actions.
     RegisterAction,
     LoginAction,
+    ActivateAccountAction,
+    IssueActivationTokenAction,
+    RequestPasswordResetAction,
+    ResetPasswordAction,
     GetMeAction,
     GetProfileAction,
     CheckEmailAction,
@@ -102,6 +110,20 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   // el panel kdevs-admin REUTILIZANDO exactamente el flujo de registro cloud
   // (paridad total con placepos). `AuthModule` no importa `SuperadminModule`,
   // así que no hay ciclo.
-  exports: [AuthService, RegisterAction],
+  // `IssueActivationTokenAction` se exporta para el reenvío del enlace desde el
+  // panel superadmin: reemitir es exactamente lo mismo que hace el registro, y
+  // duplicar esa lógica sería la forma de que las dos se desincronizaran.
+  // `JwtIssuerService` y `DummyHashService` los consume `PortalModule` para
+  // que el login del portal de facturación verifique credenciales y firme
+  // tokens con EXACTAMENTE la misma maquinaria que el login de la app. Dos
+  // implementaciones de eso terminan divergiendo, y la que se queda corta es la
+  // que deja entrar a quien no debe.
+  exports: [
+    AuthService,
+    RegisterAction,
+    IssueActivationTokenAction,
+    JwtIssuerService,
+    DummyHashService,
+  ],
 })
 export class AuthModule {}

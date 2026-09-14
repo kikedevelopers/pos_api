@@ -10,10 +10,14 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -26,6 +30,13 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
+import { resolveMaxImageSizeBytes } from '@/config/product-images.config';
+import {
+  ProductImageResponseDto,
+  ProductImageSettingsResponseDto,
+  RemoveProductImageResponseDto,
+} from '@/modules/product-images/dto/product-image-response.dto';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import {
   BulkArchiveProductsDto,
@@ -69,7 +80,25 @@ import { ProductsService } from './products.service';
 @ApiBearerAuth('bearer')
 @Controller('inventory')
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  /**
+   * Tope del archivo a nivel de TRANSPORTE.
+   *
+   * Multer guarda el archivo en MEMORIA, así que este número es lo que el API
+   * llega a retener por petición concurrente. Se ata al límite real de negocio
+   * (`PRODUCT_IMAGE_MAX_MB`) y no a un techo holgado: aceptar 32 MB en RAM para
+   * después rechazar por pasarse de 2 MB es regalarle a cualquier cliente
+   * autenticado 16× la memoria que la feature necesita.
+   *
+   * El margen de 1 KB existe para que el archivo que se pasa por poco muera en
+   * `validateImageFile` —con el mensaje que dice cuántos MB se permiten— en vez
+   * de en multer. Lo que se pase de ahí lo corta multer, que ya responde 413.
+   */
+  private static readonly MULTER_IMAGE_CEILING_BYTES = resolveMaxImageSizeBytes() + 1024;
+
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly productImagesService: ProductImagesService,
+  ) {}
 
   @Get()
   @Roles('owner', 'manager', 'employee')
@@ -92,13 +121,36 @@ export class ProductsController {
         parentStockById.set(product.id, Number(product.stock));
       }
     }
-    return products.map((p) => {
+    const dtos = products.map((p) => {
       const parentStock =
         p.parent_id !== null && p.parent_id !== undefined
           ? (parentStockById.get(p.parent_id) ?? null)
           : null;
       return toProductResponseDto(p, parentStock);
     });
+    // Las URLs firmadas se resuelven en UN lote contra el caché en memoria: sin
+    // esto, un catálogo con foto firmaría una URL por producto en cada refresco
+    // y agotaría la cuota de firma de Google.
+    return this.attachImageUrls(dtos, companyId);
+  }
+
+  /**
+   * `GET /inventory/image-settings` — Límites reales de la imagen de producto.
+   *
+   * El front lo usa para dos cosas: mostrar el tope y las dimensiones sugeridas
+   * al usuario, y saber si debe pintar el campo (`enabled: false` cuando el
+   * servidor no tiene bucket). Así el límite se declara UNA vez, en el servidor
+   * que de verdad lo aplica, y el formulario nunca promete algo que el backend
+   * va a rechazar.
+   *
+   * Va antes de `:id` por el orden de matching del router.
+   */
+  @Get('image-settings')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({ summary: 'Límites y recomendaciones para la imagen de un item' })
+  @ApiResponse({ status: HttpStatus.OK, type: ProductImageSettingsResponseDto })
+  getImageSettings(): ProductImageSettingsResponseDto {
+    return this.productImagesService.getSettings();
   }
 
   /**
@@ -227,7 +279,128 @@ export class ProductsController {
       const parent = await this.productsService.findById(Number(product.parent_id), companyId);
       parentStock = parent ? Number(parent.stock) : null;
     }
-    return toProductResponseDto(product, parentStock);
+    const [dto] = await this.attachImageUrls(
+      [toProductResponseDto(product, parentStock)],
+      companyId,
+    );
+    return dto;
+  }
+
+  /**
+   * `POST /inventory/:id/image` — Sube o REEMPLAZA la imagen del item.
+   *
+   * Multipart, campo `image`. Vale igual para producto base, presentación y
+   * combo: los tres son filas de `products`. Una imagen por item — subir otra
+   * reemplaza la anterior, que se borra del bucket (nunca se acumulan).
+   */
+  @Post(':id/image')
+  @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: ProductsController.MULTER_IMAGE_CEILING_BYTES, files: 1 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Subir o reemplazar la imagen de un item del inventario',
+    description:
+      'Multipart form-data con el campo `image`. Formatos JPG/PNG/WebP validados por los bytes ' +
+      'reales del archivo, no por el Content-Type. La imagen anterior se elimina del bucket.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { image: { type: 'string', format: 'binary' } },
+      required: ['image'],
+    },
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: ProductImageResponseDto })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Archivo ausente o formato inválido',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
+  @ApiResponse({ status: HttpStatus.PAYLOAD_TOO_LARGE, description: 'La imagen supera el límite' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'El producto está archivado',
+  })
+  @ApiResponse({
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    description: 'Almacenamiento de imágenes no configurado',
+  })
+  async uploadImage(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<ProductImageResponseDto> {
+    return this.productImagesService.upload({
+      productId: id,
+      companyId,
+      file,
+      actor: {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      },
+    });
+  }
+
+  /**
+   * `POST /inventory/:id/image/remove` — Quita la imagen del item y la borra
+   * del bucket. Idempotente (`removed: false` si no tenía).
+   *
+   * Es POST y no DELETE por la regla §9.9 del proyecto: el API no expone verbo
+   * DELETE.
+   */
+  @Post(':id/image/remove')
+  @Roles('owner', 'manager')
+  @RequirePermission('canAccessInventory')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Quitar la imagen de un item del inventario' })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiResponse({ status: HttpStatus.OK, type: RemoveProductImageResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Producto no encontrado' })
+  async removeImage(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<RemoveProductImageResponseDto> {
+    return this.productImagesService.remove({
+      productId: id,
+      companyId,
+      actor: {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      },
+    });
+  }
+
+  /**
+   * Puebla `image_url` (URL firmada) a partir de la ruta guardada en `image`.
+   *
+   * Se hace en lote y sobre el resultado ya mapeado. Un producto cuya URL no se
+   * pudo firmar viaja con `image_url: null` y el front pinta el placeholder: el
+   * listado del inventario no puede caerse porque el bucket esté indispuesto.
+   */
+  private async attachImageUrls(
+    dtos: ProductResponseDto[],
+    companyId: number,
+  ): Promise<ProductResponseDto[]> {
+    const urls = await this.productImagesService.resolveUrls(
+      dtos.map((dto) => dto.image),
+      companyId,
+    );
+    if (urls.size === 0) {
+      return dtos;
+    }
+    for (const dto of dtos) {
+      dto.image_url = dto.image ? (urls.get(dto.image) ?? null) : null;
+    }
+    return dtos;
   }
 
   @Get(':id/sales-history')

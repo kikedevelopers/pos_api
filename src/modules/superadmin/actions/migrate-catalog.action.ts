@@ -516,8 +516,8 @@ export class MigrateCatalogAction {
         await runner.query(
           `INSERT INTO product_prices
              (company_id, product_id, name, sale_price, profit, margin, iva_percentage,
-              created_by, created_by_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              taxable_base, tax_amount, created_by, created_by_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             companyId,
             productId,
@@ -526,6 +526,10 @@ export class MigrateCatalogAction {
             row.profit,
             row.margin,
             row.iva_percentage,
+            // Migración legacy (sin FE): toda la venta es base, IVA 0. Mantiene
+            // la invariante base + iva = sale_price.
+            row.sale_price,
+            0,
             opts.owner.name,
             opts.owner.id,
           ],

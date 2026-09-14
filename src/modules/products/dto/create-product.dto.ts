@@ -138,15 +138,10 @@ export class CreateProductDto {
   @Min(0, { message: 'packaging_value debe ser >= 0' })
   packaging_value?: number;
 
-  @ApiPropertyOptional({
-    example: 'https://cdn.example.com/product.jpg',
-    nullable: true,
-    maxLength: 500,
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  image?: string | null;
+  // NOTA: `image` NO se acepta en el payload. La imagen es un archivo que se
+  // sube aparte (`POST /inventory/:id/image`) y la columna guarda la ruta del
+  // objeto en el bucket, que escribe solo el servidor. Dejar que el cliente la
+  // escribiera le permitiría apuntar un producto al archivo de otro tenant.
 
   @ApiPropertyOptional({ example: true, default: true })
   @IsOptional()
@@ -172,6 +167,19 @@ export class CreateProductDto {
   @IsInt({ message: 'category_id debe ser entero' })
   @Min(1, { message: 'category_id debe ser >= 1' })
   category_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: null,
+    nullable: true,
+    description:
+      'ID de la tarifa de IVA del catálogo (tax_rates). Solo aplica a facturadores ' +
+      'electrónicos. null = sin definir (se trata como Exento).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'tax_rate_id debe ser entero' })
+  @Min(1, { message: 'tax_rate_id debe ser >= 1' })
+  tax_rate_id?: number | null;
 
   @ApiPropertyOptional({
     example: 'a1b2c3d4',

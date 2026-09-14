@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
+
 import {
   CloseCashAction,
   type CloseCashActor,
@@ -45,10 +47,29 @@ export class PosDataService {
     private readonly transferCash: TransferCashAction,
     private readonly closeCash: CloseCashAction,
     private readonly getCashSummary: GetCashSummaryAction,
+    private readonly productImages: ProductImagesService,
   ) {}
 
-  items(companyId: number): Promise<PosItem[]> {
-    return this.getItems.execute(companyId);
+  /**
+   * Items del POS con su imagen ya resuelta.
+   *
+   * Las URLs se firman en UN lote contra el caché en memoria: el POS refresca
+   * este listado con frecuencia y firmar una URL por producto en cada refresco
+   * agotaría la cuota de firma de Google en minutos.
+   */
+  async items(companyId: number): Promise<PosItem[]> {
+    const items = await this.getItems.execute(companyId);
+    const urls = await this.productImages.resolveUrls(
+      items.map((item) => item.image),
+      companyId,
+    );
+    if (urls.size === 0) {
+      return items;
+    }
+    for (const item of items) {
+      item.image_url = item.image ? (urls.get(item.image) ?? null) : null;
+    }
+    return items;
   }
 
   customers(companyId: number): Promise<PosCustomer[]> {

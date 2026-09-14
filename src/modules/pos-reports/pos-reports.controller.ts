@@ -15,6 +15,7 @@ import type {
   ComparativeByDayResult,
   ComparativeReportResult,
   DashboardSalesResult,
+  SalesMonthsResult,
   SalesReportResult,
 } from './pos-reports.service';
 
@@ -52,6 +53,26 @@ export class PosReportsController {
     // reporte de ventas, pero solo sus propios tickets (filtro por
     // created_by_id en el action). owner/manager ven todo.
     return this.posReportsService.getSalesReport(companyId, query, actor);
+  }
+
+  // Declarado ANTES de otras rutas de `sales` por prolijidad: son rutas fijas y
+  // no colisionan, pero el orden deja explícito que `sales/months` es propia.
+  @Get('sales/months')
+  @Roles('owner', 'manager', 'employee')
+  // Extracto mensual: SOLO owner y rol Administrador. `canAccessSettings` es el
+  // criterio que el proyecto ya usa para "es administrador" (el Administrador es
+  // el único rol de fábrica que lo trae, y es inmutable; Cajero y Vendedor no).
+  // El owner pasa siempre, sin depender del array de permisos.
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Meses con ventas (por fecha de venta, hora Colombia) para el extracto mensual.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  salesMonths(
+    @CurrentCompany() companyId: number,
+    @CurrentUser() actor: AuthUser,
+  ): Promise<SalesMonthsResult> {
+    return this.posReportsService.getSalesMonths(companyId, actor);
   }
 
   @Get('dashboard-sales')

@@ -132,6 +132,16 @@ export class SuperadminTenantBranchesDto {
 }
 
 /**
+ * Estado de la Facturación Electrónica del negocio. La FE no viene activa: se
+ * habilita desde el panel. El proceso de FE lo ejecuta el API externo (APIDIAN);
+ * aquí solo se refleja el interruptor.
+ */
+export class SuperadminTenantElectronicBillingDto {
+  @ApiProperty({ example: false, description: 'FE habilitada para el negocio.' })
+  enabled!: boolean;
+}
+
+/**
  * Respuesta de `GET /superadmin/tenants/:companyId`.
  */
 export class SuperadminTenantDetailDto {
@@ -168,4 +178,7 @@ export class SuperadminTenantDetailDto {
 
   @ApiPropertyOptional({ type: SuperadminTenantBranchesDto, nullable: true })
   branches!: SuperadminTenantBranchesDto | null;
+
+  @ApiProperty({ type: SuperadminTenantElectronicBillingDto })
+  electronicBilling!: SuperadminTenantElectronicBillingDto;
 }

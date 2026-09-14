@@ -3,6 +3,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
+import { ProductImagesService } from '@/modules/product-images/product-images.service';
 
 import { DuplicateProductAction } from '../actions/duplicate-product.action';
 import { ComboComponent } from '../entities/combo-component.entity';
@@ -33,6 +34,12 @@ interface Harness {
   /** Filas insertadas en `combo_components`. */
   insertedComponents: () => Array<Partial<ComboComponent>>;
   transactionCount: () => number;
+  /** Argumentos con los que se pidió copiar el ARCHIVO de la imagen. */
+  imageCopyCalls: () => Array<{
+    sourceImage: string | null;
+    targetProductId: number;
+    targetCompanyId: number;
+  }>;
 }
 
 interface HarnessOptions {
@@ -127,10 +134,18 @@ async function buildHarness(options: HarnessOptions): Promise<Harness> {
     cb(managerMock),
   );
 
+  // Doble del servicio de imágenes: devuelve la ruta NUEVA que tendría la
+  // copia del archivo en el bucket.
+  const copyTo = jest.fn(
+    (params: { sourceImage: string | null; targetProductId: number; targetCompanyId: number }) =>
+      Promise.resolve(`inventory_items/${params.targetCompanyId}/${params.targetProductId}-cp.png`),
+  );
+
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       DuplicateProductAction,
       { provide: DataSource, useValue: { transaction: transactionSpy } },
+      { provide: ProductImagesService, useValue: { copyTo } },
     ],
   }).compile();
 
@@ -140,6 +155,7 @@ async function buildHarness(options: HarnessOptions): Promise<Harness> {
     insertedPrices: () => insertedPrices,
     insertedComponents: () => insertedComponents,
     transactionCount: () => transactionSpy.mock.calls.length,
+    imageCopyCalls: () => copyTo.mock.calls.map(([params]) => params),
   };
 }
 
@@ -157,7 +173,7 @@ const BASE_SOURCE: Partial<Product> = {
   category_id: '5',
   cost: 41500,
   stock: 120,
-  image: 'data:image/png;base64,AAA',
+  image: 'inventory_items/42/7-abc123.png',
   show_in_pos: true,
   is_purchasable: true,
   is_archived: false,
@@ -191,7 +207,7 @@ describe('DuplicateProductAction · qué se copia', () => {
     expect(h.createdInput().stock).toBe(0);
   });
 
-  it('hereda costo, categoría, empaque, descripción, imagen y flags', async () => {
+  it('hereda costo, categoría, empaque, descripción y flags', async () => {
     const h = await buildHarness({ source: BASE_SOURCE });
     await h.action.execute(7, COMPANY_ID, ACTOR);
     expect(h.createdInput()).toMatchObject({
@@ -199,12 +215,41 @@ describe('DuplicateProductAction · qué se copia', () => {
       category_id: '5',
       packaging_id: '3',
       description: 'Arroz blanco de primera',
-      image: 'data:image/png;base64,AAA',
       show_in_pos: true,
       is_purchasable: true,
       product_type: ProductType.SIMPLE,
       is_archived: false,
     });
+  });
+
+  it('la fila nace SIN ruta de imagen: el archivo se copia después del commit', async () => {
+    const h = await buildHarness({ source: BASE_SOURCE });
+    await h.action.execute(7, COMPANY_ID, ACTOR);
+    // Copiar el string dejaría dos productos apuntando al MISMO objeto: quitar
+    // la imagen en uno borraría la del otro.
+    expect(h.createdInput().image).toBeNull();
+  });
+
+  it('duplica el ARCHIVO de la imagen a una ruta propia de la copia', async () => {
+    const h = await buildHarness({ source: BASE_SOURCE });
+    const copy = await h.action.execute(7, COMPANY_ID, ACTOR);
+
+    expect(h.imageCopyCalls()).toEqual([
+      {
+        sourceImage: 'inventory_items/42/7-abc123.png',
+        targetProductId: 100,
+        targetCompanyId: COMPANY_ID,
+      },
+    ]);
+    expect(copy.image).toBe('inventory_items/42/100-cp.png');
+  });
+
+  it('un original SIN imagen no dispara ninguna copia en el bucket', async () => {
+    const h = await buildHarness({ source: { ...BASE_SOURCE, image: null } });
+    const copy = await h.action.execute(7, COMPANY_ID, ACTOR);
+
+    expect(h.imageCopyCalls()).toHaveLength(0);
+    expect(copy.image).toBeNull();
   });
 
   it('respeta los flags en false del original (no los fuerza a default)', async () => {

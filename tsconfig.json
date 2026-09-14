@@ -27,6 +27,10 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "useDefineForClassFields": false,
+    // Plantillas de correo con React Email (`src/modules/mail/emails/*.tsx`).
+    // `react-jsx` no obliga a importar React en cada archivo; el resto del
+    // proyecto sigue siendo NestJS puro y no se ve afectado.
+    "jsx": "react-jsx",
     "paths": {
       "@/*": ["src/*"]
     }

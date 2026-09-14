@@ -115,25 +115,63 @@ export interface AdjustmentTotals {
 }
 
 /**
+ * Identidad de una línea consolidada: el producto Y su precio unitario.
+ *
+ * Agrupar solo por producto fusionaba líneas que no son la misma cosa. El caso
+ * real: un producto que se vende POR MONTO queda registrado como `1 × 27.000`,
+ * y la nota débito que le añade producto viene en gramos, `499 × 54`. Con la
+ * clave por producto las dos caían en la misma entrada y el total se recalculaba
+ * como `27.000 × 500` = **13.500.000** para una venta de 53.946 — el ticket que
+ * el dueño veía en trece millones y medio. Lo mismo dejaba PED-112 en 500.000.
+ *
+ * Con el precio dentro de la clave, dos líneas del mismo producto al MISMO
+ * precio se siguen consolidando (que es lo que arregló la regresión de las
+ * ventas con la misma referencia repetida) y las de precio distinto conviven
+ * como líneas separadas, que es lo que de verdad pasó en la venta.
+ */
+const lineKey = (itemId: number, price: number): string =>
+  `${itemId}|${preciseNumber(toBig(price), 2)}`;
+
+/**
  * Aplica una línea de NC (CREDIT) sobre el mapa vivo: resta cantidad o
  * elimina la línea si queda en 0.
  */
 function applyCreditAdjustment(
-  linesMap: Map<number, ConsolidatedLine>,
+  linesMap: Map<string, ConsolidatedLine>,
   noteLine: NoteSnapshot['lines'][number],
 ): void {
-  const existing = linesMap.get(noteLine.item_id);
-  if (!existing) {
+  const key = lineKey(noteLine.item_id, noteLine.price);
+  let targetKey: string | undefined = linesMap.has(key) ? key : undefined;
+  if (targetKey === undefined) {
+    // La nota no casa en precio con ninguna línea viva (nota antigua, o precio
+    // editado entre medias). Antes de descartarla se busca el producto: dejar
+    // de aplicarla la haría desaparecer del consolidado y la venta quedaría
+    // reportada por un valor que ya nadie le cobró.
+    for (const [k, line] of linesMap) {
+      if (line.item_id === noteLine.item_id) {
+        targetKey = k;
+        break;
+      }
+    }
+  }
+  const existing = targetKey === undefined ? undefined : linesMap.get(targetKey);
+  if (!existing || targetKey === undefined) {
     return;
   }
   const newQty = new Big(existing.quantity).minus(noteLine.quantity).toNumber();
   if (newQty <= 0) {
-    linesMap.delete(noteLine.item_id);
+    linesMap.delete(targetKey);
     return;
   }
   existing.quantity = newQty;
-  existing.total = preciseNumber(new Big(existing.price).times(newQty), 2);
-  existing.profit = preciseNumber(new Big(existing.price).minus(existing.cost).times(newQty), 2);
+  // Se resta el VALOR de la nota, no `precio × cantidad`: cuando la nota vino
+  // con otro precio unitario, recalcular con el de la línea inventa una cifra
+  // que nadie facturó. Con precios iguales las dos formas dan lo mismo.
+  existing.total = preciseNumber(new Big(existing.total).minus(noteLine.total), 2);
+  existing.profit = preciseNumber(
+    new Big(existing.profit).minus(new Big(noteLine.price).minus(noteLine.cost).times(noteLine.quantity)),
+    2,
+  );
 }
 
 /**
@@ -141,15 +179,21 @@ function applyCreditAdjustment(
  * entrada.
  */
 function applyDebitAdjustment(
-  linesMap: Map<number, ConsolidatedLine>,
+  linesMap: Map<string, ConsolidatedLine>,
   noteLine: NoteSnapshot['lines'][number],
 ): void {
-  const existing = linesMap.get(noteLine.item_id);
+  const key = lineKey(noteLine.item_id, noteLine.price);
+  const existing = linesMap.get(key);
   if (existing) {
-    const newQty = new Big(existing.quantity).plus(noteLine.quantity).toNumber();
-    existing.quantity = newQty;
-    existing.total = preciseNumber(new Big(existing.price).times(newQty), 2);
-    existing.profit = preciseNumber(new Big(existing.price).minus(existing.cost).times(newQty), 2);
+    // Misma referencia al mismo precio: es la misma línea, se acumula.
+    existing.quantity = new Big(existing.quantity).plus(noteLine.quantity).toNumber();
+    existing.total = preciseNumber(new Big(existing.total).plus(noteLine.total), 2);
+    existing.profit = preciseNumber(
+      new Big(existing.profit).plus(
+        new Big(noteLine.price).minus(noteLine.cost).times(noteLine.quantity),
+      ),
+      2,
+    );
     return;
   }
   const profit = preciseNumber(
@@ -163,7 +207,7 @@ function applyDebitAdjustment(
           4,
         )
       : 0;
-  linesMap.set(noteLine.item_id, {
+  linesMap.set(key, {
     item_id: noteLine.item_id,
     name: noteLine.name,
     cost: noteLine.cost,
@@ -188,28 +232,27 @@ function buildConsolidatedLines(
   originalLines: ConsolidatedLine[],
   notes: NoteSnapshot[],
 ): ConsolidatedLine[] {
-  const linesMap = new Map<number, ConsolidatedLine>();
+  const linesMap = new Map<string, ConsolidatedLine>();
   for (const line of originalLines) {
-    const existing = linesMap.get(line.item_id);
+    const key = lineKey(line.item_id, line.price);
+    const existing = linesMap.get(key);
     if (!existing) {
-      linesMap.set(line.item_id, { ...line });
+      linesMap.set(key, { ...line });
       continue;
     }
     // REGRESIÓN-FIX: una venta puede tener 2+ líneas del MISMO product_id. Antes
     // la 2ª pisaba a la 1ª (set sobrescribe) → al enrutar el void/edición por el
     // consolidado se sub-retornaba inventario y la NC quedaba con total menor. Se
     // CONSOLIDAN sumando cantidad y total con Big.js (el motor de inventario ya
-    // agregaba por target; aquí lo igualamos a nivel línea). profit recalculado;
-    // packaging_value: se conserva el ya fijado (snapshot congelado), o se toma el
-    // de la nueva línea si el acumulado aún no tenía uno.
+    // agregaba por target; aquí lo igualamos a nivel línea). profit se suma en
+    // vez de recalcularse con un solo precio; packaging_value: se conserva el ya
+    // fijado (snapshot congelado), o se toma el de la nueva línea si el
+    // acumulado aún no tenía uno.
     const mergedQty = new Big(existing.quantity).plus(line.quantity);
     const mergedTotal = new Big(existing.total).plus(line.total);
     existing.quantity = mergedQty.toNumber();
     existing.total = preciseNumber(mergedTotal, 2);
-    existing.profit = preciseNumber(
-      new Big(existing.price).minus(existing.cost).times(mergedQty),
-      2,
-    );
+    existing.profit = preciseNumber(new Big(existing.profit).plus(line.profit), 2);
     if (existing.packaging_value === null || existing.packaging_value === undefined) {
       existing.packaging_value = line.packaging_value;
     }

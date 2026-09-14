@@ -228,7 +228,12 @@ export class GetDashboardSalesAction {
           ticketNumber: note.note_number,
           saleNumber: null,
           originalTotal: Number(note.total),
-          consolidatedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
+          // La factura ya viene consolidada (ver `consolidated_total` en la
+        // query), así que la nota se lista pero aporta 0: sumar su valor otra
+        // vez restaba dos veces la misma nota. El firmado queda disponible
+        // aparte para poder mostrarlo en la fila.
+        consolidatedTotal: 0,
+        signedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
           cost: Number(note.note_cost) || 0,
           profit: note.note_type === 'CREDIT' ? -noteProfit : noteProfit,
           margin: noteMargin,
@@ -257,7 +262,12 @@ export class GetDashboardSalesAction {
         ticketNumber: note.note_number,
         saleNumber: null,
         originalTotal: Number(note.total),
-        consolidatedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
+        // La factura ya viene consolidada (ver `consolidated_total` en la
+        // query), así que la nota se lista pero aporta 0: sumar su valor otra
+        // vez restaba dos veces la misma nota. El firmado queda disponible
+        // aparte para poder mostrarlo en la fila.
+        consolidatedTotal: 0,
+        signedTotal: note.note_type === 'CREDIT' ? -Number(note.total) : Number(note.total),
         cost: Number(note.note_cost) || 0,
         profit: note.note_type === 'CREDIT' ? -noteProfit : noteProfit,
         margin: noteMargin,

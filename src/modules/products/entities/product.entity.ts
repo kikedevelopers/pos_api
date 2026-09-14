@@ -15,6 +15,7 @@ import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { Category } from '@/modules/categories/entities/category.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
+import { TaxRate } from '@/modules/taxes/entities/tax-rate.entity';
 
 import { ProductPrice } from './product-price.entity';
 
@@ -160,6 +161,23 @@ export class Product {
   category!: Category | null;
 
   /**
+   * FK al catálogo global `tax_rates` — tarifa de IVA del producto (solo
+   * relevante cuando el negocio es facturador electrónico). `null` = sin
+   * definir; la UI lo trata como Exento. La tarifa de aquí desglosa la base y el
+   * IVA de cada `product_price`. ON DELETE RESTRICT: el catálogo es permanente.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  tax_rate_id!: string | null;
+
+  @ManyToOne(() => TaxRate, {
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'tax_rate_id' })
+  tax_rate!: TaxRate | null;
+
+  /**
    * Costo unitario. numeric(15,2). Dentro del service, vuélvelo a `Big`
    * antes de calcular profit/margin.
    */
@@ -208,8 +226,24 @@ export class Product {
   @Column({ type: 'text', nullable: true })
   hash!: string | null;
 
+  /**
+   * RUTA del objeto en Google Cloud Storage
+   * (`inventory_items/<company_id>/<product_id>-<rnd>.<ext>`), no una URL: la
+   * URL se firma al leer y caduca, así que persistirla sería guardar un dato
+   * con fecha de vencimiento. La escribe SOLO el servidor (módulo
+   * `product-images`); ningún cliente la manda en el payload.
+   */
   @Column({ type: 'text', nullable: true })
   image!: string | null;
+
+  /**
+   * Instante a partir del cual la imagen puede borrarse del bucket. Se marca al
+   * ARCHIVAR el producto (hoy + los días de retención configurados) y un cron
+   * diario limpia lo vencido. `null` = sin purga programada, que es el estado de
+   * todo producto activo.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  image_purge_at!: Date | null;
 
   /**
    * Si el producto es una COPIA (clonada a una sucursal), la company de ORIGEN

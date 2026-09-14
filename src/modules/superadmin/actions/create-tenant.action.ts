@@ -45,7 +45,9 @@ export class CreateTenantAction {
       from_offline_migration: false,
     };
 
-    const result = await this.registerAction.execute(registerDto);
+    // `skipActivation`: el operador ya validó al cliente; obligarlo a un correo
+    // de ida y vuelta solo estorbaría. La cuenta nace activa y lista para entrar.
+    const result = await this.registerAction.execute(registerDto, { skipActivation: true });
     const ownerId = Number(result.user.id);
 
     // `RegisterAction` ya creó company + owner + suscripción en su transacción.

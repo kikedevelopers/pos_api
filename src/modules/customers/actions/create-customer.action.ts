@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+
 import type { CreateCustomerDto } from '../dto/create-customer.dto';
 import { Customer, PersonType } from '../entities/customer.entity';
+import { extractFiscalFields, hasAnyFiscalField } from '../internal/customer-fiscal.helper';
 
 /**
  * Datos del actor (User u Employee) que el controller propaga al action.
@@ -43,6 +46,13 @@ export class CreateCustomerAction {
     createdBy: CustomerCreator,
   ): Promise<Customer> {
     const saved = await this.dataSource.transaction<Customer>(async (manager) => {
+      // Guardar identidad fiscal es una operación de FE: se revalida contra la
+      // BD (el flag del front puede estar rancio en la SPA). Si el negocio no
+      // tiene FE activa AHORA, 403 con código estable.
+      if (hasAnyFiscalField(dto)) {
+        await assertElectronicBillingEnabled(manager, companyId);
+      }
+
       const customer = manager.create(Customer, {
         company_id: String(companyId),
         person_type: dto.person_type ?? PersonType.INDIVIDUAL,
@@ -51,6 +61,7 @@ export class CreateCustomerAction {
         phone: dto.phone?.trim() || null,
         doc_number: dto.doc_number?.trim() || null,
         address: dto.address?.trim() || null,
+        ...extractFiscalFields(dto),
         // balance NO viene del DTO. Se fija a 0 en el create. Mutación en
         // fases 6/8/9.
         balance: 0,

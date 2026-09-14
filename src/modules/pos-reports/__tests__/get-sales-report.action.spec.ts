@@ -15,6 +15,7 @@ const OWNER: AuthUser = {
   lastname: 'Test',
   type: 'owner',
   account: 'user',
+  scope: 'app',
 };
 
 const EMPLOYEE: AuthUser = {
@@ -24,6 +25,7 @@ const EMPLOYEE: AuthUser = {
   lastname: 'Test',
   type: 'employee',
   account: 'user',
+  scope: 'app',
 };
 
 /**

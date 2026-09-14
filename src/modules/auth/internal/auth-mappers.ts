@@ -147,5 +147,9 @@ export function companyToCompanyProfileItemDto(
     updated_at: company.updated_at.toISOString(),
     // Estado de la membresía del owner para esta company (multi-sucursal).
     is_active: isActive,
+    // Facturación Electrónica: si el negocio la tiene habilitada. Viaja en el
+    // perfil para que el cliente sepa desde el login si mostrar la UI fiscal
+    // (select de IVA, desglose por precio). Default false por resiliencia.
+    electronic_billing_enabled: company.electronic_billing_enabled ?? false,
   };
 }

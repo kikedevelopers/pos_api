@@ -11,6 +11,8 @@ function build(userOverrides: Record<string, unknown> = {}) {
     email: 'cesar@hotmail.com',
     password: 'argon-hash',
     type: 'owner',
+    // Cuenta ya activada: el flujo de activación no es lo que se prueba aquí.
+    activated_at: new Date('2026-01-01T00:00:00.000Z'),
     ...userOverrides,
   };
   const updateFn = jest.fn().mockResolvedValue(undefined);

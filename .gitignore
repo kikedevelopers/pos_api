@@ -62,3 +62,6 @@ ormconfig.json
 
 # Notas de trabajo de auditoría PlacePos vs pos_api
 .audit-placepos/
+
+# Preview server de React Email (`pnpm email:dev`): caché de compilación.
+.react-email/

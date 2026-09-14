@@ -11,6 +11,8 @@ import { UsersModule } from '@/modules/users/users.module';
 
 import { ClearTenantInventoryAction } from './actions/clear-tenant-inventory.action';
 import { CreateTenantAction } from './actions/create-tenant.action';
+import { ProductImagesModule } from '@/modules/product-images/product-images.module';
+
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
@@ -18,8 +20,10 @@ import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action'
 import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
 import { MigrateCatalogAction } from './actions/migrate-catalog.action';
+import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction } from './actions/update-branches.action';
+import { UpdateElectronicBillingAction } from './actions/update-electronic-billing.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
@@ -46,6 +50,8 @@ import { SuperadminController } from './superadmin.controller';
  */
 @Module({
   imports: [
+    // Para limpiar del bucket las imágenes de un tenant que se borra.
+    ProductImagesModule,
     UsersModule,
     AuthModule,
     CompaniesModule,
@@ -60,10 +66,12 @@ import { SuperadminController } from './superadmin.controller';
     GetTenantDetailAction,
     UpdateSubscriptionAction,
     UpdateBranchesAction,
+    UpdateElectronicBillingAction,
     DeleteTenantAction,
     CreateTenantAction,
     UpdateTenantOwnerAction,
     ResetTenantOwnerPasswordAction,
+    ResendActivationAction,
     UpdateTenantCompanyAction,
     ExportTenantAction,
     ImportTenantAction,
