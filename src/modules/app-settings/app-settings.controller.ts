@@ -16,11 +16,13 @@ import { GetCustomerPointsAction } from './actions/get-customer-points.action';
 import { GetIncludeOrdersInReportsAction } from './actions/get-include-orders-in-reports.action';
 import { GetPosMarginsAction } from './actions/get-pos-margins.action';
 import { GetShowAllBaseProductsInPurchasesAction } from './actions/get-show-all-base-products-in-purchases.action';
+import { GetShowDailyQuotaBarAction } from './actions/get-show-daily-quota-bar.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
 import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.action';
 import { UpsertIncludeOrdersInReportsAction } from './actions/upsert-include-orders-in-reports.action';
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertShowAllBaseProductsInPurchasesAction } from './actions/upsert-show-all-base-products-in-purchases.action';
+import { UpsertShowDailyQuotaBarAction } from './actions/upsert-show-daily-quota-bar.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
@@ -34,6 +36,10 @@ import {
   ShowAllBaseProductsInPurchasesConfigDto,
   UpdateShowAllBaseProductsInPurchasesDto,
 } from './dto/show-all-base-products-in-purchases.dto';
+import {
+  ShowDailyQuotaBarConfigDto,
+  UpdateShowDailyQuotaBarDto,
+} from './dto/show-daily-quota-bar.dto';
 import { StrictInventoryConfigDto, UpdateStrictInventoryDto } from './dto/strict-inventory.dto';
 import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
 
@@ -75,6 +81,8 @@ export class AppSettingsController {
     private readonly upsertIncludeOrdersInReportsAction: UpsertIncludeOrdersInReportsAction,
     private readonly getShowAllBaseProductsInPurchasesAction: GetShowAllBaseProductsInPurchasesAction,
     private readonly upsertShowAllBaseProductsInPurchasesAction: UpsertShowAllBaseProductsInPurchasesAction,
+    private readonly getShowDailyQuotaBarAction: GetShowDailyQuotaBarAction,
+    private readonly upsertShowDailyQuotaBarAction: UpsertShowDailyQuotaBarAction,
   ) {}
 
   // ----------------------------------------------------------------------
@@ -247,6 +255,42 @@ export class AppSettingsController {
     @CurrentCompany() companyId: number,
   ): Promise<ShowAllBaseProductsInPurchasesConfigDto> {
     return this.upsertShowAllBaseProductsInPurchasesAction.execute(dto, companyId);
+  }
+
+  @Get('show-daily-quota-bar')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Flag «mostrar barra de cuota diaria en el POS»',
+    description:
+      'Devuelve `{ enabled }` desde la key `show_daily_quota_bar`. Cuando está activo, el POS muestra la barra de progreso de la cuota diaria (semáforo) a los admins.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: ShowDailyQuotaBarConfigDto })
+  async getShowDailyQuotaBar(
+    @CurrentCompany() companyId: number,
+  ): Promise<ShowDailyQuotaBarConfigDto> {
+    return this.getShowDailyQuotaBarAction.execute(companyId);
+  }
+
+  @Put('show-daily-quota-bar')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set flag «mostrar barra de cuota diaria en el POS»',
+    description: 'Solo un administrador (canAccessSettings) puede activar o desactivar la barra.',
+  })
+  @ApiBody({ type: UpdateShowDailyQuotaBarDto })
+  @ApiResponse({ status: HttpStatus.OK, type: ShowDailyQuotaBarConfigDto })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Solo un administrador puede modificar esta configuración',
+  })
+  async upsertShowDailyQuotaBar(
+    @Body() dto: UpdateShowDailyQuotaBarDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<ShowDailyQuotaBarConfigDto> {
+    return this.upsertShowDailyQuotaBarAction.execute(dto, companyId);
   }
 
   // ----------------------------------------------------------------------

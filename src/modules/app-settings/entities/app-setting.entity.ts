@@ -33,6 +33,10 @@ export const APP_SETTING_KEYS = {
   // compras, saltándose la validación de `is_purchasable`. Aditivo: nunca
   // esconde lo que ya aparecía. Default false (comportamiento actual).
   SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES: 'show_all_base_products_in_purchases',
+  // Mostrar la barra de progreso de la CUOTA DIARIA en el POS. Solo la ven los
+  // admins (owner o empleado con rol admin, vía canAccessSettings). Default
+  // false: la barra viene oculta hasta que un admin la active.
+  SHOW_DAILY_QUOTA_BAR: 'show_daily_quota_bar',
   // Sistema de PUNTOS de cliente (paridad PlacePos `customerPointsSettings`).
   // 3 keys: flag + base de pesos + puntos por base.
   CUSTOMER_POINTS_ENABLED: 'customer_points_enabled',
