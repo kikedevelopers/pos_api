@@ -35,6 +35,8 @@ const SETTINGS_ENDPOINTS: ControllerMethod[] = [
   'upsertCustomerPoints',
   'getIncludeOrdersInReports',
   'upsertIncludeOrdersInReports',
+  'getShowDailyQuotaBar',
+  'upsertShowDailyQuotaBar',
   'findAll',
   'findOne',
   'upsert',

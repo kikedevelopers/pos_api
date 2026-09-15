@@ -36,7 +36,7 @@ describe('CreateDefaultAppSettingsAction', () => {
       createdBy: { id: 7, fullName: 'Kike Pacheco' },
     });
 
-    expect(createdRows).toHaveLength(4);
+    expect(createdRows).toHaveLength(5);
 
     const map = new Map(createdRows.map((r) => [r.key, r.value]));
     expect(map.get(APP_SETTING_KEYS.APP_COLOR_MODE)).toBe('white');
@@ -45,6 +45,7 @@ describe('CreateDefaultAppSettingsAction', () => {
     // como siempre hasta que alguien los active a conciencia.
     expect(map.get(APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS)).toBe('false');
     expect(map.get(APP_SETTING_KEYS.SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES)).toBe('false');
+    expect(map.get(APP_SETTING_KEYS.SHOW_DAILY_QUOTA_BAR)).toBe('false');
 
     for (const row of createdRows) {
       expect(row.company_id).toBe('42');
