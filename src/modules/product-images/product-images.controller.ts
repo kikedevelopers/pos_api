@@ -89,6 +89,13 @@ export class ProductImagesController {
     // cada imagen nueva. Cachear agresivo en el navegador es seguro.
     res.setHeader('Content-Type', contentTypeForObject(objectName));
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    // helmet pone Cross-Origin-Resource-Policy: same-origin por defecto, lo que
+    // bloquea embeber esta imagen desde el <img> del renderer (otro origen:
+    // file://app). Como la imagen ya está autorizada por la firma, se marca
+    // `cross-origin` SOLO en esta respuesta para permitir el embed. Sin esto:
+    // net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin (la respuesta llega 200 pero el
+    // navegador la descarta).
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
     stream.on('error', (err: NodeJS.ErrnoException) => {
       // Objeto ausente o lectura fallida. Si aún no se enviaron cabeceras, 404;

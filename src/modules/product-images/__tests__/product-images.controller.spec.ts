@@ -92,13 +92,15 @@ describe('ProductImagesController · serve', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('firma válida: setea Content-Type + cache y hace pipe del stream', () => {
+  it('firma válida: setea Content-Type + cache + CORP y hace pipe del stream', () => {
     const { controller, stream } = buildController({ verifyOk: true });
     const res = fakeResponse();
     controller.serve(OBJECT, '123', 'sig', res);
 
     expect(res.getHeader('Content-Type')).toBe('image/jpeg');
     expect(res.getHeader('Cache-Control')).toContain('immutable');
+    // Sobrescribe el same-origin de helmet para permitir el <img> cross-origin.
+    expect(res.getHeader('Cross-Origin-Resource-Policy')).toBe('cross-origin');
     expect(stream.piped).toBe(res);
   });
 
