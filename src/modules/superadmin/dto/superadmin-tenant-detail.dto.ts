@@ -142,6 +142,52 @@ export class SuperadminTenantElectronicBillingDto {
 }
 
 /**
+ * Estado de activación (confirmación del correo) del owner de la cuenta.
+ *
+ * Es del OWNER, no de cada company: una sucursal hereda el estado del negocio
+ * principal. `canResend` va siempre en `false` en una sucursal porque el correo
+ * se reenvía desde la cuenta, no desde el negocio.
+ */
+export class SuperadminTenantActivationDto {
+  @ApiProperty({
+    example: 'pending',
+    enum: ['active', 'pending', 'expired', 'no_link'],
+    description:
+      'Confirmación del correo del owner: `active` ya entró al enlace; `pending` tiene ' +
+      'uno vigente sin usar; `expired` se le venció; `no_link` no tiene ninguno vivo.',
+  })
+  status!: string;
+
+  @ApiPropertyOptional({
+    example: '2026-08-12T14:00:00.000Z',
+    nullable: true,
+    description: 'Cuándo se activó la cuenta. null si todavía no.',
+  })
+  activatedAt!: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-08-19T14:00:00.000Z',
+    nullable: true,
+    description: 'Vencimiento del último enlace de activación. null si no hay ninguno.',
+  })
+  linkExpiresAt!: string | null;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'true cuando reenviar el correo resolvería la situación. Un enlace VIGENTE no se ' +
+      'reenvía. Siempre false en una sucursal (la activación es del owner).',
+  })
+  canResend!: boolean;
+
+  @ApiProperty({
+    example: 'El dueño confirmó su correo y puede iniciar sesión.',
+    description: 'Explicación del estado para el operador.',
+  })
+  reason!: string;
+}
+
+/**
  * Respuesta de `GET /superadmin/tenants/:companyId`.
  */
 export class SuperadminTenantDetailDto {
@@ -181,4 +227,12 @@ export class SuperadminTenantDetailDto {
 
   @ApiProperty({ type: SuperadminTenantElectronicBillingDto })
   electronicBilling!: SuperadminTenantElectronicBillingDto;
+
+  @ApiProperty({
+    type: SuperadminTenantActivationDto,
+    nullable: true,
+    description:
+      'Estado de activación del owner. null si la company no tiene owner (caso atípico).',
+  })
+  activation!: SuperadminTenantActivationDto | null;
 }

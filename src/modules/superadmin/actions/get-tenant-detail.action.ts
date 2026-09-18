@@ -7,6 +7,11 @@ import { Subscription } from '@/modules/subscriptions/entities/subscription.enti
 import { User, UserType } from '@/modules/users/entities/user.entity';
 
 import type { SuperadminTenantDetailDto } from '../dto/superadmin-tenant-detail.dto';
+import {
+  describeActivationStatus,
+  resolveActivationStatus,
+  type LatestActivationToken,
+} from '../internal/activation-status';
 
 /**
  * Detalle cross-tenant de una company para el panel superadmin: company, owner,
@@ -106,6 +111,22 @@ export class GetTenantDetailAction {
       };
     }
 
+    // Estado de activación del owner (confirmación del correo). Se calcula del
+    // último token emitido, igual que en el listado. En una sucursal se hereda
+    // del owner del principal, pero NUNCA se ofrece reenviar desde aquí.
+    let activation: SuperadminTenantDetailDto['activation'] = null;
+    if (owner) {
+      const latestToken = await this.loadLatestActivationToken(owner.id);
+      const snapshot = resolveActivationStatus(owner.activated_at, latestToken, new Date(now));
+      activation = {
+        status: snapshot.status,
+        activatedAt: snapshot.activatedAt,
+        linkExpiresAt: snapshot.linkExpiresAt,
+        canResend: company.is_branch ? false : snapshot.canResend,
+        reason: describeActivationStatus(snapshot),
+      };
+    }
+
     return {
       company: {
         id: Number(company.id),
@@ -140,7 +161,37 @@ export class GetTenantDetailAction {
       // Interruptor de FE del negocio. La FE no viene activa; se habilita desde
       // el panel. El proceso de FE corre en el API externo (APIDIAN).
       electronicBilling: { enabled: company.electronic_billing_enabled },
+      activation,
     };
+  }
+
+  /**
+   * Último enlace de activación emitido para el owner. Al reemitir se invalida
+   * el anterior, así que el único que dice algo del estado actual es el último
+   * (`ORDER BY created_at DESC`). Una fila con fecha ilegible se trata como sin
+   * token (`no_link`): el estado de activación no puede tumbar el detalle entero.
+   */
+  private async loadLatestActivationToken(ownerId: string): Promise<LatestActivationToken | null> {
+    const rows = await this.companyRepo.manager.query<
+      Array<{ expires_at: Date; used_at: Date | null }>
+    >(
+      `SELECT t.expires_at AS expires_at, t.used_at AS used_at
+       FROM user_activation_tokens t
+       WHERE t.user_id = $1
+       ORDER BY t.created_at DESC, t.id DESC
+       LIMIT 1`,
+      [ownerId],
+    );
+
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    const expiresAt = new Date(row.expires_at);
+    if (Number.isNaN(expiresAt.getTime())) {
+      return null;
+    }
+    return { expires_at: expiresAt, used_at: row.used_at ? new Date(row.used_at) : null };
   }
 
   /**

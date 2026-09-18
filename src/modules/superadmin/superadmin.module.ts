@@ -22,6 +22,7 @@ import { ListTenantsAction } from './actions/list-tenants.action';
 import { MigrateCatalogAction } from './actions/migrate-catalog.action';
 import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
+import { UpdateActivationAction } from './actions/update-activation.action';
 import { UpdateBranchesAction } from './actions/update-branches.action';
 import { UpdateElectronicBillingAction } from './actions/update-electronic-billing.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
@@ -72,6 +73,7 @@ import { SuperadminController } from './superadmin.controller';
     UpdateTenantOwnerAction,
     ResetTenantOwnerPasswordAction,
     ResendActivationAction,
+    UpdateActivationAction,
     UpdateTenantCompanyAction,
     ExportTenantAction,
     ImportTenantAction,

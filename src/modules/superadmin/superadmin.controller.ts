@@ -33,6 +33,10 @@ import { ImportTenantAction } from './actions/import-tenant.action';
 import { ListTenantsAction } from './actions/list-tenants.action';
 import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
+import {
+  UpdateActivationAction,
+  type UpdateActivationResult,
+} from './actions/update-activation.action';
 import { UpdateBranchesAction, type UpdateBranchesResult } from './actions/update-branches.action';
 import {
   UpdateElectronicBillingAction,
@@ -44,6 +48,7 @@ import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { ImportTenantDto } from './dto/import-tenant.dto';
 import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
+import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
 import { UpdateElectronicBillingDto } from './dto/update-electronic-billing.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
@@ -100,6 +105,7 @@ export class SuperadminController {
     private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
     private readonly resetTenantOwnerPasswordAction: ResetTenantOwnerPasswordAction,
     private readonly resendActivationAction: ResendActivationAction,
+    private readonly updateActivationAction: UpdateActivationAction,
     private readonly updateTenantCompanyAction: UpdateTenantCompanyAction,
     private readonly exportTenantAction: ExportTenantAction,
     private readonly importTenantAction: ImportTenantAction,
@@ -319,6 +325,28 @@ export class SuperadminController {
     @Param('companyId', ParseIntPipe) companyId: number,
   ): Promise<SuperadminResendActivationResponseDto> {
     return this.resendActivationAction.execute(companyId);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/activation
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/activation')
+  @ApiOperation({
+    summary: 'Activar/desactivar MANUALMENTE la cuenta del owner de un tenant.',
+    description:
+      'Body: { active }. Setea (o limpia) `users.activated_at` del owner sin enviar ' +
+      'ningún correo. active=false revierte la cuenta a "sin activar", lo que vuelve a ' +
+      'BLOQUEAR el inicio de sesión del dueño. Se aplica sobre el owner (404 si la ' +
+      'company no tiene owner, p. ej. una sucursal).',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company/owner no existe' })
+  updateActivation(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateActivationDto,
+  ): Promise<UpdateActivationResult> {
+    return this.updateActivationAction.execute(companyId, dto);
   }
 
   // --------------------------------------------------------------------------
