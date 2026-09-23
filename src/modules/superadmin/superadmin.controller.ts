@@ -23,10 +23,12 @@ import { UpdateCompanyDto } from '@/modules/companies/dto/update-company.dto';
 import { ListOwnersQueryDto } from '@/modules/users/dto/list-owners-query.dto';
 import { UpdateMeDto } from '@/modules/users/dto/update-me.dto';
 
+import { ClearTenantCustomersAction } from './actions/clear-tenant-customers.action';
 import { ClearTenantInventoryAction } from './actions/clear-tenant-inventory.action';
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
+import { GetTenantCustomersAction } from './actions/get-tenant-customers.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
@@ -68,6 +70,12 @@ import {
   toSuperadminClearInventoryResponseDto,
   toSuperadminTenantInventoryDto,
 } from './dto/superadmin-tenant-inventory.dto';
+import {
+  SuperadminClearCustomersResponseDto,
+  SuperadminTenantCustomersDto,
+  toSuperadminClearCustomersResponseDto,
+  toSuperadminTenantCustomersDto,
+} from './dto/superadmin-tenant-customers.dto';
 import { SuperadminResendActivationResponseDto } from './dto/superadmin-resend-activation-response.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
@@ -111,6 +119,8 @@ export class SuperadminController {
     private readonly importTenantAction: ImportTenantAction,
     private readonly getTenantInventoryAction: GetTenantInventoryAction,
     private readonly clearTenantInventoryAction: ClearTenantInventoryAction,
+    private readonly getTenantCustomersAction: GetTenantCustomersAction,
+    private readonly clearTenantCustomersAction: ClearTenantCustomersAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -468,6 +478,57 @@ export class SuperadminController {
     });
     return toSuperadminClearInventoryResponseDto(
       await this.clearTenantInventoryAction.execute(companyId),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /superadmin/tenants/:companyId/customers
+  // --------------------------------------------------------------------------
+
+  @Get('tenants/:companyId/customers')
+  @ApiOperation({
+    summary:
+      'Resumen de los clientes del tenant (cuántos tiene y qué pasaría al vaciar la lista).',
+    description:
+      'Solo lectura. Devuelve clientes activos, archivados y el reparto entre los que se ' +
+      'BORRARÍAN (sin historial) y los que se ARCHIVARÍAN (tienen ventas, créditos, notas o ' +
+      'anticipos) si se vacía la lista de clientes.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminTenantCustomersDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  async getTenantCustomers(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ): Promise<SuperadminTenantCustomersDto> {
+    return toSuperadminTenantCustomersDto(await this.getTenantCustomersAction.execute(companyId));
+  }
+
+  // --------------------------------------------------------------------------
+  // DELETE /superadmin/tenants/:companyId/customers
+  // --------------------------------------------------------------------------
+
+  @Delete('tenants/:companyId/customers')
+  @ApiOperation({
+    summary: 'Vaciar la lista de clientes del tenant (irreversible en su parte destructiva).',
+    description:
+      'Los clientes SIN historial de negocio se borran; los que tienen ventas, créditos, notas ' +
+      'o anticipos se archivan para no romper el histórico. En ambos casos la lista del cliente ' +
+      'queda en cero. Ventas, créditos, notas y anticipos no se tocan.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminClearCustomersResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  async clearTenantCustomers(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Req() req: Request,
+  ): Promise<SuperadminClearCustomersResponseDto> {
+    const keyId = req.header('x-kdevs-key-id') ?? 'unknown';
+    this.logger.warn({
+      event: 'superadmin.tenant.customers.clear',
+      companyId,
+      keyId,
+      message: 'Vaciado de clientes solicitado (borra clientes sin historial).',
+    });
+    return toSuperadminClearCustomersResponseDto(
+      await this.clearTenantCustomersAction.execute(companyId),
     );
   }
 
