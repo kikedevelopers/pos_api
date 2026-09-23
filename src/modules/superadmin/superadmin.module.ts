@@ -9,12 +9,14 @@ import { Subscription } from '@/modules/subscriptions/entities/subscription.enti
 import { User } from '@/modules/users/entities/user.entity';
 import { UsersModule } from '@/modules/users/users.module';
 
+import { ClearTenantCustomersAction } from './actions/clear-tenant-customers.action';
 import { ClearTenantInventoryAction } from './actions/clear-tenant-inventory.action';
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { ProductImagesModule } from '@/modules/product-images/product-images.module';
 
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
+import { GetTenantCustomersAction } from './actions/get-tenant-customers.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
@@ -77,6 +79,8 @@ import { SuperadminController } from './superadmin.controller';
     ImportTenantAction,
     GetTenantInventoryAction,
     ClearTenantInventoryAction,
+    GetTenantCustomersAction,
+    ClearTenantCustomersAction,
   ],
 })
 export class SuperadminModule {}
