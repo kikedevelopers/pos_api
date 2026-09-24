@@ -241,6 +241,8 @@ export class GetCustomerChartsAction {
          WHERE company_id = $1
            AND customer_id = $2
            AND is_deleted = false
+           -- Los préstamos a terceros (LOAN) no son ventas: fuera del historial.
+           AND ticket_type::text <> 'LOAN'
          ORDER BY created_at DESC
          LIMIT 20
       )

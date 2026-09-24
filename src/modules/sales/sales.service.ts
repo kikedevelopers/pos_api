@@ -7,6 +7,11 @@ import {
   type CollectSaleActor,
   type CollectSaleBalanceResult,
 } from './actions/collect-sale-balance.action';
+import {
+  ConvertOrderToLoanAction,
+  type ProcessLoanActor,
+  type ProcessLoanResult,
+} from './actions/convert-order-to-loan.action';
 import { CreateSaleAction, type SaleCreator } from './actions/create-sale.action';
 import {
   DeleteSalePaymentAction,
@@ -37,6 +42,7 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import type { CollectSaleBalanceDto } from './dto/collect-sale-balance.dto';
 import type { CreateSaleDto } from './dto/create-sale.dto';
+import type { ProcessLoanDto } from './dto/process-loan.dto';
 import type { ListSalesQueryDto } from './dto/list-sales-query.dto';
 import type { SaleListItemDto } from './dto/sale-list-item.dto';
 import type { SaleCorrectionSourceDto, UpdateSaleDto } from './dto/update-sale.dto';
@@ -66,6 +72,7 @@ export class SalesService {
     private readonly voidSaleAction: VoidSaleAction,
     private readonly deleteSalePaymentAction: DeleteSalePaymentAction,
     private readonly collectSaleBalanceAction: CollectSaleBalanceAction,
+    private readonly convertOrderToLoanAction: ConvertOrderToLoanAction,
     private readonly getLastSaleAction: GetLastSaleAction,
     private readonly getConsolidatedInvoiceAction: GetConsolidatedInvoiceAction,
     private readonly getConsolidatedInvoiceUpToAction: GetConsolidatedInvoiceUpToAction,
@@ -160,5 +167,14 @@ export class SalesService {
     actor: CollectSaleActor,
   ): Promise<CollectSaleBalanceResult> {
     return this.collectSaleBalanceAction.execute(saleId, dto, companyId, actor);
+  }
+
+  loan(
+    invoiceId: number,
+    dto: ProcessLoanDto,
+    companyId: number,
+    actor: ProcessLoanActor,
+  ): Promise<ProcessLoanResult> {
+    return this.convertOrderToLoanAction.execute(invoiceId, dto, companyId, actor);
   }
 }

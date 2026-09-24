@@ -352,6 +352,10 @@ export class GetSalesReportAction {
       // íntegro el día en que se hizo). El LEFT JOIN a sale_credits solo aporta
       // el flag `is_credit`, el saldo y el estado para distinguirlas en la UI.
       `si.company_id = $1`,
+      // Los préstamos a terceros (ticket_type='LOAN') NO son ventas: quedan
+      // fuera del informe (ni en la lista de tickets ni en el summary), aunque
+      // tengan `sold_at` seteado. Exclusión base, incondicional.
+      `si.ticket_type::text <> 'LOAN'`,
     ];
 
     const dateExpr = salesDateFieldExpr(filters.dateField);

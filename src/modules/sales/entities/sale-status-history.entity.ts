@@ -28,6 +28,11 @@ import { SaleInvoice } from './sale-invoice.entity';
  *   - `INSTALLMENT`   — abono a un crédito existente.
  *   - `PAID`          — el crédito quedó saldado por completo.
  *   - `VOIDED`        — la venta/pedido se anuló.
+ *   - `LOANED`        — el pedido se convirtió en préstamo de mercancía a un
+ *                       tercero (ORDER→LOAN): descontó stock sin mover dinero.
+ *
+ * `enumName: 'sale_status_event_type'` + el `ALTER TYPE ... ADD VALUE 'LOANED'`
+ * de la migración 1747012620000.
  *
  * Paridad PlacePos: el cliente offline replica este mismo catálogo de eventos.
  */
@@ -38,6 +43,7 @@ export enum SaleStatusEventType {
   INSTALLMENT = 'INSTALLMENT',
   PAID = 'PAID',
   VOIDED = 'VOIDED',
+  LOANED = 'LOANED',
 }
 
 /**

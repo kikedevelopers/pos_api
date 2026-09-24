@@ -25,9 +25,15 @@ import { SalePayment } from './sale-payment.entity';
  *
  *   - `ORDER`: pedido editable, anulable directo (soft-delete) sin nota.
  *   - `SALE`: venta confirmada, solo anulable vía CreditNote (Fase 8).
+ *   - `LOAN`: préstamo de mercancía a un tercero. Descuenta stock igual que una
+ *             venta pero NO mueve dinero (sin `sale_payments`, sin caja, sin
+ *             crédito, sin puntos) y queda EXCLUIDO de todos los informes de
+ *             venta. `sale_number` permanece NULL (un préstamo no es venta).
+ *             Solo el owner puede registrarlo, con la feature activa.
  *
  * `enumName: 'ticket_type'` debe coincidir EXACTAMENTE con el `CREATE TYPE`
- * de la migración 1747009260000.
+ * de la migración 1747009260000 + el `ALTER TYPE ... ADD VALUE 'LOAN'` de la
+ * migración 1747012580000.
  *
  * NOTA: este enum es distinto al `ticket_setting_type` (que incluye además
  * CREDIT_NOTE, DEBIT_NOTE, PURCHASE). El servicio mapea ORDER → ORDER y
@@ -36,6 +42,7 @@ import { SalePayment } from './sale-payment.entity';
 export enum TicketType {
   ORDER = 'ORDER',
   SALE = 'SALE',
+  LOAN = 'LOAN',
 }
 
 /**
@@ -79,9 +86,11 @@ export enum TicketType {
 @Check('chk_sale_invoices_tax_total_non_negative', 'tax_total >= 0')
 @Check('chk_sale_invoices_total_non_negative', 'total >= 0')
 @Check('chk_sale_invoices_cost_non_negative', 'cost >= 0')
+// ORDER y LOAN pueden llevar `sale_number` NULL (ninguno es una venta con
+// folio). Solo SALE exige folio poblado. Ver migración 1747012600000.
 @Check(
   'chk_sale_invoices_sale_number_consistency',
-  `ticket_type = 'ORDER'
+  `ticket_type IN ('ORDER', 'LOAN')
    OR (ticket_type = 'SALE' AND length(btrim(coalesce(sale_number, ''))) > 0)`,
 )
 // Idempotencia de la CREACIÓN de la venta: una misma `client_operation_id`

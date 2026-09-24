@@ -6,6 +6,7 @@ import { BanksModule } from '@/modules/banks/banks.module';
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { CreditNote } from '@/modules/credit-notes/entities/credit-note.entity';
 import { CreditNoteLine } from '@/modules/credit-notes/entities/credit-note-line.entity';
+import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { CustomersModule } from '@/modules/customers/customers.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
@@ -19,6 +20,7 @@ import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
 import { CollectSaleBalanceAction } from './actions/collect-sale-balance.action';
+import { ConvertOrderToLoanAction } from './actions/convert-order-to-loan.action';
 import { CreateSaleAction } from './actions/create-sale.action';
 import { DeleteSalePaymentAction } from './actions/delete-sale-payment.action';
 import { FindAllSalesAction } from './actions/find-all-sales.action';
@@ -82,6 +84,9 @@ import { SalesService } from './sales.service';
     // Resolución de permisos efectivos para el scope de ventas del feed del día
     // (`FindAllSalesAction`, gate por `canViewAllSales`).
     RolesModule,
+    // Gate fail-closed del préstamo a tercero: `ConvertOrderToLoanAction`
+    // inyecta `GetEnableThirdPartyLoanAction` (exportado por este módulo).
+    AppSettingsModule,
   ],
   controllers: [SalesController],
   providers: [
@@ -94,6 +99,7 @@ import { SalesService } from './sales.service';
     VoidSaleAction,
     DeleteSalePaymentAction,
     CollectSaleBalanceAction,
+    ConvertOrderToLoanAction,
     GetLastSaleAction,
     GetConsolidatedInvoiceAction,
     GetConsolidatedInvoiceUpToAction,

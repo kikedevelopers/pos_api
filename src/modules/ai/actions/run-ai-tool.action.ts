@@ -583,10 +583,12 @@ export class RunAiToolAction {
         (
           SELECT MAX(si.created_at) FROM sale_invoices si
           WHERE si.customer_id = c.id AND si.company_id = c.company_id AND si.is_deleted = false
+            AND si.ticket_type <> 'LOAN'
         ) AS last_sale,
         (
           SELECT COUNT(*) FROM sale_invoices si
           WHERE si.customer_id = c.id AND si.company_id = c.company_id AND si.is_deleted = false
+            AND si.ticket_type <> 'LOAN'
         ) AS sales_count
       FROM customers c
       WHERE c.company_id = $1

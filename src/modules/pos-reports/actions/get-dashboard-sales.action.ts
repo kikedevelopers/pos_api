@@ -149,6 +149,8 @@ export class GetDashboardSalesAction {
       FROM sale_invoices si
       WHERE si.company_id = $1
         AND si.created_at BETWEEN $2 AND $3
+        -- Los préstamos a terceros (LOAN) NO son ventas: excluidos del informe.
+        AND si.ticket_type::text <> 'LOAN'
         ${noteFilterClause.sql}
       ORDER BY si.created_at DESC
     `;

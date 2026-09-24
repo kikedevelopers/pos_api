@@ -13,7 +13,10 @@ import {
   Post,
   Put,
   Query,
+  Res,
+  UnprocessableEntityException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -30,6 +33,7 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import type { CollectSaleBalanceResult } from './actions/collect-sale-balance.action';
+import type { ProcessLoanResult } from './actions/convert-order-to-loan.action';
 import type { DeleteSalePaymentResult } from './actions/delete-sale-payment.action';
 import type { LastSaleResult } from './actions/get-last-sale.action';
 import { CollectSaleBalanceDto } from './dto/collect-sale-balance.dto';
@@ -37,6 +41,7 @@ import { CreateSaleResponseDto, toCreateSaleResponseDto } from './dto/create-sal
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { DeleteSalePaymentDto } from './dto/delete-sale-payment.dto';
 import { ListSalesQueryDto } from './dto/list-sales-query.dto';
+import { ProcessLoanDto } from './dto/process-loan.dto';
 import {
   SaleCreditNoteResponseDto,
   toSaleCreditNoteResponseDto,
@@ -472,5 +477,60 @@ export class SalesController {
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
       type: currentUser.type,
     });
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /sales/:id/loan — préstamo de mercancía a un tercero (ORDER → LOAN)
+  // --------------------------------------------------------------------------
+
+  @Post(':id/loan')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Convierte un pedido (ORDER) en un préstamo de mercancía a un tercero ' +
+      '(ticket_type=LOAN). Descuenta stock como una venta pero NO mueve dinero ' +
+      '(sin pagos, caja, crédito ni puntos) y queda excluido de todos los informes ' +
+      'de venta. SOLO owner y con la feature activa (`enable_third_party_loan`). ' +
+      'Idempotente por `client_operation_id`.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: ProcessLoanDto })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Préstamo registrado.' })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'No es el dueño (LOAN_NOT_OWNER) o la feature está apagada (LOAN_DISABLED).',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description:
+      'La factura no es un pedido, no tiene cliente, o el stock no alcanza (INSUFFICIENT_STOCK).',
+  })
+  async loan(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ProcessLoanDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<ProcessLoanResult, 'replay'>> {
+    const result = await this.salesService.loan(id, dto, companyId, {
+      id: currentUser.user_id,
+      fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      type: currentUser.type,
+    });
+
+    if (!result.success) {
+      // Paridad PlacePos: 422 con `{ success:false, error, payload:{ code } }`.
+      throw new UnprocessableEntityException({
+        message: result.message,
+        payload: { code: result.code },
+      });
+    }
+
+    // Replay idempotente → 200 OK; primer registro → 201 CREATED.
+    res.status(result.replay === true ? HttpStatus.OK : HttpStatus.CREATED);
+
+    const { replay: _replay, ...publicResult } = result;
+    void _replay;
+    return publicResult;
   }
 }

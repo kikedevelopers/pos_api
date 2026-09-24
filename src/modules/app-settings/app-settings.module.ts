@@ -8,6 +8,8 @@ import { GetCustomerPointsAction } from './actions/get-customer-points.action';
 import { GetIncludeOrdersInReportsAction } from './actions/get-include-orders-in-reports.action';
 import { GetShowAllBaseProductsInPurchasesAction } from './actions/get-show-all-base-products-in-purchases.action';
 import { GetShowDailyQuotaBarAction } from './actions/get-show-daily-quota-bar.action';
+import { GetEnableCreditPaymentAction } from './actions/get-enable-credit-payment.action';
+import { GetEnableThirdPartyLoanAction } from './actions/get-enable-third-party-loan.action';
 import { GetPosMarginsAction } from './actions/get-pos-margins.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
 import { UpsertAppSettingAction } from './actions/upsert-app-setting.action';
@@ -15,6 +17,8 @@ import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.act
 import { UpsertIncludeOrdersInReportsAction } from './actions/upsert-include-orders-in-reports.action';
 import { UpsertShowAllBaseProductsInPurchasesAction } from './actions/upsert-show-all-base-products-in-purchases.action';
 import { UpsertShowDailyQuotaBarAction } from './actions/upsert-show-daily-quota-bar.action';
+import { UpsertEnableCreditPaymentAction } from './actions/upsert-enable-credit-payment.action';
+import { UpsertEnableThirdPartyLoanAction } from './actions/upsert-enable-third-party-loan.action';
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsController } from './app-settings.controller';
@@ -46,10 +50,17 @@ import { AppSetting } from './entities/app-setting.entity';
     UpsertIncludeOrdersInReportsAction,
     GetShowDailyQuotaBarAction,
     UpsertShowDailyQuotaBarAction,
+    GetEnableCreditPaymentAction,
+    UpsertEnableCreditPaymentAction,
+    GetEnableThirdPartyLoanAction,
+    UpsertEnableThirdPartyLoanAction,
   ],
   exports: [
     AppSettingsService,
     CreateDefaultAppSettingsAction,
+    // Lo inyecta `SalesModule` (ConvertOrderToLoanAction) para el gate
+    // fail-closed del préstamo a tercero.
+    GetEnableThirdPartyLoanAction,
     // `GetIncludeOrdersInReportsAction` se exporta porque lo inyectan los
     // módulos `reports`/`pos-reports`/`dashboard`. El flag de compras NO se
     // exporta: su filtro es de presentación (vive en el cliente) y ningún
