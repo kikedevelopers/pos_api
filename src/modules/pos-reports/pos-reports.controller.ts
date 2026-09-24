@@ -9,12 +9,14 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { ComparativeByDayQueryDto } from './dto/comparative-by-day-query.dto';
 import { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
+import { InventoryLoansQueryDto } from './dto/inventory-loans-query.dto';
 import { DashboardSalesQueryDto, SalesReportQueryDto } from './dto/sales-report-query.dto';
 import { PosReportsService } from './pos-reports.service';
 import type {
   ComparativeByDayResult,
   ComparativeReportResult,
   DashboardSalesResult,
+  InventoryLoansReportResult,
   SalesMonthsResult,
   SalesReportResult,
 } from './pos-reports.service';
@@ -91,6 +93,22 @@ export class PosReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<DashboardSalesResult> {
     return this.posReportsService.getDashboardSales(companyId, query);
+  }
+
+  @Get('inventory-loans')
+  // Owner-only: el préstamo de mercancía a terceros es una operación exclusiva
+  // del dueño (igual que su creación), así que su informe también lo es.
+  @Roles('owner')
+  @ApiOperation({
+    summary:
+      'Informe "Préstamo de Inventario": lista de préstamos de mercancía a terceros (ticket_type=LOAN) con rango/búsqueda + summary (cantidad, valor total, ganancia y margen).',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  inventoryLoans(
+    @Query() query: InventoryLoansQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<InventoryLoansReportResult> {
+    return this.posReportsService.getInventoryLoansReport(companyId, query);
   }
 
   @Get('comparative')
