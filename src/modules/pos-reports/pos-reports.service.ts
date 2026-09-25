@@ -14,16 +14,22 @@ import {
   GetDashboardSalesAction,
   type DashboardSalesResult,
 } from './actions/get-dashboard-sales.action';
+import {
+  GetInventoryLoansReportAction,
+  type InventoryLoansReportResult,
+} from './actions/get-inventory-loans-report.action';
 import { GetSalesMonthsAction, type SalesMonthsResult } from './actions/get-sales-months.action';
 import { GetSalesReportAction, type SalesReportResult } from './actions/get-sales-report.action';
 import type { ComparativeByDayQueryDto } from './dto/comparative-by-day-query.dto';
 import type { ComparativeReportQueryDto } from './dto/comparative-report-query.dto';
+import type { InventoryLoansQueryDto } from './dto/inventory-loans-query.dto';
 import type { DashboardSalesQueryDto, SalesReportQueryDto } from './dto/sales-report-query.dto';
 
 export type {
   ComparativeByDayResult,
   ComparativeReportResult,
   DashboardSalesResult,
+  InventoryLoansReportResult,
   SalesMonthsResult,
   SalesReportResult,
 };
@@ -39,6 +45,7 @@ export class PosReportsService {
     private readonly comparativeReport: GetComparativeReportAction,
     private readonly comparativeByDayReport: GetComparativeByDayReportAction,
     private readonly salesMonths: GetSalesMonthsAction,
+    private readonly inventoryLoans: GetInventoryLoansReportAction,
   ) {}
 
   getSalesReport(
@@ -47,6 +54,13 @@ export class PosReportsService {
     actor: AuthUser,
   ): Promise<SalesReportResult> {
     return this.salesReport.execute(companyId, filters, actor);
+  }
+
+  getInventoryLoansReport(
+    companyId: number,
+    filters: InventoryLoansQueryDto,
+  ): Promise<InventoryLoansReportResult> {
+    return this.inventoryLoans.execute(companyId, filters);
   }
 
   getSalesMonths(companyId: number, actor: AuthUser): Promise<SalesMonthsResult> {

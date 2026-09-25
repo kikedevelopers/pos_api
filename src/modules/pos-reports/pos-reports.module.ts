@@ -6,6 +6,7 @@ import { RolesModule } from '@/modules/roles/roles.module';
 import { GetComparativeByDayReportAction } from './actions/get-comparative-by-day-report.action';
 import { GetComparativeReportAction } from './actions/get-comparative-report.action';
 import { GetDashboardSalesAction } from './actions/get-dashboard-sales.action';
+import { GetInventoryLoansReportAction } from './actions/get-inventory-loans-report.action';
 import { GetSalesMonthsAction } from './actions/get-sales-months.action';
 import { GetSalesReportAction } from './actions/get-sales-report.action';
 import { PosReportsController } from './pos-reports.controller';
@@ -28,6 +29,7 @@ import { PosReportsService } from './pos-reports.service';
     GetDashboardSalesAction,
     GetComparativeReportAction,
     GetComparativeByDayReportAction,
+    GetInventoryLoansReportAction,
   ],
   exports: [PosReportsService],
 })

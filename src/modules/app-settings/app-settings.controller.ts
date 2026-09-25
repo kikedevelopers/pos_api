@@ -13,12 +13,16 @@ import { RequirePermission } from '@/common/decorators/require-permission.decora
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { GetCustomerPointsAction } from './actions/get-customer-points.action';
+import { GetEnableCreditPaymentAction } from './actions/get-enable-credit-payment.action';
+import { GetEnableThirdPartyLoanAction } from './actions/get-enable-third-party-loan.action';
 import { GetIncludeOrdersInReportsAction } from './actions/get-include-orders-in-reports.action';
 import { GetPosMarginsAction } from './actions/get-pos-margins.action';
 import { GetShowAllBaseProductsInPurchasesAction } from './actions/get-show-all-base-products-in-purchases.action';
 import { GetShowDailyQuotaBarAction } from './actions/get-show-daily-quota-bar.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
 import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.action';
+import { UpsertEnableCreditPaymentAction } from './actions/upsert-enable-credit-payment.action';
+import { UpsertEnableThirdPartyLoanAction } from './actions/upsert-enable-third-party-loan.action';
 import { UpsertIncludeOrdersInReportsAction } from './actions/upsert-include-orders-in-reports.action';
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertShowAllBaseProductsInPurchasesAction } from './actions/upsert-show-all-base-products-in-purchases.action';
@@ -26,7 +30,9 @@ import { UpsertShowDailyQuotaBarAction } from './actions/upsert-show-daily-quota
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
+import { CreditPaymentConfigDto, UpdateCreditPaymentDto } from './dto/credit-payment.dto';
 import { CustomerPointsConfigDto, UpdateCustomerPointsDto } from './dto/customer-points.dto';
+import { ThirdPartyLoanConfigDto, UpdateThirdPartyLoanDto } from './dto/third-party-loan.dto';
 import {
   IncludeOrdersInReportsConfigDto,
   UpdateIncludeOrdersInReportsDto,
@@ -83,6 +89,10 @@ export class AppSettingsController {
     private readonly upsertShowAllBaseProductsInPurchasesAction: UpsertShowAllBaseProductsInPurchasesAction,
     private readonly getShowDailyQuotaBarAction: GetShowDailyQuotaBarAction,
     private readonly upsertShowDailyQuotaBarAction: UpsertShowDailyQuotaBarAction,
+    private readonly getEnableCreditPaymentAction: GetEnableCreditPaymentAction,
+    private readonly upsertEnableCreditPaymentAction: UpsertEnableCreditPaymentAction,
+    private readonly getEnableThirdPartyLoanAction: GetEnableThirdPartyLoanAction,
+    private readonly upsertEnableThirdPartyLoanAction: UpsertEnableThirdPartyLoanAction,
   ) {}
 
   // ----------------------------------------------------------------------
@@ -291,6 +301,83 @@ export class AppSettingsController {
     @CurrentCompany() companyId: number,
   ): Promise<ShowDailyQuotaBarConfigDto> {
     return this.upsertShowDailyQuotaBarAction.execute(dto, companyId);
+  }
+
+  // ----------------------------------------------------------------------
+  // Ventana de Cobro de Pedido: visibilidad de medios de pago del POS.
+  // ----------------------------------------------------------------------
+
+  // NOTA (A1): estos dos GET NO exigen `canAccessSettings`. El PaymentModal del
+  // POS los lee con CUALQUIER rol (cajero/vendedor incluidos) para decidir si
+  // pinta la tarjeta de Crédito / Préstamo. Si exigieran el permiso, el cajero
+  // recibiría 403 y el front caería al fallback (mostrando Crédito siempre). El
+  // guard SÍ se mantiene en los PUT: solo quien administra ajustes cambia el flag.
+  @Get('credit-payment')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Flag «habilitar pago a Crédito»',
+    description:
+      'Devuelve `{ enabled }` desde la key `enable_credit_payment`. Default TRUE: si la fila no existe, el crédito viene visible en el POS. Legible por cualquier rol autenticado (lo consume el PaymentModal).',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: CreditPaymentConfigDto })
+  async getEnableCreditPayment(
+    @CurrentCompany() companyId: number,
+  ): Promise<CreditPaymentConfigDto> {
+    return this.getEnableCreditPaymentAction.execute(companyId);
+  }
+
+  @Put('credit-payment')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set flag «habilitar pago a Crédito»',
+    description:
+      'Un administrador (canAccessSettings) muestra u oculta la tarjeta "Crédito" en el POS para TODOS los usuarios del negocio.',
+  })
+  @ApiBody({ type: UpdateCreditPaymentDto })
+  @ApiResponse({ status: HttpStatus.OK, type: CreditPaymentConfigDto })
+  async upsertEnableCreditPayment(
+    @Body() dto: UpdateCreditPaymentDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<CreditPaymentConfigDto> {
+    return this.upsertEnableCreditPaymentAction.execute(dto, companyId);
+  }
+
+  // NOTA (A1): sin `canAccessSettings` (igual que credit-payment) — el
+  // PaymentModal lo lee con cualquier rol para decidir la visibilidad del medio.
+  // El gate real de negocio (owner-only + fail-closed) vive en el POST del
+  // préstamo, no en este GET de lectura.
+  @Get('third-party-loan')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Flag «habilitar Préstamo a Tercero»',
+    description:
+      'Devuelve `{ enabled }` desde la key `enable_third_party_loan`. Default FALSE. Habilita el medio "Préstamo a Tercero" (ORDER→LOAN). Legible por cualquier rol autenticado; el backend revalida el flag (fail-closed) al registrar el préstamo.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: ThirdPartyLoanConfigDto })
+  async getEnableThirdPartyLoan(
+    @CurrentCompany() companyId: number,
+  ): Promise<ThirdPartyLoanConfigDto> {
+    return this.getEnableThirdPartyLoanAction.execute(companyId);
+  }
+
+  @Put('third-party-loan')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set flag «habilitar Préstamo a Tercero»',
+    description:
+      'Un administrador (canAccessSettings) habilita o deshabilita el medio "Préstamo a Tercero". Solo el owner puede EJECUTAR préstamos; este flag solo controla la visibilidad del medio.',
+  })
+  @ApiBody({ type: UpdateThirdPartyLoanDto })
+  @ApiResponse({ status: HttpStatus.OK, type: ThirdPartyLoanConfigDto })
+  async upsertEnableThirdPartyLoan(
+    @Body() dto: UpdateThirdPartyLoanDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<ThirdPartyLoanConfigDto> {
+    return this.upsertEnableThirdPartyLoanAction.execute(dto, companyId);
   }
 
   // ----------------------------------------------------------------------

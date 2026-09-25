@@ -126,6 +126,24 @@ describe('GetSalesReportAction', () => {
     }
   });
 
+  it('excluye SIEMPRE los préstamos a terceros (LOAN) de la query base', async () => {
+    // Un LOAN tiene sold_at seteado pero NO es una venta: no debe aparecer ni
+    // en la lista de tickets ni sumar al summary. Exclusión base incondicional.
+    await action.execute(42, { dateFrom: '2026-05-01', dateTo: '2026-05-31' }, OWNER);
+    const invoiceCall = allCalls()[0];
+    expect(invoiceCall.sql).toContain("si.ticket_type::text <> 'LOAN'");
+  });
+
+  it('la exclusión de LOAN se mantiene aunque el cliente filtre por tipos', async () => {
+    await action.execute(
+      42,
+      { dateFrom: '2026-05-01', dateTo: '2026-05-31', ticketTypes: ['SALE', 'ORDER'] },
+      OWNER,
+    );
+    const invoiceCall = allCalls()[0];
+    expect(invoiceCall.sql).toContain("si.ticket_type::text <> 'LOAN'");
+  });
+
   it('ticketTypes CSV se aplica como IN con placeholders', async () => {
     await action.execute(
       42,

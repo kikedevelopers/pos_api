@@ -155,6 +155,19 @@ describe('GetCustomerChartsAction · gráfica consolidada', () => {
     });
   });
 
+  describe('historial de productos: exclusión de préstamos', () => {
+    it('getProductHistory deja fuera los préstamos a terceros (LOAN)', async () => {
+      // Las últimas 20 facturas del cliente NO deben incluir préstamos: no son
+      // compras suyas, aunque estén asociadas a su ficha.
+      buildAction([]);
+      await action.getProductHistory(7, 42);
+
+      const productSql = String(querySpy.mock.calls[0][0]);
+      expect(productSql).toContain("ticket_type::text <> 'LOAN'");
+      expect(productSql).toContain('is_deleted = false');
+    });
+  });
+
   describe('validación del rango', () => {
     it('rechaza un rango invertido', async () => {
       buildAction([]);

@@ -37,6 +37,10 @@ const SETTINGS_ENDPOINTS: ControllerMethod[] = [
   'upsertIncludeOrdersInReports',
   'getShowDailyQuotaBar',
   'upsertShowDailyQuotaBar',
+  // Solo los PUT de credit-payment / third-party-loan exigen canAccessSettings.
+  // Los GET NO (los lee el PaymentModal con cualquier rol) — ver describe aparte.
+  'upsertEnableCreditPayment',
+  'upsertEnableThirdPartyLoan',
   'findAll',
   'findOne',
   'upsert',
@@ -65,5 +69,34 @@ describe('AppSettingsController · RBAC metadata', () => {
       expect(roles).toContain('superadmin');
       expect(roles).not.toContain('manager');
     }
+  });
+
+  // ─── A1: visibilidad de medios de pago (credit-payment / third-party-loan) ──
+  //
+  // El PaymentModal del POS lee estos flags con CUALQUIER rol para decidir si
+  // pinta la tarjeta de Crédito / Préstamo. Si el GET exigiera canAccessSettings,
+  // el cajero recibiría 403 y el front caería al fallback. Por eso los GET NO
+  // llevan el permiso (solo @Roles con employee); los PUT sí lo mantienen.
+  describe('A1 · GET de visibilidad legibles por cualquier rol; PUT solo admin', () => {
+    it.each(['getEnableCreditPayment', 'getEnableThirdPartyLoan'] as const)(
+      '%s NO exige canAccessSettings (el cajero puede leerlo → 200)',
+      (getter) => {
+        expect(permissionOf(getter)).toBeUndefined();
+        // Y admite al employee/cajero en @Roles (no lo rechaza por tipo).
+        expect(rolesOf(getter)).toContain('employee');
+      },
+    );
+
+    it.each(['upsertEnableCreditPayment', 'upsertEnableThirdPartyLoan'] as const)(
+      '%s SÍ exige canAccessSettings (el cajero NO puede cambiar el flag)',
+      (setter) => {
+        expect(permissionOf(setter)).toBe('canAccessSettings');
+        // Igual que los demás flags de negocio: owner/superadmin, no manager.
+        const roles = rolesOf(setter);
+        expect(roles).toContain('owner');
+        expect(roles).toContain('superadmin');
+        expect(roles).not.toContain('manager');
+      },
+    );
   });
 });

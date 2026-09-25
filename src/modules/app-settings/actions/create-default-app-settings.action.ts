@@ -33,6 +33,9 @@ const DEFAULT_SETTINGS: Array<{ key: string; value: string }> = [
   { key: APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS, value: 'false' },
   { key: APP_SETTING_KEYS.SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES, value: 'false' },
   { key: APP_SETTING_KEYS.SHOW_DAILY_QUOTA_BAR, value: 'false' },
+  // Ventana de Cobro de Pedido: crédito visible por defecto, préstamo oculto.
+  { key: APP_SETTING_KEYS.ENABLE_CREDIT_PAYMENT, value: 'true' },
+  { key: APP_SETTING_KEYS.ENABLE_THIRD_PARTY_LOAN, value: 'false' },
 ];
 
 /**

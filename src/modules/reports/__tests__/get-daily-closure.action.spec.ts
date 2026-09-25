@@ -455,4 +455,52 @@ describe('GetDailyClosureAction', () => {
       }
     });
   });
+
+  // ─── Exclusión de préstamos (LOAN) ─────────────────────────────────────────
+  //
+  // Un LOAN tiene `sold_at`/`created_at` como cualquier factura. El cierre lo
+  // deja fuera por construcción: las agregaciones que DRIVEN desde sale_invoices
+  // acotan `ticket_type = 'SALE'` (o `'ORDER'` con el flag), y los abonos entran
+  // por sale_payments (un LOAN nunca crea pagos). Estos asserts fijan el
+  // contrato: un cambio futuro que abra la agregación a LOAN rompe el test.
+  describe('exclusión de préstamos (LOAN)', () => {
+    it('ninguna query apunta a LOAN, y sale_invoices como driver siempre filtra SALE u ORDER', async () => {
+      includeOrders = true; // fuerza también la emisión de la query de ORDER.
+      const action = buildAction({ ...BASE_SCENARIO, orders: { total: 200, cost: 140 } });
+      await action.execute(42, '2026-06-15');
+
+      for (const [sql] of querySpy.mock.calls as [string, unknown[]][]) {
+        // Nadie referencia el tipo LOAN.
+        expect(sql).not.toMatch(/'LOAN'/);
+        // Si sale_invoices es la tabla DRIVER, debe acotar el tipo (SALE/ORDER),
+        // nunca abrirse a todos los tipos (lo que dejaría entrar un préstamo).
+        if (/FROM\s+sale_invoices\s+si/i.test(sql)) {
+          expect(sql).toMatch(/si\.ticket_type\s*=\s*'(SALE|ORDER)'/);
+        }
+      }
+    });
+
+    it('las queries de abonos (sale_payments→sale_invoices) exigen crédito o SALE: un LOAN queda fuera', async () => {
+      // Las queries de abonos se emiten SIEMPRE (el escenario solo cambia las
+      // filas que devuelve el mock), así que BASE_SCENARIO basta para inspeccionarlas.
+      const action = buildAction(BASE_SCENARIO);
+      await action.execute(7, '2026-06-15');
+
+      const paymentDriven = (querySpy.mock.calls as [string, unknown[]][]).filter(
+        ([sql]) => /FROM sale_payments sp/i.test(sql) && /INNER JOIN\s+sale_invoices si/i.test(sql),
+      );
+      expect(paymentDriven.length).toBeGreaterThan(0);
+      for (const [sql] of paymentDriven) {
+        // Un préstamo (LOAN) queda fuera por CUALQUIERA de las dos vías: o la
+        // query solo cuenta ventas (`ticket_type = 'SALE'`), o solo cuenta pagos
+        // de facturas CON crédito (`EXISTS ... sale_credits`) — y un LOAN nunca
+        // crea ni pagos ni crédito. Si una futura query de abonos perdiera AMBAS
+        // guardas, este assert lo detecta.
+        const guardsAgainstLoan =
+          /si\.ticket_type\s*=\s*'SALE'/.test(sql) ||
+          /EXISTS\s*\(\s*SELECT 1 FROM sale_credits/i.test(sql);
+        expect(guardsAgainstLoan).toBe(true);
+      }
+    });
+  });
 });

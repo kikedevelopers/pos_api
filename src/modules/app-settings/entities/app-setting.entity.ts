@@ -37,6 +37,14 @@ export const APP_SETTING_KEYS = {
   // admins (owner o empleado con rol admin, vía canAccessSettings). Default
   // false: la barra viene oculta hasta que un admin la active.
   SHOW_DAILY_QUOTA_BAR: 'show_daily_quota_bar',
+  // Ventana de Cobro de Pedido — visibilidad de medios de pago del POS.
+  //   - `enable_credit_payment`: muestra la tarjeta "Crédito". Default TRUE
+  //     (fila ausente ⇒ crédito visible, comportamiento histórico).
+  //   - `enable_third_party_loan`: habilita "Préstamo a Tercero" (ORDER→LOAN).
+  //     Default FALSE. El backend lo revalida contra la BD (fail-closed) en
+  //     `POST /sales/:id/loan` — no se confía en el front (SPA rancio).
+  ENABLE_CREDIT_PAYMENT: 'enable_credit_payment',
+  ENABLE_THIRD_PARTY_LOAN: 'enable_third_party_loan',
   // Sistema de PUNTOS de cliente (paridad PlacePos `customerPointsSettings`).
   // 3 keys: flag + base de pesos + puntos por base.
   CUSTOMER_POINTS_ENABLED: 'customer_points_enabled',

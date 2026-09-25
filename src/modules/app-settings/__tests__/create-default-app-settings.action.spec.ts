@@ -30,13 +30,13 @@ describe('CreateDefaultAppSettingsAction', () => {
     action = module.get(CreateDefaultAppSettingsAction);
   });
 
-  it('crea los settings defaults, con TODOS los flags de negocio en false', async () => {
+  it('crea los settings defaults con los flags de comportamiento apagados (salvo crédito)', async () => {
     await action.execute(managerMock as never, {
       companyId: 42,
       createdBy: { id: 7, fullName: 'Kike Pacheco' },
     });
 
-    expect(createdRows).toHaveLength(5);
+    expect(createdRows).toHaveLength(7);
 
     const map = new Map(createdRows.map((r) => [r.key, r.value]));
     expect(map.get(APP_SETTING_KEYS.APP_COLOR_MODE)).toBe('white');
@@ -46,6 +46,10 @@ describe('CreateDefaultAppSettingsAction', () => {
     expect(map.get(APP_SETTING_KEYS.INCLUDE_ORDERS_IN_REPORTS)).toBe('false');
     expect(map.get(APP_SETTING_KEYS.SHOW_ALL_BASE_PRODUCTS_IN_PURCHASES)).toBe('false');
     expect(map.get(APP_SETTING_KEYS.SHOW_DAILY_QUOTA_BAR)).toBe('false');
+    // El préstamo a tercero nace APAGADO; el crédito nace VISIBLE (comportamiento
+    // histórico del POS: la tarjeta de crédito siempre estuvo disponible).
+    expect(map.get(APP_SETTING_KEYS.ENABLE_THIRD_PARTY_LOAN)).toBe('false');
+    expect(map.get(APP_SETTING_KEYS.ENABLE_CREDIT_PAYMENT)).toBe('true');
 
     for (const row of createdRows) {
       expect(row.company_id).toBe('42');

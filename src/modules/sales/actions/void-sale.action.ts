@@ -35,6 +35,7 @@ import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
 import type { SaleCorrectionSourceDto } from '../dto/update-sale.dto';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
+import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
 import { SaleStatusEventType } from '../entities/sale-status-history.entity';
 import { getConsolidatedInvoice } from '../internal/consolidate-invoice.helper';
@@ -113,6 +114,10 @@ export class VoidSaleAction {
         return this.voidOrder(manager, sale, companyId, actor);
       }
 
+      if (sale.ticket_type === TicketType.LOAN) {
+        return this.voidLoan(manager, sale, companyId, actor);
+      }
+
       return this.voidSale(manager, sale, companyId, actor, reason, refundSource ?? null);
     });
   }
@@ -147,6 +152,79 @@ export class VoidSaleAction {
     });
     return {
       message: 'Pedido anulado exitosamente',
+      creditNoteId: null,
+      creditNoteNumber: null,
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // LOAN: soft-delete + devolución de stock (SIN NC, SIN caja)
+  // --------------------------------------------------------------------------
+  //
+  // Un préstamo a tercero no movió dinero (ni caja, ni crédito, ni pagos), así
+  // que anularlo NO genera nota crédito ni reversa de caja: solo devuelve la
+  // mercancía al inventario (RETURN, simétrico al DEDUCT de la conversión) y
+  // marca la factura como eliminada. Un préstamo nunca tiene notas de ajuste,
+  // por lo que las líneas originales SON el estado consolidado.
+  private async voidLoan(
+    manager: EntityManager,
+    sale: SaleInvoice,
+    companyId: number,
+    actor: VoidSaleActor,
+  ): Promise<VoidSaleActionResult> {
+    const lines = await manager.find(SaleInvoiceLine, {
+      where: {
+        sale_invoice_id: sale.id,
+        company_id: String(companyId),
+      },
+    });
+
+    if (lines.length > 0) {
+      const inventoryLines = lines.map((l) => ({
+        item_id: Number(l.product_id),
+        quantity: Number(l.quantity),
+        // Factor congelado en la línea → simetría exacta DEDUCT↔RETURN.
+        packaging_value: l.packaging_value,
+        combo_recipe: l.combo_recipe,
+      }));
+      await adjustInventory(manager, companyId, inventoryLines, 'RETURN', {
+        reason: 'SALE_VOID',
+        referenceType: 'sale_invoice',
+        referenceId: Number(sale.id),
+        referenceCode: sale.ticket_number,
+        description: `Anulación de préstamo a tercero ${sale.ticket_number}`,
+        actorName: actor.fullName,
+        actorUserId: actor.id,
+        // El préstamo pudo incluir productos compartidos por el principal: la
+        // devolución pega en la fila del dueño real (paridad con la conversión).
+        crossCompanyAccess: true,
+      });
+    }
+
+    await manager.update(
+      SaleInvoice,
+      { id: sale.id, company_id: String(companyId) },
+      { is_deleted: true },
+    );
+
+    // HISTORIAL: préstamo anulado.
+    await recordSaleStatus(manager, {
+      companyId,
+      saleInvoiceId: Number(sale.id),
+      eventType: SaleStatusEventType.VOIDED,
+      createdBy: actor.fullName,
+    });
+
+    this.logger.log({
+      event: 'sale.voided.loan',
+      companyId,
+      saleId: Number(sale.id),
+      actorId: actor.id,
+      lineCount: lines.length,
+    });
+
+    return {
+      message: 'Préstamo anulado exitosamente',
       creditNoteId: null,
       creditNoteNumber: null,
     };

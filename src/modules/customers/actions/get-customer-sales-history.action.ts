@@ -146,6 +146,8 @@ export class GetCustomerSalesHistoryAction {
          WHERE si.company_id = $1
            AND si.customer_id = $2
            AND si.is_deleted = false
+           -- Los préstamos a terceros (LOAN) no son ventas: fuera del historial.
+           AND si.ticket_type::text <> 'LOAN'
       ),
       payments_agg AS (
         SELECT sp.sale_invoice_id AS id,

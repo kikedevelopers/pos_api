@@ -87,6 +87,15 @@ describe('GetCustomerSalesHistoryAction · cifras consolidadas', () => {
       expect(sql()).toContain('si.is_deleted = false');
     });
 
+    it('excluye los préstamos a terceros (LOAN): no son ventas del cliente', async () => {
+      // Un préstamo descuenta stock pero no es una venta; no debe inflar el
+      // historial ni la deuda que se le muestra al cliente.
+      build();
+      await action.execute(11793, 13);
+
+      expect(sql()).toContain("si.ticket_type::text <> 'LOAN'");
+    });
+
     it('no consulta sin company_id', async () => {
       build();
       await action.execute(11793, 13);
