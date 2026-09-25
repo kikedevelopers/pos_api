@@ -59,6 +59,21 @@ export enum MovementConcept {
    * `1747011800000-add-sale-payment-reversal`.
    */
   PAYMENT_REVERSAL = 'PAYMENT_REVERSAL',
+  /**
+   * Traslado de dinero desde una SUCURSAL hacia el NEGOCIO PRINCIPAL del
+   * mismo owner (multi-sucursal). Genera un par de movimientos con el mismo
+   * `reference_code` en DOS companies distintas: un `EXPENSE` en la sucursal
+   * (solo `source_*`, descripción "Egreso - <sucursal>") y un `INCOME` en el
+   * principal (solo `destination_*`, descripción "Ingreso - <sucursal>").
+   *
+   * A diferencia de `TRANSFER` (traslado entre cuentas de la MISMA company),
+   * cada movimiento referencia únicamente la cuenta de su propia company —
+   * nunca la contraparte cross-tenant — porque `record-financial-movement`
+   * valida que todo `bank`/`wallet` pertenezca a la `company_id` del row.
+   *
+   * Añadido por la migración `1747012660000-add-branch-transfer-movement-concept`.
+   */
+  BRANCH_TRANSFER = 'BRANCH_TRANSFER',
 }
 
 /**

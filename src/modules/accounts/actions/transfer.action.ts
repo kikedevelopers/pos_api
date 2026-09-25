@@ -28,6 +28,7 @@ import {
   loadAccountInCompany,
   setAccountBalance,
 } from '../internal/account-types';
+import { getCompanyRef, resolveMainCompanyForBranch } from '../internal/resolve-main-company';
 
 /**
  * Resultado de una transferencia. Espeja el shape de respuesta de PlacePos
@@ -112,6 +113,12 @@ export class TransferAction {
     const amountBig: Big = toBig(dto.amount);
     if (amountBig.lte(0)) {
       throw new UnprocessableEntityException('El monto debe ser mayor a cero');
+    }
+
+    // Multi-sucursal: traslado de una SUCURSAL hacia el NEGOCIO PRINCIPAL.
+    // Es cross-company (dos tenants), por eso se maneja en un camino aparte.
+    if (dto.destinationScope === 'main') {
+      return this.transferToMainBusiness(dto, companyId, actor, amountBig);
     }
 
     // PlacePos solo permite destination=user cuando source=wallet
@@ -242,6 +249,157 @@ export class TransferAction {
 
       return {
         message: `Traslado de ${amountBig.toFixed(2)} a ${destination.name} completado exitosamente`,
+        source: { type: dto.sourceType, id: source.id, balance: newSourceBalance },
+        destination: { type: destinationType, id: destination.id, balance: newDestBalance },
+      };
+    });
+  }
+
+  /**
+   * Variante multi-sucursal: traslado de dinero desde una cuenta de la
+   * SUCURSAL (company del JWT) hacia una cuenta `wallet`/`bank` del NEGOCIO
+   * PRINCIPAL del mismo owner. Cross-company, pero DENTRO de una sola
+   * transacción (mismo Postgres).
+   *
+   * Invariantes:
+   *   - La company del JWT debe ser una sucursal (`is_branch=true`), si no
+   *     → 422 `NOT_A_BRANCH`. El dinero fluye sucursal → principal, jamás a
+   *     otra sucursal.
+   *   - El destino no puede ser `user` (no se trasladan cajas de cajero
+   *     cross-company) → 422 `INVALID_DESTINATION_FOR_MAIN`.
+   *   - El principal se resuelve vía `company_members` del owner de la
+   *     sucursal; si no existe → 404 `MAIN_COMPANY_NOT_FOUND`.
+   *   - El destino debe ser una cuenta ACTIVA del principal (validado por
+   *     `loadAccountInCompany` con el id del principal).
+   *
+   * Movimientos (mismo `reference_code`, distinta company):
+   *   - EXPENSE en la SUCURSAL: solo `source_*`, "Egreso - <principal>"
+   *     (nombra a DÓNDE fue el dinero; leído desde la sucursal es lo claro).
+   *   - INCOME  en el PRINCIPAL: solo `destination_*`, "Ingreso - <sucursal>"
+   *     (nombra DE DÓNDE vino el dinero).
+   *
+   * Cada movimiento referencia SOLO la cuenta de su propia company porque
+   * `record-financial-movement` valida pertenencia cross-tenant.
+   */
+  private async transferToMainBusiness(
+    dto: TransferDto,
+    companyId: number,
+    actor: TransferActor,
+    amountBig: Big,
+  ): Promise<TransferResult> {
+    if (dto.destinationType === 'user') {
+      throw new UnprocessableEntityException({
+        message: 'No se puede trasladar a una caja de usuario del negocio principal',
+        payload: { code: 'INVALID_DESTINATION_FOR_MAIN' },
+      });
+    }
+    const destinationType: TransferSourceType = dto.destinationType;
+
+    return runSerializableWithRetry<TransferResult>(this.dataSource, async (manager) => {
+      // 1. La company del JWT debe ser una SUCURSAL.
+      const branch = await getCompanyRef(manager, companyId);
+      if (!branch) {
+        throw new NotFoundException('Company no encontrada');
+      }
+      if (!branch.is_branch) {
+        throw new UnprocessableEntityException({
+          message: 'El traslado al negocio principal solo se permite desde una sucursal',
+          payload: { code: 'NOT_A_BRANCH' },
+        });
+      }
+
+      // 2. Resolver el negocio principal del owner de la sucursal.
+      const main = await resolveMainCompanyForBranch(manager, companyId);
+      if (!main) {
+        throw new NotFoundException({
+          message: 'No se encontró el negocio principal asociado a esta sucursal',
+          payload: { code: 'MAIN_COMPANY_NOT_FOUND' },
+        });
+      }
+
+      // 3. Cargar y lockear la cuenta origen (en la SUCURSAL).
+      const source = await loadAccountInCompany(
+        manager,
+        dto.sourceType,
+        dto.sourceId,
+        companyId,
+        'source',
+      );
+      const sourceBalanceBig = toBig(source.balance);
+      if (amountBig.gt(sourceBalanceBig)) {
+        throw new UnprocessableEntityException(
+          `Saldo insuficiente. Disponible: ${sourceBalanceBig.toFixed(2)}`,
+        );
+      }
+
+      // 4. Cargar y lockear la cuenta destino (en el PRINCIPAL).
+      const destination = await loadAccountInCompany(
+        manager,
+        destinationType,
+        dto.destinationId,
+        main.id,
+        'destination',
+      );
+
+      const amount = preciseNumber(amountBig, 2);
+      const newSourceBalance = preciseNumber(sourceBalanceBig.minus(amountBig), 2);
+      const newDestBalance = preciseNumber(toBig(destination.balance).plus(amountBig), 2);
+
+      // 5. Débito en la sucursal / crédito en el principal.
+      await setAccountBalance(manager, dto.sourceType, source.id, companyId, newSourceBalance);
+      await setAccountBalance(manager, destinationType, destination.id, main.id, newDestBalance);
+
+      const referenceCode = `BRTRF-${randomUUID()}`;
+
+      // 6a. EXPENSE en la SUCURSAL (solo source_*): "Egreso - <principal>".
+      //     Nombra el NEGOCIO PRINCIPAL (a dónde fue el dinero); desde la
+      //     sucursal es lo que el cliente necesita leer, no su propio nombre.
+      await this.financialMovementsService.record(manager, {
+        companyId,
+        amount,
+        movement_type: MovementType.EXPENSE,
+        concept: MovementConcept.BRANCH_TRANSFER,
+        description: `Egreso - ${main.name}`,
+        source_type: dto.sourceType,
+        source_id: source.id,
+        destination_type: null,
+        destination_id: null,
+        reference_code: referenceCode,
+        created_by: actor.fullName,
+        created_by_id: actor.id,
+      });
+
+      // 6b. INCOME en el PRINCIPAL (solo destination_*): "Ingreso - <sucursal>".
+      await this.financialMovementsService.record(manager, {
+        companyId: main.id,
+        amount,
+        movement_type: MovementType.INCOME,
+        concept: MovementConcept.BRANCH_TRANSFER,
+        description: `Ingreso - ${branch.name}`,
+        source_type: null,
+        source_id: null,
+        destination_type: destinationType,
+        destination_id: destination.id,
+        reference_code: referenceCode,
+        created_by: actor.fullName,
+        created_by_id: actor.id,
+      });
+
+      this.logger.log({
+        event: 'accounts.branch_transfer_completed',
+        branchCompanyId: companyId,
+        mainCompanyId: main.id,
+        actorId: actor.id,
+        amount: amountBig.toFixed(2),
+        sourceType: dto.sourceType,
+        sourceId: source.id,
+        destinationType,
+        destinationId: destination.id,
+        referenceCode,
+      });
+
+      return {
+        message: `Traslado de ${amountBig.toFixed(2)} a ${destination.name} (${main.name}) completado exitosamente`,
         source: { type: dto.sourceType, id: source.id, balance: newSourceBalance },
         destination: { type: destinationType, id: destination.id, balance: newDestBalance },
       };

@@ -1,6 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsNumber, IsPositive, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
 
 /**
  * Tipos válidos de origen en una transferencia. Espeja `SourceType` de
@@ -23,6 +23,21 @@ export type TransferSourceType = (typeof TRANSFER_SOURCE_TYPES)[number];
  */
 export const TRANSFER_DESTINATION_TYPES = ['wallet', 'bank', 'user'] as const;
 export type TransferDestinationType = (typeof TRANSFER_DESTINATION_TYPES)[number];
+
+/**
+ * Alcance del destino. Distingue un traslado ENTRE CUENTAS de la misma
+ * company (`'self'`, comportamiento histórico) de un traslado de una
+ * SUCURSAL hacia el NEGOCIO PRINCIPAL del owner (`'main'`, multi-sucursal).
+ *
+ *   - `'self'` (default): source y destination viven en la company del JWT.
+ *     Soporta destinos `wallet`/`bank`/`user` como siempre.
+ *   - `'main'`: el source es una cuenta de la SUCURSAL (company del JWT) y el
+ *     destination es un `wallet`/`bank` del NEGOCIO PRINCIPAL. `user` NO se
+ *     permite (no se trasladan cajas de cajero cross-company). El action
+ *     valida que la company del JWT sea efectivamente una sucursal.
+ */
+export const TRANSFER_DESTINATION_SCOPES = ['self', 'main'] as const;
+export type TransferDestinationScope = (typeof TRANSFER_DESTINATION_SCOPES)[number];
 
 /**
  * Alias retrocompatibles para el resto del módulo (helpers internos +
@@ -73,4 +88,16 @@ export class TransferDto {
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'amount debe ser un número con hasta 2 decimales' })
   @IsPositive({ message: 'amount debe ser mayor a cero' })
   amount!: number;
+
+  @ApiPropertyOptional({
+    enum: TRANSFER_DESTINATION_SCOPES,
+    default: 'self',
+    example: 'main',
+    description:
+      "Alcance del destino: 'self' (misma company, default) o 'main' (traslado de sucursal al negocio principal). Clientes legacy que no lo envían mantienen el comportamiento 'self'.",
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn([...TRANSFER_DESTINATION_SCOPES], { message: 'destinationScope inválido' })
+  destinationScope?: TransferDestinationScope;
 }
