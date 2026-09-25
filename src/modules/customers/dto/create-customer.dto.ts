@@ -83,6 +83,17 @@ export class CreateCustomerDto {
   @MaxLength(500)
   address?: string;
 
+  @ApiPropertyOptional({
+    example: 3,
+    nullable: true,
+    description:
+      'Ref a customer_categories (categoría ESPECIAL del cliente). Debe pertenecer a la company y estar activa. En update, `null` limpia la categoría. `@IsOptional` deja pasar null/undefined; el action valida el id contra la BD.',
+  })
+  @IsOptional()
+  @IsInt({ message: 'category_id debe ser un entero' })
+  @IsPositive({ message: 'category_id debe ser positivo' })
+  category_id?: number | null;
+
   // --------------------------------------------------------------------------
   // Identidad fiscal (Facturación Electrónica) — opcional, solo con FE activa.
   // --------------------------------------------------------------------------
@@ -91,7 +102,10 @@ export class CreateCustomerDto {
   //   habilitada AHORA (validado en el action contra la BD, no el front rancio).
   //   `type_organization_id` no se acepta: se deriva de `person_type`.
 
-  @ApiPropertyOptional({ example: 6, description: 'Ref a type_document_identifications de APIDIAN.' })
+  @ApiPropertyOptional({
+    example: 6,
+    description: 'Ref a type_document_identifications de APIDIAN.',
+  })
   @IsOptional()
   @IsInt()
   @IsPositive()

@@ -27,7 +27,16 @@ export class FindAllCustomersAction {
   async execute(companyId: number, query: ListCustomersQueryDto = {}): Promise<Customer[]> {
     const qb = this.repo
       .createQueryBuilder('c')
+      // Carga la categoría especial del cliente para que el listado muestre su
+      // nombre sin N+1. leftJoin ⇒ los clientes sin categoría siguen viniendo.
+      .leftJoinAndSelect('c.category', 'category')
       .where('c.company_id = :companyId', { companyId: String(companyId) });
+
+    // Filtro por categoría especial (customer_categories). Encuentra clientes
+    // por id de categoría aunque esta esté archivada (la asociación persiste).
+    if (typeof query.category_id === 'number') {
+      qb.andWhere('c.category_id = :categoryId', { categoryId: String(query.category_id) });
+    }
 
     // include_archived llega como string ("true" o "false") porque viene del
     // query string. Default: ocultar archivados (paridad con el filtro

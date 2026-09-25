@@ -28,6 +28,18 @@ export class ListCustomersQueryDto {
   search?: string;
 
   @ApiPropertyOptional({
+    description:
+      'Filtra por categoría ESPECIAL del cliente (customer_categories). Solo devuelve clientes con esa categoría.',
+    minimum: 1,
+    example: 3,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'category_id debe ser entero' })
+  @Min(1, { message: 'category_id debe ser >= 1' })
+  category_id?: number;
+
+  @ApiPropertyOptional({
     description: 'Incluir clientes archivados. Default false.',
     example: 'false',
   })

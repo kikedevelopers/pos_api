@@ -12,6 +12,7 @@ import {
 
 import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { Company } from '@/modules/companies/entities/company.entity';
+import { CustomerCategory } from '@/modules/customer-categories/entities/customer-category.entity';
 
 /**
  * Tipo de persona del cliente. Espejo de `placepos/src/main/database/enums/PersonType`.
@@ -107,6 +108,25 @@ export class Customer {
 
   @Column({ type: 'text', nullable: true })
   address!: string | null;
+
+  /**
+   * FK opcional a `customer_categories`. Categoría ESPECIAL del cliente
+   * (p. ej. "Cliente Redes Sociales"). Capacidad cloud-only. La columna y la
+   * FK las crea la migración `1747012640000-create-customer-categories-table`.
+   *
+   * ON DELETE SET NULL — borrar físicamente la categoría desliga al cliente
+   * sin romperlo. El archive (soft-delete) deja la asociación intacta.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  category_id!: string | null;
+
+  @ManyToOne(() => CustomerCategory, {
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'category_id' })
+  category!: CustomerCategory | null;
 
   // --------------------------------------------------------------------------
   // Identidad fiscal (Facturación Electrónica) — CLOUD-ONLY.

@@ -33,12 +33,38 @@ describe('TransferAction', () => {
     string,
     { id: number; name: string; balance: number; type?: string; lastname?: string }
   >;
+  // Multi-sucursal: companies por id (para getCompanyRef) y mapa
+  // sucursal→principal (para resolveMainCompanyForBranch).
+  let companies: Map<string, { name: string; is_branch: boolean }>;
+  let mainByBranch: Map<string, { id: number; name: string }>;
 
   beforeEach(async () => {
     updates = [];
     accounts = new Map();
+    companies = new Map();
+    mainByBranch = new Map();
 
     const managerMock = {
+      // Las resoluciones multi-sucursal (getCompanyRef /
+      // resolveMainCompanyForBranch) usan SQL crudo vía manager.query. El
+      // mock discrimina por la forma del SQL.
+      query: jest.fn((sql: string, params: unknown[]) => {
+        if (sql.includes('FROM companies WHERE id')) {
+          const id = String(params[0]);
+          const company = companies.get(id);
+          return Promise.resolve(
+            company ? [{ id, name: company.name, is_branch: company.is_branch }] : [],
+          );
+        }
+        if (sql.includes('company_members')) {
+          const branchId = String(params[0]);
+          const main = mainByBranch.get(branchId);
+          return Promise.resolve(
+            main ? [{ id: String(main.id), name: main.name, is_branch: false }] : [],
+          );
+        }
+        return Promise.resolve([]);
+      }),
       findOne: jest.fn(
         (entity: { name?: string } | string, options: { where: Record<string, string> }) => {
           const entityName = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
@@ -150,6 +176,13 @@ describe('TransferAction', () => {
       name: 'cash',
       balance,
     });
+  }
+
+  function seedCompany(id: number, name: string, isBranch: boolean): void {
+    companies.set(String(id), { name, is_branch: isBranch });
+  }
+  function setMainForBranch(branchId: number, mainId: number, mainName: string): void {
+    mainByBranch.set(String(branchId), { id: mainId, name: mainName });
   }
 
   it('rechaza amount <= 0 con 422 antes de tocar DB', async () => {
@@ -424,5 +457,275 @@ describe('TransferAction', () => {
 
     // 0.3 - 0.1 = 0.2 exacto. Con `number` puro daría 0.19999999999999998.
     expect(updates[0]?.patch.balance).toBe(0.2);
+  });
+
+  // --------------------------------------------------------------------------
+  // Multi-sucursal: traslado de SUCURSAL → NEGOCIO PRINCIPAL (scope='main')
+  // --------------------------------------------------------------------------
+  describe('destinationScope="main" (traslado al negocio principal)', () => {
+    const BRANCH = 100;
+    const MAIN = 1;
+
+    it('camino feliz: debita en la sucursal, acredita en el principal y registra EXPENSE+INCOME en DOS companies con el mismo reference_code', async () => {
+      seedCompany(BRANCH, 'Sucursal Norte', true);
+      setMainForBranch(BRANCH, MAIN, 'Esencia & Granos');
+      seedWallet(5, 100, BRANCH, 'Efectivo Sucursal'); // origen (sucursal)
+      seedBank(9, 40, MAIN, 'Bancolombia Principal'); // destino (principal)
+
+      const result = await action.execute(
+        {
+          sourceType: 'wallet',
+          sourceId: 5,
+          destinationType: 'bank',
+          destinationId: 9,
+          amount: 30,
+          destinationScope: 'main',
+        },
+        BRANCH,
+        { id: 7, fullName: 'Kike Pacheco' },
+      );
+
+      // Débito en la sucursal (100 - 30) y crédito en el principal (40 + 30).
+      const walletUpdate = updates.find((u) => u.entity === 'Wallet');
+      const bankUpdate = updates.find((u) => u.entity === 'Bank');
+      expect(walletUpdate?.patch.balance).toBe(70);
+      expect(walletUpdate?.where.company_id).toBe(String(BRANCH));
+      expect(bankUpdate?.patch.balance).toBe(70);
+      expect(bankUpdate?.where.company_id).toBe(String(MAIN));
+
+      // Dos FinancialMovement: EXPENSE en la sucursal + INCOME en el principal.
+      expect(recordSpy).toHaveBeenCalledTimes(2);
+      const calls = recordSpy.mock.calls as Array<
+        [
+          unknown,
+          {
+            companyId: number;
+            movement_type: string;
+            concept: string;
+            description: string;
+            source_type: string | null;
+            source_id: number | null;
+            destination_type: string | null;
+            destination_id: number | null;
+            reference_code: string;
+          },
+        ]
+      >;
+      const expense = calls[0]?.[1];
+      const income = calls[1]?.[1];
+      if (!expense || !income) {
+        throw new Error('Expected two record calls');
+      }
+
+      // EXPENSE vive en la SUCURSAL, solo con source_*, "Egreso - <principal>"
+      // (nombra el negocio principal, a dónde fue el dinero).
+      expect(expense.companyId).toBe(BRANCH);
+      expect(expense.movement_type).toBe('EXPENSE');
+      expect(expense.concept).toBe('BRANCH_TRANSFER');
+      expect(expense.description).toBe('Egreso - Esencia & Granos');
+      expect(expense.source_type).toBe('wallet');
+      expect(expense.source_id).toBe(5);
+      expect(expense.destination_type).toBeNull();
+      expect(expense.destination_id).toBeNull();
+
+      // INCOME vive en el PRINCIPAL, solo con destination_*, "Ingreso - <sucursal>".
+      expect(income.companyId).toBe(MAIN);
+      expect(income.movement_type).toBe('INCOME');
+      expect(income.concept).toBe('BRANCH_TRANSFER');
+      expect(income.description).toBe('Ingreso - Sucursal Norte');
+      expect(income.source_type).toBeNull();
+      expect(income.source_id).toBeNull();
+      expect(income.destination_type).toBe('bank');
+      expect(income.destination_id).toBe(9);
+
+      // Mismo reference_code para poder emparejar ambos lados.
+      expect(expense.reference_code).toBe(income.reference_code);
+      expect(expense.reference_code).toMatch(/^BRTRF-/);
+
+      expect(result.source).toEqual({ type: 'wallet', id: 5, balance: 70 });
+      expect(result.destination).toEqual({ type: 'bank', id: 9, balance: 70 });
+      expect(result.message).toContain('30.00');
+      expect(result.message).toContain('Bancolombia Principal');
+      expect(result.message).toContain('Esencia & Granos');
+    });
+
+    it('rechaza destino=user con 422 + code INVALID_DESTINATION_FOR_MAIN antes de tocar DB', async () => {
+      let caught: unknown = null;
+      try {
+        await action.execute(
+          {
+            sourceType: 'wallet',
+            sourceId: 5,
+            destinationType: 'user',
+            destinationId: 3,
+            amount: 10,
+            destinationScope: 'main',
+          },
+          BRANCH,
+          { id: 7, fullName: 'K' },
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(UnprocessableEntityException);
+      const response = (caught as UnprocessableEntityException).getResponse() as {
+        payload?: { code?: string };
+      };
+      expect(response.payload?.code).toBe('INVALID_DESTINATION_FOR_MAIN');
+      expect(transactionSpy).not.toHaveBeenCalled();
+    });
+
+    it('rechaza con 422 + code NOT_A_BRANCH si la company del JWT es el negocio principal', async () => {
+      seedCompany(MAIN, 'Esencia & Granos', false); // NO es sucursal
+      seedWallet(5, 100, MAIN);
+      seedBank(9, 0, MAIN);
+
+      let caught: unknown = null;
+      try {
+        await action.execute(
+          {
+            sourceType: 'wallet',
+            sourceId: 5,
+            destinationType: 'bank',
+            destinationId: 9,
+            amount: 10,
+            destinationScope: 'main',
+          },
+          MAIN,
+          { id: 7, fullName: 'K' },
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(UnprocessableEntityException);
+      const response = (caught as UnprocessableEntityException).getResponse() as {
+        payload?: { code?: string };
+      };
+      expect(response.payload?.code).toBe('NOT_A_BRANCH');
+      // No debe haber movido saldo ni registrado movimientos.
+      expect(updates).toHaveLength(0);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 + code MAIN_COMPANY_NOT_FOUND si no se resuelve el principal', async () => {
+      seedCompany(BRANCH, 'Sucursal Norte', true);
+      // No registramos mainByBranch → resolveMainCompanyForBranch devuelve null.
+      seedWallet(5, 100, BRANCH);
+
+      let caught: unknown = null;
+      try {
+        await action.execute(
+          {
+            sourceType: 'wallet',
+            sourceId: 5,
+            destinationType: 'bank',
+            destinationId: 9,
+            amount: 10,
+            destinationScope: 'main',
+          },
+          BRANCH,
+          { id: 7, fullName: 'K' },
+        );
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(NotFoundException);
+      const response = (caught as NotFoundException).getResponse() as {
+        payload?: { code?: string };
+      };
+      expect(response.payload?.code).toBe('MAIN_COMPANY_NOT_FOUND');
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('lanza 422 con saldo insuficiente en la cuenta de la sucursal', async () => {
+      seedCompany(BRANCH, 'Sucursal Norte', true);
+      setMainForBranch(BRANCH, MAIN, 'Principal');
+      seedWallet(5, 5, BRANCH);
+      seedBank(9, 0, MAIN);
+
+      await expect(
+        action.execute(
+          {
+            sourceType: 'wallet',
+            sourceId: 5,
+            destinationType: 'bank',
+            destinationId: 9,
+            amount: 10,
+            destinationScope: 'main',
+          },
+          BRANCH,
+          { id: 7, fullName: 'K' },
+        ),
+      ).rejects.toThrow(/Saldo insuficiente\. Disponible: 5\.00/);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si la cuenta destino no existe en el negocio principal', async () => {
+      seedCompany(BRANCH, 'Sucursal Norte', true);
+      setMainForBranch(BRANCH, MAIN, 'Principal');
+      seedWallet(5, 100, BRANCH);
+      // No sembramos Bank|9|MAIN → destino inexistente en el principal.
+
+      await expect(
+        action.execute(
+          {
+            sourceType: 'wallet',
+            sourceId: 5,
+            destinationType: 'bank',
+            destinationId: 9,
+            amount: 10,
+            destinationScope: 'main',
+          },
+          BRANCH,
+          { id: 7, fullName: 'K' },
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('no debita nada del principal cuando la cuenta destino pertenece a la sucursal (no al principal)', async () => {
+      seedCompany(BRANCH, 'Sucursal Norte', true);
+      setMainForBranch(BRANCH, MAIN, 'Principal');
+      seedWallet(5, 100, BRANCH);
+      // El banco 9 existe pero en la SUCURSAL, no en el principal → 404.
+      seedBank(9, 0, BRANCH);
+
+      await expect(
+        action.execute(
+          {
+            sourceType: 'wallet',
+            sourceId: 5,
+            destinationType: 'bank',
+            destinationId: 9,
+            amount: 10,
+            destinationScope: 'main',
+          },
+          BRANCH,
+          { id: 7, fullName: 'K' },
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('todo el traslado cross-company ocurre dentro de UNA transacción', async () => {
+      seedCompany(BRANCH, 'Sucursal Norte', true);
+      setMainForBranch(BRANCH, MAIN, 'Principal');
+      seedWallet(5, 100, BRANCH);
+      seedBank(9, 0, MAIN);
+
+      await action.execute(
+        {
+          sourceType: 'wallet',
+          sourceId: 5,
+          destinationType: 'bank',
+          destinationId: 9,
+          amount: 50,
+          destinationScope: 'main',
+        },
+        BRANCH,
+        { id: 7, fullName: 'K' },
+      );
+
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

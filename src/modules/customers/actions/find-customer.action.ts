@@ -1,10 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { type Repository } from 'typeorm';
 
 import { Customer } from '@/modules/customers/entities/customer.entity';
-
-import { findCustomerInCompany } from '../internal/customer-lookups';
 
 /**
  * Lectura por id (`GET /customers/:id`).
@@ -24,6 +22,16 @@ export class FindCustomerAction {
   ) {}
 
   async execute(id: number, companyId: number): Promise<Customer> {
-    return findCustomerInCompany(this.repo.manager, id, companyId);
+    // Cargamos la relación `category` para que el detalle exponga la categoría
+    // especial del cliente (id + nombre). Filtro por `id + company_id` —
+    // anti-enumeración cross-tenant (404 si no existe o es de otra company).
+    const customer = await this.repo.findOne({
+      where: { id: String(id), company_id: String(companyId) },
+      relations: { category: true },
+    });
+    if (!customer) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+    return customer;
   }
 }
