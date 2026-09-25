@@ -3,6 +3,19 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Customer, PersonType } from '@/modules/customers/entities/customer.entity';
 
 /**
+ * Forma anidada de la categoría del cliente en la respuesta. Se puebla solo
+ * cuando la relación `category` viene cargada (listado y detalle). `null` si
+ * el cliente no tiene categoría.
+ */
+export class CustomerCategoryNestedDto {
+  @ApiProperty({ example: 3 })
+  id!: number;
+
+  @ApiProperty({ example: 'Cliente Redes Sociales' })
+  name!: string;
+}
+
+/**
  * Shape de respuesta del módulo customers. Espejo del payload de
  * `customers.routes.ts` en PlacePos:
  *
@@ -38,6 +51,12 @@ export class CustomerResponseDto {
 
   @ApiPropertyOptional({ example: 'Av. Principal #123, Caracas', nullable: true })
   address!: string | null;
+
+  @ApiPropertyOptional({ example: 3, nullable: true })
+  category_id!: number | null;
+
+  @ApiPropertyOptional({ type: CustomerCategoryNestedDto, nullable: true })
+  category!: CustomerCategoryNestedDto | null;
 
   // Identidad fiscal (FE). null cuando el negocio no factura electrónicamente.
   @ApiPropertyOptional({ example: 6, nullable: true })
@@ -110,6 +129,12 @@ export function toCustomerResponseDto(customer: Customer): CustomerResponseDto {
     phone: customer.phone,
     doc_number: customer.doc_number,
     address: customer.address,
+    category_id: customer.category_id === null ? null : Number(customer.category_id),
+    // La relación solo viene cargada en listado/detalle. Si no se cargó,
+    // `customer.category` es undefined ⇒ proyectamos null (no rompe el front).
+    category: customer.category
+      ? { id: Number(customer.category.id), name: customer.category.name }
+      : null,
     type_document_identification_id: customer.type_document_identification_id,
     dv: customer.dv,
     type_regime_id: customer.type_regime_id,

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+import { resolveCustomerCategoryId } from '@/modules/customer-categories/internal/customer-category-lookups';
 
 import type { UpdateCustomerDto } from '../dto/update-customer.dto';
 import { Customer } from '../entities/customer.entity';
@@ -61,6 +62,12 @@ export class UpdateCustomerAction {
       }
       if (dto.address !== undefined) {
         patch.address = dto.address?.trim() || null;
+      }
+      // `category_id` presente en el DTO ⇒ cambiar la categoría. `null` la
+      // limpia; un id se valida contra la company (activa) dentro de la TX.
+      // Ausente ⇒ no se toca.
+      if (dto.category_id !== undefined) {
+        patch.category_id = await resolveCustomerCategoryId(manager, dto.category_id, companyId);
       }
 
       if (Object.keys(patch).length === 0) {

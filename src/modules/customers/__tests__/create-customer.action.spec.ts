@@ -1,6 +1,8 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
+
+import { CustomerCategory } from '@/modules/customer-categories/entities/customer-category.entity';
 
 import { CreateCustomerAction } from '../actions/create-customer.action';
 import type { Customer } from '../entities/customer.entity';
@@ -27,11 +29,17 @@ describe('CreateCustomerAction', () => {
   // el gate `assertElectronicBillingEnabled`). Por defecto activa.
   let feEnabled: boolean;
   let queryMock: jest.Mock;
+  // Categorías de cliente activas de la company, para validar category_id.
+  let dbCategories: CustomerCategory[];
 
   beforeEach(async () => {
     savedCustomer = null;
     createdInput = null;
     feEnabled = true;
+    dbCategories = [
+      { id: '3', company_id: '1', name: 'Redes', is_archived: false } as CustomerCategory,
+      { id: '9', company_id: '1', name: 'Archivada', is_archived: true } as CustomerCategory,
+    ];
 
     queryMock = jest.fn(() => Promise.resolve([{ electronic_billing_enabled: feEnabled }]));
 
@@ -49,6 +57,17 @@ describe('CreateCustomerAction', () => {
           updated_at: new Date('2026-05-12T14:30:00.000Z'),
         };
         return Promise.resolve(savedCustomer);
+      }),
+      findOne: jest.fn((entity: unknown, opts: { where: { id: string; company_id: string } }) => {
+        // Solo `resolveCustomerCategoryId` usa findOne (con CustomerCategory).
+        if (entity === CustomerCategory) {
+          return Promise.resolve(
+            dbCategories.find(
+              (c) => c.id === opts.where.id && c.company_id === opts.where.company_id,
+            ) ?? null,
+          );
+        }
+        return Promise.resolve(null);
       }),
       query: queryMock,
     };
@@ -124,6 +143,35 @@ describe('CreateCustomerAction', () => {
     await action.execute({ name: 'X' }, 1, { id: 17, fullName: 'Kike Pacheco' });
     expect(createdInput?.created_by).toBe('Kike Pacheco');
     expect(createdInput?.created_by_id).toBe('17');
+  });
+
+  describe('categoría especial (customer_categories)', () => {
+    it('sin category_id: no consulta categorías y deja category_id en null', async () => {
+      await action.execute({ name: 'Sin categoría' }, 1, { id: 1, fullName: 'Owner' });
+      expect(createdInput?.category_id).toBeNull();
+    });
+
+    it('con category_id válido: lo asigna (normalizado a string)', async () => {
+      await action.execute({ name: 'Con categoría', category_id: 3 }, 1, {
+        id: 1,
+        fullName: 'Owner',
+      });
+      expect(createdInput?.category_id).toBe('3');
+    });
+
+    it('400 si la categoría no existe / es de otra company', async () => {
+      await expect(
+        action.execute({ name: 'X', category_id: 999 }, 1, { id: 1, fullName: 'Owner' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(savedCustomer).toBeNull();
+    });
+
+    it('400 si la categoría está archivada', async () => {
+      await expect(
+        action.execute({ name: 'X', category_id: 9 }, 1, { id: 1, fullName: 'Owner' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(savedCustomer).toBeNull();
+    });
   });
 
   describe('identidad fiscal (Facturación Electrónica)', () => {

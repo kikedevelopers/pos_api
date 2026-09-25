@@ -1,6 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
+
+import { CustomerCategory } from '@/modules/customer-categories/entities/customer-category.entity';
 
 import { UpdateCustomerAction } from '../actions/update-customer.action';
 import type { Customer } from '../entities/customer.entity';
@@ -22,10 +24,16 @@ describe('UpdateCustomerAction', () => {
   let lastUpdatePatch: Partial<Customer> | null;
   let feEnabled: boolean;
   let queryMock: jest.Mock;
+  // Categorías de cliente activas de la company 42, para validar category_id.
+  let dbCategories: CustomerCategory[];
 
   beforeEach(async () => {
     feEnabled = true;
     queryMock = jest.fn(() => Promise.resolve([{ electronic_billing_enabled: feEnabled }]));
+    dbCategories = [
+      { id: '3', company_id: '42', name: 'Redes', is_archived: false } as CustomerCategory,
+      { id: '9', company_id: '42', name: 'Archivada', is_archived: true } as CustomerCategory,
+    ];
     dbCustomers = [
       {
         id: '1',
@@ -50,9 +58,18 @@ describe('UpdateCustomerAction', () => {
     const managerMock = {
       findOne: jest.fn(
         (
-          _entity: unknown,
+          entity: unknown,
           opts: { where: { id: string; company_id: string } },
-        ): Promise<Customer | null> => {
+        ): Promise<Customer | CustomerCategory | null> => {
+          // `resolveCustomerCategoryId` consulta CustomerCategory; el resto,
+          // Customer. Ramificamos por entidad para no cruzar los stores.
+          if (entity === CustomerCategory) {
+            return Promise.resolve(
+              dbCategories.find(
+                (c) => c.id === opts.where.id && c.company_id === opts.where.company_id,
+              ) ?? null,
+            );
+          }
           return Promise.resolve(
             dbCustomers.find(
               (c) => c.id === opts.where.id && c.company_id === opts.where.company_id,
@@ -111,6 +128,37 @@ describe('UpdateCustomerAction', () => {
     await action.execute(1, { email: undefined }, 42);
     // `undefined` significa "no tocar". El patch debe ser {}.
     expect(lastUpdatePatch).toBeNull();
+  });
+
+  describe('categoría especial (customer_categories)', () => {
+    it('asigna category_id cuando la categoría existe y está activa', async () => {
+      await action.execute(1, { category_id: 3 }, 42);
+      expect(lastUpdatePatch).toEqual({ category_id: '3' });
+    });
+
+    it('limpia la categoría con category_id=null', async () => {
+      await action.execute(1, { category_id: null }, 42);
+      expect(lastUpdatePatch).toEqual({ category_id: null });
+    });
+
+    it('category_id ausente ⇒ no toca la categoría', async () => {
+      await action.execute(1, { name: 'Juan II' }, 42);
+      expect(lastUpdatePatch).toEqual({ name: 'Juan II' });
+    });
+
+    it('400 si la categoría no existe / es de otra company', async () => {
+      await expect(action.execute(1, { category_id: 999 }, 42)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(lastUpdatePatch).toBeNull();
+    });
+
+    it('400 si la categoría está archivada', async () => {
+      await expect(action.execute(1, { category_id: 9 }, 42)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(lastUpdatePatch).toBeNull();
+    });
   });
 
   describe('identidad fiscal (Facturación Electrónica)', () => {

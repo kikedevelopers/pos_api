@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { assertElectronicBillingEnabled } from '@/common/electronic-billing/electronic-billing.util';
+import { resolveCustomerCategoryId } from '@/modules/customer-categories/internal/customer-category-lookups';
 
 import type { CreateCustomerDto } from '../dto/create-customer.dto';
 import { Customer, PersonType } from '../entities/customer.entity';
@@ -53,6 +54,11 @@ export class CreateCustomerAction {
         await assertElectronicBillingEnabled(manager, companyId);
       }
 
+      // Valida que la categoría (si viene) pertenezca a la company y esté
+      // activa DENTRO de la transacción — 400 si el id es inválido. `null`/
+      // ausente ⇒ cliente sin categoría.
+      const category_id = await resolveCustomerCategoryId(manager, dto.category_id, companyId);
+
       const customer = manager.create(Customer, {
         company_id: String(companyId),
         person_type: dto.person_type ?? PersonType.INDIVIDUAL,
@@ -61,6 +67,7 @@ export class CreateCustomerAction {
         phone: dto.phone?.trim() || null,
         doc_number: dto.doc_number?.trim() || null,
         address: dto.address?.trim() || null,
+        category_id,
         ...extractFiscalFields(dto),
         // balance NO viene del DTO. Se fija a 0 en el create. Mutación en
         // fases 6/8/9.
