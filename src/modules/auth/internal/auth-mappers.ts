@@ -133,6 +133,7 @@ export function companyToCompanyProfileItemDto(
   company: Company,
   logger: Logger,
   isActive = true,
+  receivesSharedInventory = false,
 ): CompanyProfileItemDto {
   return {
     id: bigintToNumber(company.id, logger, 'Company'),
@@ -151,5 +152,10 @@ export function companyToCompanyProfileItemDto(
     // perfil para que el cliente sepa desde el login si mostrar la UI fiscal
     // (select de IVA, desglose por precio). Default false por resiliencia.
     electronic_billing_enabled: company.electronic_billing_enabled ?? false,
+    // Multi-sucursal: si esta company recibe inventario compartido del principal
+    // (target de algún inventory_shares). El cliente lo usa para avisar que el
+    // inventario de la sucursal es compartido. Lo computa el caller (list-branches
+    // / get-profile); default false para los callers que no lo resuelven.
+    receives_shared_inventory: receivesSharedInventory,
   };
 }

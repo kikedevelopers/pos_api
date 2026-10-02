@@ -88,7 +88,8 @@ export class GetProfileAction {
 
     // Empleados: sin membresías ni selector — una sola company (la del JWT).
     if (authUser.account === 'employee') {
-      const companyItem = companyToCompanyProfileItemDto(company, this.logger);
+      const receivesShared = await this.companyReceivesSharedInventory(company.id);
+      const companyItem = companyToCompanyProfileItemDto(company, this.logger, true, receivesShared);
       return {
         company_profile: { primary: companyItem, companies: [companyItem] },
         user_profile: userProfile,
@@ -102,12 +103,32 @@ export class GetProfileAction {
     const companies = await this.listBranchesAction.execute(authUser.user_id);
     const primary =
       companies.find((c) => c.id === Number(authUser.company_id)) ??
-      companyToCompanyProfileItemDto(company, this.logger);
+      companyToCompanyProfileItemDto(
+        company,
+        this.logger,
+        true,
+        await this.companyReceivesSharedInventory(company.id),
+      );
 
     return {
       company_profile: { primary, companies },
       user_profile: userProfile,
     };
+  }
+
+  /**
+   * `true` si la company RECIBE inventario compartido del principal (es target
+   * de algún `inventory_shares`). Se usa para avisar en el cliente que el
+   * inventario de la sucursal es compartido. El clonado NO cuenta.
+   */
+  private async companyReceivesSharedInventory(companyId: string): Promise<boolean> {
+    const rows = await this.companiesRepo.manager.query<Array<{ exists: boolean }>>(
+      `SELECT EXISTS (
+         SELECT 1 FROM inventory_shares WHERE target_company_id = $1
+       ) AS exists`,
+      [String(companyId)],
+    );
+    return rows[0]?.exists === true;
   }
 
   /**

@@ -97,6 +97,16 @@ export class CompanyProfileItemDto {
    */
   @ApiProperty({ example: false })
   electronic_billing_enabled!: boolean;
+
+  /**
+   * Multi-sucursal: `true` cuando esta company RECIBE inventario compartido del
+   * negocio principal (es target de al menos un `inventory_shares`). El cliente
+   * lo usa para avisar, bajo el nombre de la sucursal, que su inventario es
+   * compartido (mismo stock del principal). El clonado NO cuenta (es una copia
+   * independiente, no un share). Default `false` por resiliencia a version-skew.
+   */
+  @ApiProperty({ example: false })
+  receives_shared_inventory!: boolean;
 }
 
 /**
