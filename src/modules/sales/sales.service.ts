@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
 import type { CreditNote } from '@/modules/credit-notes/entities/credit-note.entity';
+import { PaymentsService } from '@/modules/payments/payments.service';
+import type {
+  ProcessPaymentActor,
+  ProcessPaymentResult,
+} from '@/modules/payments/actions/process-payment.action';
+import type { ProcessPaymentDto } from '@/modules/payments/dto/process-payment.dto';
 
 import {
   CollectSaleBalanceAction,
@@ -77,6 +83,7 @@ export class SalesService {
     private readonly getConsolidatedInvoiceAction: GetConsolidatedInvoiceAction,
     private readonly getConsolidatedInvoiceUpToAction: GetConsolidatedInvoiceUpToAction,
     private readonly getSaleCreditNoteAction: GetSaleCreditNoteAction,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   findAll(
@@ -176,5 +183,26 @@ export class SalesService {
     actor: ProcessLoanActor,
   ): Promise<ProcessLoanResult> {
     return this.convertOrderToLoanAction.execute(invoiceId, dto, companyId, actor);
+  }
+
+  /**
+   * Convierte un préstamo a tercero (LOAN) en una venta (SALE), reusando el flujo
+   * de cobro de un pedido pero SIN descontar inventario (la mercancía ya salió al
+   * crear el préstamo). El remanente no cubierto por tenders queda a crédito.
+   */
+  convertLoanToSale(
+    invoiceId: number,
+    dto: ProcessPaymentDto,
+    companyId: number,
+    actor: ProcessPaymentActor,
+    idempotencyKey?: string | null,
+  ): Promise<ProcessPaymentResult> {
+    // El id de la URL manda sobre el body (defensa anti-inconsistencia).
+    return this.paymentsService.convertLoanToSale(
+      { ...dto, invoice_id: invoiceId },
+      companyId,
+      actor,
+      idempotencyKey,
+    );
   }
 }

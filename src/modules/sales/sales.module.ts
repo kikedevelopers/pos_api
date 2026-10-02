@@ -10,6 +10,7 @@ import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { Customer } from '@/modules/customers/entities/customer.entity';
 import { CustomersModule } from '@/modules/customers/customers.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+import { PaymentsModule } from '@/modules/payments/payments.module';
 import { Packaging } from '@/modules/packagings/entities/packaging.entity';
 import { Product } from '@/modules/products/entities/product.entity';
 import { ProductPrice } from '@/modules/products/entities/product-price.entity';
@@ -87,6 +88,10 @@ import { SalesService } from './sales.service';
     // Gate fail-closed del préstamo a tercero: `ConvertOrderToLoanAction`
     // inyecta `GetEnableThirdPartyLoanAction` (exportado por este módulo).
     AppSettingsModule,
+    // Convertir un préstamo (LOAN) en venta reusa el flujo de cobro
+    // (`PaymentsService.convertLoanToSale` → `ProcessPaymentAction`). PaymentsModule
+    // NO importa SalesModule, así que no hay dependencia circular.
+    PaymentsModule,
   ],
   controllers: [SalesController],
   providers: [

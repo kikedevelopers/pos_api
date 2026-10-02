@@ -95,6 +95,19 @@ export interface ProcessPaymentResult {
 }
 
 /**
+ * Opciones internas del procesamiento. Hoy solo `fromLoanConversion`: cuando es
+ * `true`, la factura de origen es un PRÉSTAMO (LOAN) que se convierte en venta,
+ * no un pedido (ORDER). El flujo es idéntico al cobro de un pedido (folio SALE,
+ * tenders, crédito, caja/banco, timeline, puntos) EXCEPTO que NO descuenta
+ * inventario: el préstamo ya sacó la mercancía al crearse. Lo activa el endpoint
+ * dedicado `POST /sales/:id/convert-to-sale`; el `POST /payments` normal jamás lo
+ * pasa (sigue aceptando solo ORDER).
+ */
+export interface ProcessPaymentOptions {
+  fromLoanConversion?: boolean;
+}
+
+/**
  * Códigos de error PlacePos para `POST /payments`. PlacePos los emite con el
  * mismo string — los preservamos textualmente para que el frontend pueda
  * ramificar sin diff entre modo local y cloud.
@@ -102,6 +115,8 @@ export interface ProcessPaymentResult {
 const ERR = {
   INVOICE_NOT_FOUND: 'INVOICE_NOT_FOUND',
   INVOICE_NOT_ORDER: 'INVOICE_NOT_ORDER',
+  /** Conversión de préstamo: la factura no es un préstamo (LOAN). */
+  INVOICE_NOT_LOAN: 'INVOICE_NOT_LOAN',
   AMOUNT_MISMATCH: 'AMOUNT_MISMATCH',
   /** El desglose de tenders + crédito no suma `amount_due` (±0.01). */
   PAYMENT_BREAKDOWN_MISMATCH: 'PAYMENT_BREAKDOWN_MISMATCH',
@@ -188,6 +203,7 @@ export class ProcessPaymentAction {
     companyId: number,
     actor: ProcessPaymentActor,
     idempotencyKey?: string | null,
+    options: ProcessPaymentOptions = {},
   ): Promise<ProcessPaymentResult> {
     // 0. Enforcement early de `override_margin`. Solo `owner | superadmin`
     //    pueden activar la flag. Un `manager` que la envíe recibe 403 ANTES
@@ -222,7 +238,7 @@ export class ProcessPaymentAction {
     try {
       return await this.dataSource.transaction<ProcessPaymentResult>(
         'SERIALIZABLE',
-        async (manager) => this.run(manager, dto, companyId, actor, idempotencyKey ?? null),
+        async (manager) => this.run(manager, dto, companyId, actor, idempotencyKey ?? null, options),
       );
     } catch (error) {
       // Anticipo insuficiente (o monto no positivo): el lock del cliente en
@@ -262,7 +278,10 @@ export class ProcessPaymentAction {
     companyId: number,
     actor: ProcessPaymentActor,
     idempotencyKey: string | null,
+    options: ProcessPaymentOptions = {},
   ): Promise<ProcessPaymentResult> {
+    const fromLoanConversion = options.fromLoanConversion === true;
+
     // 1. Lookup venta con lock pessimistic_write.
     const sale = await manager.findOne(SaleInvoice, {
       where: {
@@ -276,8 +295,18 @@ export class ProcessPaymentAction {
       return this.fail('Factura no encontrada', ERR.INVOICE_NOT_FOUND);
     }
 
-    // 2. Solo ORDER es procesable.
-    if (sale.ticket_type !== TicketType.ORDER) {
+    // 2. Tipo procesable según el origen:
+    //    - Cobro normal → solo ORDER (un pedido que se convierte en venta).
+    //    - Conversión de préstamo → solo LOAN (la mercancía ya salió; aquí se
+    //      constituye la venta a crédito). NUNCA se re-cobra una SALE.
+    if (fromLoanConversion) {
+      if (sale.ticket_type !== TicketType.LOAN) {
+        return this.fail(
+          'Solo se puede convertir en venta un préstamo a tercero (LOAN)',
+          ERR.INVOICE_NOT_LOAN,
+        );
+      }
+    } else if (sale.ticket_type !== TicketType.ORDER) {
       return this.fail('Solo se pueden procesar pagos de pedidos (ORDER)', ERR.INVOICE_NOT_ORDER);
     }
 
@@ -462,13 +491,17 @@ export class ProcessPaymentAction {
     //    (reason=SALE, reference_type=sale_invoice). El helper aborta con
     //    InsufficientStockError (422) si el descuento dejaría stock negativo
     //    y no llegó override.
+    //
+    //    CONVERSIÓN DE PRÉSTAMO: se OMITE. Un préstamo a tercero ya descontó la
+    //    mercancía del inventario al crearse (ORDER→LOAN con DEDUCT). Convertirlo
+    //    en venta NO vuelve a sacar stock; solo constituye la venta a crédito.
     const lines = await manager.find(SaleInvoiceLine, {
       where: {
         sale_invoice_id: sale.id,
         company_id: String(companyId),
       },
     });
-    if (lines.length > 0) {
+    if (!fromLoanConversion && lines.length > 0) {
       const inventoryLines = lines.map((l) => ({
         item_id: Number(l.product_id),
         quantity: Number(l.quantity),
