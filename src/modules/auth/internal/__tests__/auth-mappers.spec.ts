@@ -3,7 +3,13 @@ import type { Logger } from '@nestjs/common';
 import type { Employee } from '@/modules/employees/entities/employee.entity';
 import type { User } from '@/modules/users/entities/user.entity';
 
-import { employeeToUserProfileDto, userToUserProfileDto } from '../auth-mappers';
+import type { Company } from '@/modules/companies/entities/company.entity';
+
+import {
+  companyToCompanyProfileItemDto,
+  employeeToUserProfileDto,
+  userToUserProfileDto,
+} from '../auth-mappers';
 
 const logger = { warn: jest.fn(), error: jest.fn() } as unknown as Logger;
 
@@ -84,6 +90,37 @@ describe('auth-mappers · can_view_cash en UserProfileDto (paridad PlacePos)', (
       employeeToUserProfileDto({ ...base, can_view_cash: false } as unknown as Employee, logger, [])
         .can_view_cash,
     ).toBe(false);
+  });
+});
+
+describe('auth-mappers · receives_shared_inventory en CompanyProfileItemDto', () => {
+  const company = {
+    id: '11',
+    name: 'Esencia & Grano - la 28',
+    is_branch: true,
+    balance: '0',
+    document_number: null,
+    address: null,
+    email: null,
+    phone_number: null,
+    created_at: new Date('2025-01-01T00:00:00.000Z'),
+    updated_at: new Date('2025-01-01T00:00:00.000Z'),
+    electronic_billing_enabled: false,
+  } as unknown as Company;
+
+  it('default false cuando el caller no lo resuelve', () => {
+    const dto = companyToCompanyProfileItemDto(company, logger);
+    expect(dto.receives_shared_inventory).toBe(false);
+  });
+
+  it('true cuando el caller indica que la sucursal recibe inventario compartido', () => {
+    const dto = companyToCompanyProfileItemDto(company, logger, true, true);
+    expect(dto.receives_shared_inventory).toBe(true);
+  });
+
+  it('false explícito cuando el caller lo resuelve como no compartido (p. ej. clonado)', () => {
+    const dto = companyToCompanyProfileItemDto(company, logger, true, false);
+    expect(dto.receives_shared_inventory).toBe(false);
   });
 });
 

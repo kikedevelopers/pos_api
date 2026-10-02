@@ -39,9 +39,27 @@ export class ListBranchesAction {
     // Estado activa/suspendida por company (multi-sucursal gating).
     const activeById = new Map(members.map((m) => [m.company_id, m.is_active]));
 
+    // Companies que RECIBEN inventario compartido del principal (son target de
+    // algún inventory_shares). Una sola query para todo el set del owner.
+    const sharedRows = await this.companiesRepo.manager.query<
+      Array<{ target_company_id: string }>
+    >(
+      `SELECT DISTINCT target_company_id FROM inventory_shares
+       WHERE target_company_id = ANY($1::bigint[])`,
+      [companyIds.map(String)],
+    );
+    const receivesSharedById = new Set(sharedRows.map((r) => String(r.target_company_id)));
+
     // Negocio principal (is_branch=false) primero, luego sucursales por id.
     return companies
-      .map((c) => companyToCompanyProfileItemDto(c, this.logger, activeById.get(c.id) ?? true))
+      .map((c) =>
+        companyToCompanyProfileItemDto(
+          c,
+          this.logger,
+          activeById.get(c.id) ?? true,
+          receivesSharedById.has(String(c.id)),
+        ),
+      )
       .sort((a, b) => {
         if (a.is_branch !== b.is_branch) {
           return a.is_branch ? 1 : -1;

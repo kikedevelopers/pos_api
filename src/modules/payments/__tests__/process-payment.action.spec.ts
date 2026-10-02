@@ -25,10 +25,12 @@ jest.mock('@/modules/products/internal/adjust-inventory.helper', () => ({
 }));
 
 import { getOrCreateCashRegisterForUser } from '@/modules/cash-register/internal/get-or-create-cash-register-for-user.helper';
+import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 
 const getOrCreateMock = getOrCreateCashRegisterForUser as jest.MockedFunction<
   typeof getOrCreateCashRegisterForUser
 >;
+const adjustInventoryMock = adjustInventory as jest.MockedFunction<typeof adjustInventory>;
 
 /**
  * Tests del refactor a PAGO DIVIDIDO (split tender) de `ProcessPaymentAction`.
@@ -62,6 +64,10 @@ describe('ProcessPaymentAction (split tender)', () => {
   // test para cubrir suficiente / insuficiente / sin cliente).
   let customerAdvanceBalance: number;
   let saleCustomerId: string | null;
+  // Tipo de la factura mock y sus líneas (configurables: la conversión de
+  // préstamo exige ticket_type=LOAN y verifica que NO se descuenta inventario).
+  let saleTicketType: string;
+  let saleLines: Array<Record<string, unknown>>;
 
   // Estado del repo (fuera de TX) para el fast-path idempotente.
   let existingPaymentsByUuid: Map<string, { id: string; sale_invoice_id: string }>;
@@ -78,7 +84,7 @@ describe('ProcessPaymentAction (split tender)', () => {
               id: '142',
               company_id: String(where.company_id),
               customer_id: saleCustomerId,
-              ticket_type: 'ORDER',
+              ticket_type: saleTicketType,
               total: 150,
               cost: 80,
               is_deleted: false,
@@ -99,7 +105,9 @@ describe('ProcessPaymentAction (split tender)', () => {
           return Promise.resolve(null);
         },
       ),
-      find: jest.fn().mockResolvedValue([]), // sin líneas → no toca inventario
+      // Líneas de la factura (default []). Acepta args (entity, options) porque
+      // `getRepository().find` delega aquí con dos argumentos.
+      find: jest.fn((_entity?: unknown, _options?: unknown) => Promise.resolve(saleLines)),
       // HISTORIAL DE ESTADOS: `recordSaleStatus` inserta un evento
       // (COLLECTED / CREDIT_OPENED) vía `manager.insert`. No afecta el resto de
       // aserciones; solo debe existir como no-op resoluble.
@@ -155,9 +163,12 @@ describe('ProcessPaymentAction (split tender)', () => {
     savedPaymentSeq = 100;
     customerAdvanceBalance = 500;
     saleCustomerId = '55';
+    saleTicketType = 'ORDER';
+    saleLines = [];
     existingPaymentsByUuid = new Map();
     paymentsByInvoice = new Map();
 
+    adjustInventoryMock.mockClear();
     getOrCreateMock.mockReset();
     getOrCreateMock.mockImplementation(() =>
       Promise.resolve({
@@ -633,5 +644,111 @@ describe('ProcessPaymentAction (split tender)', () => {
     // Caja sube solo por el tender CASH (50).
     const cashUpdate = updates.find((u) => u.entity === 'CashRegister');
     expect(cashUpdate?.patch.balance).toBe(1050); // 1000 + 50
+  });
+
+  // --------------------------------------------------------------------------
+  // Conversión de PRÉSTAMO (LOAN → SALE): mismo flujo de cobro, SIN inventario.
+  // --------------------------------------------------------------------------
+  describe('conversión de préstamo (fromLoanConversion)', () => {
+    it('crédito puro: convierte el LOAN en SALE con crédito 150 y NO descuenta inventario aunque haya líneas', async () => {
+      saleTicketType = 'LOAN';
+      // Con líneas presentes: si NO se saltara el inventario, adjustInventory se
+      // llamaría. La conversión debe omitirlo (la mercancía ya salió).
+      saleLines = [{ product_id: '1', quantity: 2, packaging_value: null, combo_recipe: null }];
+      const dto: ProcessPaymentDto = {
+        invoice_id: 142,
+        amount_due: 150,
+        payments: [],
+        is_credit: true,
+        credit_amount: 150,
+      };
+
+      const result = await action.execute(dto, 42, actor, null, { fromLoanConversion: true });
+      expect(result.success).toBe(true);
+
+      // Se constituyó la venta: folio SALE + ticket_type=SALE.
+      const saleUpdate = updates.find(
+        (u) => u.entity === 'SaleInvoice' && u.patch.ticket_type === 'SALE',
+      );
+      expect(saleUpdate).toBeDefined();
+      expect(saleUpdate?.patch.sale_number).toBe('SALE-001');
+
+      // Se creó el crédito por el total y NINGÚN SalePayment (crédito puro).
+      expect(saves.some((s) => s.entity === 'SaleCredit')).toBe(true);
+      expect(saves.some((s) => s.entity === 'SalePayment')).toBe(false);
+
+      // CLAVE: la mercancía ya salió con el préstamo → NO se vuelve a descontar.
+      expect(adjustInventoryMock).not.toHaveBeenCalled();
+    });
+
+    it('abono inicial + resto a crédito: CASH 50 + crédito 100, sin descontar inventario', async () => {
+      saleTicketType = 'LOAN';
+      saleLines = [{ product_id: '1', quantity: 1, packaging_value: null, combo_recipe: null }];
+      const dto: ProcessPaymentDto = {
+        invoice_id: 142,
+        amount_due: 150,
+        payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 50, change_amount: 0 }],
+        is_credit: true,
+        credit_amount: 100,
+      };
+
+      const result = await action.execute(dto, 42, actor, null, { fromLoanConversion: true });
+      expect(result.success).toBe(true);
+
+      // Un SalePayment (el abono) + un SaleCredit por el remanente.
+      expect(saves.filter((s) => s.entity === 'SalePayment')).toHaveLength(1);
+      expect(saves.some((s) => s.entity === 'SaleCredit')).toBe(true);
+      // Caja sube por el abono (1000 + 50).
+      const cashUpdate = updates.find((u) => u.entity === 'CashRegister');
+      expect(cashUpdate?.patch.balance).toBe(1050);
+      // Sin descuento de inventario.
+      expect(adjustInventoryMock).not.toHaveBeenCalled();
+    });
+
+    it('con el flag pero la factura NO es un préstamo (ORDER) → INVOICE_NOT_LOAN', async () => {
+      saleTicketType = 'ORDER';
+      const dto: ProcessPaymentDto = {
+        invoice_id: 142,
+        amount_due: 150,
+        payments: [],
+        is_credit: true,
+        credit_amount: 150,
+      };
+
+      const result = await action.execute(dto, 42, actor, null, { fromLoanConversion: true });
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('INVOICE_NOT_LOAN');
+    });
+
+    it('SIN el flag, un LOAN se sigue rechazando en el cobro normal → INVOICE_NOT_ORDER', async () => {
+      saleTicketType = 'LOAN';
+      const dto: ProcessPaymentDto = {
+        invoice_id: 142,
+        amount_due: 150,
+        payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 }],
+        is_credit: false,
+        credit_amount: 0,
+      };
+
+      const result = await action.execute(dto, 42, actor, null);
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('INVOICE_NOT_ORDER');
+    });
+
+    it('el cobro normal de un ORDER con líneas SÍ descuenta inventario (control)', async () => {
+      saleTicketType = 'ORDER';
+      saleLines = [{ product_id: '1', quantity: 1, packaging_value: null, combo_recipe: null }];
+      const dto: ProcessPaymentDto = {
+        invoice_id: 142,
+        amount_due: 150,
+        payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 }],
+        is_credit: false,
+        credit_amount: 0,
+      };
+
+      const result = await action.execute(dto, 42, actor, null);
+      expect(result.success).toBe(true);
+      expect(adjustInventoryMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

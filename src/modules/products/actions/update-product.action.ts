@@ -26,6 +26,7 @@ import {
   assertPackagingBelongsToCompany,
   assertParentBelongsToCompany,
   assertParentIsNotCombo,
+  assertProductNotShared,
   findProductInCompany,
 } from '../internal/product-lookups';
 import { loadParentTaxRateId, resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
@@ -78,6 +79,12 @@ export class UpdateProductAction {
     }
 
     return this.dataSource.transaction<Product>(async (manager) => {
+      // FASE 2 (COMPARTIR): un producto compartido por el principal es solo
+      // lectura en la sucursal. Se rechaza ANTES del lookup con un mensaje claro
+      // (403 + code), en vez del 404 "no encontrado" que daría el filtro por
+      // company_id (el producto existe, solo que no es de esta company).
+      await assertProductNotShared(manager, id, companyId);
+
       const existing = await findProductInCompany(manager, id, companyId, {
         withRelations: true,
       });
@@ -127,13 +134,16 @@ export class UpdateProductAction {
       if (finalParentId !== null) {
         finalTaxRateId = await loadParentTaxRateId(manager, finalParentId, companyId);
       } else {
-        finalTaxRateId =
-          dto.tax_rate_id !== undefined
-            ? (dto.tax_rate_id ?? null)
-            : existing.tax_rate_id === null
-              ? null
-              : Number(existing.tax_rate_id);
-        if (dto.tax_rate_id != null) {
+        const prevTaxRateId = existing.tax_rate_id === null ? null : Number(existing.tax_rate_id);
+        finalTaxRateId = dto.tax_rate_id !== undefined ? (dto.tax_rate_id ?? null) : prevTaxRateId;
+        // El gate de FE solo aplica cuando se ASIGNA o CAMBIA la tarifa a un
+        // valor NO nulo — eso sí es una operación de Facturación Electrónica.
+        // Reenviar la MISMA tarifa que el producto ya tenía (típico al editar
+        // solo el nombre/stock: el form la manda de vuelta tal cual) NO es una
+        // operación FE y no debe bloquearse aunque FE esté deshabilitada; si no,
+        // un producto que quedó con tarifa (FE activa antes, luego apagada)
+        // sería INEDITABLE. Quitar la tarifa (→ null) tampoco se gatea.
+        if (finalTaxRateId !== null && finalTaxRateId !== prevTaxRateId) {
           await assertElectronicBillingEnabled(manager, companyId);
         }
       }

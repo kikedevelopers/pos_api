@@ -26,4 +26,21 @@ export class PaymentsService {
   ): Promise<ProcessPaymentResult> {
     return this.processPaymentAction.execute(dto, companyId, actor, idempotencyKey);
   }
+
+  /**
+   * Convierte un PRÉSTAMO a tercero (LOAN) en una VENTA (SALE) usando el mismo
+   * flujo de cobro que un pedido, pero SIN descontar inventario (la mercancía ya
+   * salió al crear el préstamo). El remanente no cubierto por tenders queda como
+   * crédito. Lo usa `POST /sales/:id/convert-to-sale`.
+   */
+  convertLoanToSale(
+    dto: ProcessPaymentDto,
+    companyId: number,
+    actor: ProcessPaymentActor,
+    idempotencyKey?: string | null,
+  ): Promise<ProcessPaymentResult> {
+    return this.processPaymentAction.execute(dto, companyId, actor, idempotencyKey, {
+      fromLoanConversion: true,
+    });
+  }
 }

@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Logger,
@@ -34,6 +36,8 @@ import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import type { CollectSaleBalanceResult } from './actions/collect-sale-balance.action';
 import type { ProcessLoanResult } from './actions/convert-order-to-loan.action';
+import type { ProcessPaymentResult } from '@/modules/payments/actions/process-payment.action';
+import { ProcessPaymentDto } from '@/modules/payments/dto/process-payment.dto';
 import type { DeleteSalePaymentResult } from './actions/delete-sale-payment.action';
 import type { LastSaleResult } from './actions/get-last-sale.action';
 import { CollectSaleBalanceDto } from './dto/collect-sale-balance.dto';
@@ -60,6 +64,10 @@ import { UpdateSaleDto } from './dto/update-sale.dto';
 import { VoidSaleDto } from './dto/void-sale.dto';
 import type { ConsolidatedInvoice } from './internal/consolidate-invoice.helper';
 import { SalesService } from './sales.service';
+
+// Valida el header `Idempotency-Key` de `POST /sales/:id/convert-to-sale`
+// (paridad con `POST /payments`).
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Endpoints `/sales`. Espejo de PlacePos `sales.routes.ts`.
@@ -527,6 +535,75 @@ export class SalesController {
     }
 
     // Replay idempotente → 200 OK; primer registro → 201 CREATED.
+    res.status(result.replay === true ? HttpStatus.OK : HttpStatus.CREATED);
+
+    const { replay: _replay, ...publicResult } = result;
+    void _replay;
+    return publicResult;
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /sales/:id/convert-to-sale — convierte un préstamo (LOAN) en venta
+  // --------------------------------------------------------------------------
+
+  @Post(':id/convert-to-sale')
+  @Roles('owner')
+  @ApiOperation({
+    summary:
+      'Convierte un préstamo a tercero (LOAN) en una VENTA (SALE) reusando el flujo ' +
+      'de cobro de un pedido: genera folio SALE, registra tenders + crédito por el ' +
+      'remanente y su timeline. NO descuenta inventario (la mercancía ya salió al ' +
+      'crear el préstamo). Solo owner. Acepta header opcional Idempotency-Key (UUID v4).',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: ProcessPaymentDto })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Préstamo convertido en venta.' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'La factura no es un préstamo (INVOICE_NOT_LOAN), mismatch de monto, etc.',
+  })
+  async convertToSale(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ProcessPaymentDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('idempotency-key') idempotencyKeyHeader?: string,
+  ): Promise<ProcessPaymentResult> {
+    // Idempotencia: header UUID v4 gana; si no, el `client_operation_id` del body
+    // (paridad con `POST /payments`).
+    let idempotencyKey: string | null = null;
+    if (idempotencyKeyHeader !== undefined && idempotencyKeyHeader !== '') {
+      if (!UUID_V4_REGEX.test(idempotencyKeyHeader)) {
+        throw new BadRequestException({
+          message: 'Idempotency-Key debe ser un UUID v4 válido.',
+          payload: { code: 'INVALID_IDEMPOTENCY_KEY' },
+        });
+      }
+      idempotencyKey = idempotencyKeyHeader;
+    } else if (dto.client_operation_id) {
+      idempotencyKey = dto.client_operation_id;
+    }
+
+    const result = await this.salesService.convertLoanToSale(
+      id,
+      dto,
+      companyId,
+      {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+        type: currentUser.type,
+      },
+      idempotencyKey,
+    );
+
+    if (!result.success) {
+      throw new UnprocessableEntityException({
+        message: result.message,
+        payload: { code: result.code },
+      });
+    }
+
     res.status(result.replay === true ? HttpStatus.OK : HttpStatus.CREATED);
 
     const { replay: _replay, ...publicResult } = result;

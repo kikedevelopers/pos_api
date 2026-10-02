@@ -10,6 +10,7 @@ import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
 import type { AppConfig } from './config/configuration';
+import { isOriginAllowed } from './config/cors-origin.util';
 
 // Configuración global de Big.js. ROUND_HALF_UP es el estándar comercial
 // (1.005 → 1.01). DP=10 dígitos decimales internos antes del redondeo final
@@ -57,37 +58,25 @@ async function bootstrap(): Promise<void> {
   app.use(helmet());
 
   // CORS.
-  //   - Producción/staging: SOLO la whitelist `CORS_ORIGINS` (estricto).
+  //   - Producción/staging: la whitelist `CORS_ORIGINS` + el origen de la
+  //     landing/portal (`activationBaseUrl`), que se acepta siempre (estricto).
   //   - Desarrollo: además de la whitelist, se aceptan automáticamente
   //     localhost y cualquier IP de red privada (LAN) en cualquier puerto, para
   //     poder probar la PWA desde el navegador local o desde el celular
   //     (`http://192.168.x.x:5180`) sin tocar config en cada cambio de IP/puerto.
   const isProdLikeEnv = appConfig.nodeEnv === 'production' || appConfig.nodeEnv === 'staging';
-  // localhost / 127.0.0.1 / [::1] y rangos privados 10.x, 172.16–31.x, 192.168.x.
-  const privateLanOriginRe =
-    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})(:\d+)?$/;
+  // El origen de la landing/portal (`activationBaseUrl`) se incluye SIEMPRE en la
+  // whitelist efectiva, aunque falte en `CORS_ORIGINS`: es quien sirve el portal
+  // de cuenta (`/portal/*`) y llama cross-origin a la API. Ver `isOriginAllowed`.
+  const corsInput = {
+    corsOrigins: appConfig.corsOrigins,
+    activationBaseUrl: appConfig.activationBaseUrl,
+    isProdLikeEnv,
+  };
 
   app.enableCors({
     origin: (origin, callback) => {
-      // Requests sin header Origin (curl, apps nativas, same-origin): pasan.
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-      if (appConfig.corsOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      if (!isProdLikeEnv && privateLanOriginRe.test(origin)) {
-        callback(null, true);
-        return;
-      }
-      // Dev sin whitelist configurada: reflejar todo (comportamiento previo).
-      if (!isProdLikeEnv && appConfig.corsOrigins.length === 0) {
-        callback(null, true);
-        return;
-      }
-      callback(null, false);
+      callback(null, isOriginAllowed(origin, corsInput));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

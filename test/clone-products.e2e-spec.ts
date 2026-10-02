@@ -247,10 +247,13 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
     expect(childPrices[0].margin).toBe(round4(new Big(7).div(12).times(100)));
   });
 
-  it('clona un COMBO (product_type=COMBO con hijos) recableando parent_id', async () => {
+  it('COMBO → NO se clona: se omite con reason "combo" (su receta apunta al principal)', async () => {
     if (!ds) {
       return;
     }
+    // Un COMBO no se clona: su receta vive en `combo_components` y referencia
+    // productos del PRINCIPAL. Clonarlo sin remapear daría un producto que se
+    // vende sin descontar inventario, así que se omite y se reporta.
     const combo = await insertProduct(ds, principalId, {
       name: 'Combo Padre',
       cost: 0,
@@ -268,12 +271,12 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
     await insertPrice(ds, principalId, comp1, 6, 3, round4(new Big(3).div(6).times(100)));
 
     const res = await action.execute(principalId, branchId, [Number(combo)], ACTOR);
-    expect(res.created).toBe(2);
+    expect(res.created).toBe(0);
+    expect(res.skipped).toEqual([{ name: 'Combo Padre', reason: 'combo' }]);
 
-    const clonedCombo = (await branchProductByName('Combo Padre'))[0];
-    const clonedComp = (await branchProductByName('Combo Hijo 1'))[0];
-    expect(clonedCombo.product_type).toBe('COMBO');
-    expect(clonedComp.parent_id).toBe(clonedCombo.id);
+    // Nada del combo quedó en la sucursal.
+    expect(await branchProductByName('Combo Padre')).toHaveLength(0);
+    expect(await branchProductByName('Combo Hijo 1')).toHaveLength(0);
   });
 
   it('COLISIÓN por name/sku/barcode → omite y reporta el motivo; lo existente queda intacto', async () => {
@@ -334,6 +337,72 @@ describe('CloneProductsToBranchAction (e2e, pos_db) — FASE 1 clonar', () => {
     expect(parseFloat(stillThere[0].stock)).toBe(7);
     // No se duplicó "Colision Nombre" en la sucursal.
     expect(await branchProductByName('Colision Nombre')).toHaveLength(1);
+  });
+
+  it('COLISIÓN en un HIJO (la raíz no choca) → omite la familia ENTERA sin estado parcial', async () => {
+    if (!ds) {
+      return;
+    }
+    // La sucursal YA tiene un producto con el sku de una PRESENTACIÓN del
+    // principal, pero NADA con el nombre/sku de la RAÍZ. Antes esto tumbaba el
+    // clonado con un 23505/500 porque la detección solo miraba la raíz.
+    await insertProduct(ds, branchId, { name: 'Sucursal Choca Hijo', cost: 1, skuCode: 'FAM2-CHILD' });
+
+    const base = await insertProduct(ds, principalId, {
+      name: 'Familia2 Base',
+      cost: 10,
+      stock: 100,
+      skuCode: 'FAM2-BASE',
+      productType: 'SIMPLE',
+    });
+    const child = await insertProduct(ds, principalId, {
+      name: 'Familia2 Presentacion',
+      cost: 5,
+      stock: 0,
+      skuCode: 'FAM2-CHILD', // ← colisiona con lo existente en la sucursal
+      parentId: base,
+    });
+    await insertPrice(ds, principalId, base, 20, 10, round4(new Big(10).div(20).times(100)));
+    await insertPrice(ds, principalId, child, 12, 7, round4(new Big(7).div(12).times(100)));
+
+    const res = await action.execute(principalId, branchId, [Number(base)], ACTOR);
+    // La familia se omite ENTERA, reportada por el sku (del hijo) con el nombre
+    // de la raíz. No se crea nada.
+    expect(res.created).toBe(0);
+    expect(res.skipped).toEqual([{ name: 'Familia2 Base', reason: 'sku' }]);
+
+    // Ni la raíz ni el hijo quedaron en la sucursal (sin padre sin hijos ni
+    // huérfanos): el rollback de la familia dejó todo limpio.
+    expect(await branchProductByName('Familia2 Base')).toHaveLength(0);
+    expect(await branchProductByName('Familia2 Presentacion')).toHaveLength(0);
+  });
+
+  it('COLISIÓN por NOMBRE en un hijo (raíz limpia) → omite la familia entera', async () => {
+    if (!ds) {
+      return;
+    }
+    await insertProduct(ds, branchId, { name: 'Familia3 Presentacion', cost: 1 });
+
+    const base = await insertProduct(ds, principalId, {
+      name: 'Familia3 Base',
+      cost: 8,
+      stock: 40,
+      skuCode: 'FAM3-BASE',
+    });
+    const child = await insertProduct(ds, principalId, {
+      name: 'Familia3 Presentacion', // ← mismo nombre que un activo de la sucursal
+      cost: 4,
+      stock: 0,
+      skuCode: 'FAM3-CHILD',
+      parentId: base,
+    });
+    await insertPrice(ds, principalId, base, 16, 8, round4(new Big(8).div(16).times(100)));
+    await insertPrice(ds, principalId, child, 9, 5, round4(new Big(5).div(9).times(100)));
+
+    const res = await action.execute(principalId, branchId, [Number(base)], ACTOR);
+    expect(res.created).toBe(0);
+    expect(res.skipped).toEqual([{ name: 'Familia3 Base', reason: 'name' }]);
+    expect(await branchProductByName('Familia3 Base')).toHaveLength(0);
   });
 
   it('categoría y empaque se crean en la sucursal por nombre/valor (no se reusa el id del origen)', async () => {

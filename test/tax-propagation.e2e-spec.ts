@@ -222,6 +222,91 @@ describe('Tax config propagation base → presentaciones (e2e, pos_db)', () => {
     ]);
   });
 
+  it('FE apagada: editar reenviando la MISMA tarifa NO se bloquea (producto editable)', async () => {
+    if (!ds) return;
+    const { parentId } = await makeFamily('PKEEP');
+    // Con FE ON se asigna la tarifa (operación FE legítima).
+    await updateAction.execute(Number(parentId), { tax_rate_id: IVA_19 }, companyId, E2E_ACTOR);
+    // Se apaga FE (p. ej. venció el servicio) — el producto queda con tarifa.
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = false WHERE id = $1`, [
+      String(companyId),
+    ]);
+
+    // Editar el nombre reenviando la MISMA tarifa (lo que hace el form al
+    // recargar el producto) NO es operación FE: debe PASAR, no dar 403.
+    const res = await updateAction.execute(
+      Number(parentId),
+      { name: 'PKEEP base ren', tax_rate_id: IVA_19 },
+      companyId,
+      E2E_ACTOR,
+    );
+    expect(res.name).toBe('PKEEP base ren');
+    expect(await taxRateIdOf(companyId, parentId)).toBe(IVA_19);
+
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = true WHERE id = $1`, [
+      String(companyId),
+    ]);
+  });
+
+  it('FE apagada: editar SIN mandar tarifa (name/stock) tampoco se bloquea', async () => {
+    if (!ds) return;
+    const { parentId } = await makeFamily('PNOSEND');
+    await updateAction.execute(Number(parentId), { tax_rate_id: IVA_19 }, companyId, E2E_ACTOR);
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = false WHERE id = $1`, [
+      String(companyId),
+    ]);
+
+    const res = await updateAction.execute(
+      Number(parentId),
+      { name: 'PNOSEND ren', stock: 33 },
+      companyId,
+      E2E_ACTOR,
+    );
+    expect(res.name).toBe('PNOSEND ren');
+    // La tarifa se conserva intacta.
+    expect(await taxRateIdOf(companyId, parentId)).toBe(IVA_19);
+
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = true WHERE id = $1`, [
+      String(companyId),
+    ]);
+  });
+
+  it('FE apagada: CAMBIAR la tarifa a otra distinta SÍ se bloquea (403) — seguridad intacta', async () => {
+    if (!ds) return;
+    const { parentId } = await makeFamily('PCHG');
+    await updateAction.execute(Number(parentId), { tax_rate_id: IVA_19 }, companyId, E2E_ACTOR);
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = false WHERE id = $1`, [
+      String(companyId),
+    ]);
+
+    // Cambiar 19% → 5% con FE apagada es una mutación FE real → 403.
+    await expect(
+      updateAction.execute(Number(parentId), { tax_rate_id: IVA_5 }, companyId, E2E_ACTOR),
+    ).rejects.toMatchObject({ status: 403 });
+    // No se cambió nada.
+    expect(await taxRateIdOf(companyId, parentId)).toBe(IVA_19);
+
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = true WHERE id = $1`, [
+      String(companyId),
+    ]);
+  });
+
+  it('FE apagada: QUITAR la tarifa (→ null) se permite', async () => {
+    if (!ds) return;
+    const { parentId } = await makeFamily('PDEL');
+    await updateAction.execute(Number(parentId), { tax_rate_id: IVA_19 }, companyId, E2E_ACTOR);
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = false WHERE id = $1`, [
+      String(companyId),
+    ]);
+
+    await updateAction.execute(Number(parentId), { tax_rate_id: null }, companyId, E2E_ACTOR);
+    expect(await taxRateIdOf(companyId, parentId)).toBeNull();
+
+    await ds.query(`UPDATE companies SET electronic_billing_enabled = true WHERE id = $1`, [
+      String(companyId),
+    ]);
+  });
+
   it('multi-tenant: la propagación filtra company_id — hijo de otra company no se toca', async () => {
     if (!ds) return;
     const { parentId } = await makeFamily('PMT');
