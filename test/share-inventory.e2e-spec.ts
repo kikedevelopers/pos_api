@@ -1,9 +1,14 @@
+import { ForbiddenException } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 import { ShareProductsToBranchAction } from '@/modules/products/actions/share-products-to-branch.action';
 import { FindAllProductsAction } from '@/modules/products/actions/find-all-products.action';
 import { UpdateProductAction } from '@/modules/products/actions/update-product.action';
+import { SHARED_PRODUCT_READONLY_CODE } from '@/modules/products/internal/product-lookups';
+import { ListBranchesAction } from '@/modules/auth/actions/list-branches.action';
+import { CompanyMember } from '@/modules/companies/entities/company-member.entity';
+import { Company } from '@/modules/companies/entities/company.entity';
 
 import {
   tryInitDataSource,
@@ -196,13 +201,52 @@ describe('Compartir inventario entre companies (e2e, pos_db) — FASE 2', () => 
     const pid = await insertProduct(ds!, principal, { name: 'Solo lectura', cost: 10, stock: 10 });
     await share.execute(principal, branch, [Number(pid)], actor);
 
-    // Editar desde la sucursal: el producto es de A, no se encuentra en B.
-    await expect(
-      updateProduct.execute(Number(pid), { name: 'Hackeado' }, branch, actor),
-    ).rejects.toThrow();
+    // Editar desde la sucursal: el producto es compartido → 403 con mensaje/code
+    // claros (SHARED_PRODUCT_READONLY), NO un 404 "no encontrado" confuso.
+    let caught: unknown;
+    try {
+      await updateProduct.execute(Number(pid), { name: 'Hackeado' }, branch, actor);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ForbiddenException);
+    const response = (caught as ForbiddenException).getResponse() as {
+      payload?: { code?: string };
+    };
+    expect(response.payload?.code).toBe(SHARED_PRODUCT_READONLY_CODE);
+
     // El nombre en el principal NO cambió.
     const r = await ds!.query(`SELECT name FROM products WHERE id = $1`, [pid]);
     expect(r[0].name).toBe('Solo lectura');
+  });
+
+  maybe('compartir-todo: la sucursal tampoco puede editar un HIJO compartido', async () => {
+    const { principal, branch, actor } = await setupPair('ROCHILD');
+    const base = await insertProduct(ds!, principal, { name: 'Base RO', cost: 20, stock: 100 });
+    const pkg = await insertPackaging(ds!, principal, 'RO 500g', 500);
+    const child = await insertProduct(ds!, principal, {
+      name: 'Presentación RO',
+      cost: 5,
+      stock: 0,
+      parentId: base,
+      packagingId: pkg,
+    });
+    await share.execute(principal, branch, undefined, actor);
+
+    // La presentación (hijo) también es compartida → misma guarda.
+    await expect(
+      updateProduct.execute(Number(child), { name: 'Hijo hackeado' }, branch, actor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    // Y el producto PROPIO de la sucursal SÍ se edita (la guarda no lo toca).
+    const own = await insertProduct(ds!, branch, { name: 'Propio editable', cost: 3, stock: 7 });
+    const updated = await updateProduct.execute(
+      Number(own),
+      { name: 'Propio editado' },
+      branch,
+      actor,
+    );
+    expect(updated.name).toBe('Propio editado');
   });
 
   maybe('idempotencia: compartir-todo dos veces no duplica', async () => {
@@ -217,6 +261,29 @@ describe('Compartir inventario entre companies (e2e, pos_db) — FASE 2', () => 
     );
     expect(rows[0].n).toBe(1);
   });
+
+  maybe(
+    'perfil: la sucursal con inventario compartido llega con receives_shared_inventory=true (y el principal false)',
+    async () => {
+      const { principal, branch, actor } = await setupPair('FLAG');
+      const listBranches = new ListBranchesAction(
+        ds!.getRepository(CompanyMember),
+        ds!.getRepository(Company),
+      );
+
+      // Antes de compartir: ninguna company recibe inventario compartido.
+      const before = await listBranches.execute(actor.id);
+      expect(before.find((c) => c.id === branch)?.receives_shared_inventory).toBe(false);
+      expect(before.find((c) => c.id === principal)?.receives_shared_inventory).toBe(false);
+
+      await share.execute(principal, branch, undefined, actor);
+
+      // Tras compartir TODO: solo la SUCURSAL (target) recibe; el principal no.
+      const after = await listBranches.execute(actor.id);
+      expect(after.find((c) => c.id === branch)?.receives_shared_inventory).toBe(true);
+      expect(after.find((c) => c.id === principal)?.receives_shared_inventory).toBe(false);
+    },
+  );
 
   maybe('permisos: origen NO principal o sucursal no-miembro → rechazado', async () => {
     const { principal, branch, actor } = await setupPair('PERM');
