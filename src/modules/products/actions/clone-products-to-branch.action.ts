@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DataSource, type EntityManager } from 'typeorm';
+import { DataSource, QueryFailedError, type EntityManager } from 'typeorm';
 
 import { calculateMargin, calculateProfit } from '@/common/utils/precision';
 import { resolveCategoryIdByName } from '@/modules/categories/internal/category-lookups';
@@ -9,6 +9,12 @@ import { ProductImagesService } from '@/modules/product-images/product-images.se
 import { assertSourceAndBranch } from '../internal/assert-source-branch';
 import { Product, ProductType } from '../entities/product.entity';
 import { ProductPrice } from '../entities/product-price.entity';
+import {
+  IDX_PRODUCT_BARCODE_UNIQUE,
+  IDX_PRODUCT_NAME_UNIQUE,
+  IDX_PRODUCT_SKU_UNIQUE,
+  PG_UNIQUE_VIOLATION,
+} from '../internal/constraint-errors';
 
 import type { ProductCreator } from './create-product.action';
 
@@ -107,8 +113,15 @@ interface SourcePrice {
  *
  * Si la sucursal YA tiene un producto ACTIVO con el mismo `lower(btrim(name))`,
  * `sku_code` o `bar_code`, la FAMILIA NO se clona: se reporta en `skipped` con
- * el motivo. No se pisa ni se duplica. La colisión se evalúa sobre el producto
- * RAÍZ de la familia (los hijos comparten el destino de su padre).
+ * el motivo. No se pisa ni se duplica.
+ *
+ * La colisión se evalúa sobre TODOS los miembros de la familia (raíz + hijos),
+ * no solo la raíz: cada presentación tiene su propio `sku_code`/`bar_code`/
+ * `name`, sujetos a los MISMOS índices únicos parciales per-company. Si CUALQUIER
+ * miembro choca, se omite la familia entera (nunca un padre sin hijos ni al
+ * revés). Además, como red de seguridad ante carreras (TOCTOU entre el SELECT de
+ * detección y el INSERT, o clonados concurrentes), un `23505` durante el insert
+ * se traduce a `skipped` en vez de tumbar el clonado completo con un 500.
  *
  * --------------------------------------------------------------------------
  * Categoría / empaque por NOMBRE
@@ -164,9 +177,28 @@ export class CloneProductsToBranchAction {
         }
       } catch (err) {
         // Una familia que peta deja la TX de ESA familia en rollback (sin
-        // estado parcial). Registramos y propagamos: un fallo inesperado en el
-        // clonado debe ser visible, no silenciado. Las colisiones NO lanzan
-        // (se reportan en `skipped`), así que aquí solo caen errores reales.
+        // estado parcial). Antes de propagar, distinguimos:
+        //
+        // - Un `23505` (unique_violation) es una COLISIÓN que la detección
+        //   previa no atrapó por una carrera (TOCTOU entre el SELECT y el
+        //   INSERT, o un clonado concurrente que insertó el mismo sku/barcode/
+        //   name a la vez). No es un fallo real: se reporta en `skipped` como
+        //   una colisión más, igual que las detectadas, en vez de tumbar el
+        //   clonado entero con un 500. El rollback ya dejó la sucursal limpia.
+        const collisionReason = this.unifyUniqueViolation(err);
+        if (collisionReason) {
+          const name = await this.loadRootName(sourceCompanyId, rootId);
+          this.logger.warn({
+            event: 'clone.family.collision_on_insert',
+            sourceCompanyId,
+            branchCompanyId,
+            rootId,
+            reason: collisionReason,
+          });
+          result.skipped.push({ name, reason: collisionReason });
+          continue;
+        }
+        // Cualquier otro error SÍ es inesperado y debe ser visible, no silenciado.
         this.logger.error({
           event: 'clone.family.failed',
           sourceCompanyId,
@@ -248,9 +280,11 @@ export class CloneProductsToBranchAction {
         return { created: 0, skipped: [{ name: root.name, reason: 'combo' }], imageCopies: [] };
       }
 
-      // Colisión: se evalúa sobre la RAÍZ. Si la sucursal ya tiene un activo con
-      // el mismo name/sku/barcode, se omite la familia entera.
-      const collision = await this.detectCollision(manager, branchCompanyId, root);
+      // Colisión: se evalúa sobre TODA la familia (raíz + hijos). Cada miembro
+      // tiene su propio name/sku/barcode sujeto a los mismos índices únicos, así
+      // que un choque en CUALQUIER presentación omite la familia entera (nunca
+      // un padre sin sus hijos). Se reporta con el nombre de la raíz.
+      const collision = await this.detectFamilyCollision(manager, branchCompanyId, family);
       if (collision) {
         return { created: 0, skipped: [{ name: root.name, reason: collision }], imageCopies: [] };
       }
@@ -339,11 +373,33 @@ export class CloneProductsToBranchAction {
   }
 
   /**
-   * Detecta colisión activa en la sucursal por name (case+trim insensible),
-   * sku_code o bar_code. Devuelve el motivo o `null`. Prioriza name → sku →
-   * barcode (orden de evaluación de los índices únicos parciales).
+   * Detecta colisión de la FAMILIA contra la sucursal. Evalúa cada miembro
+   * (raíz primero, luego hijos) y devuelve el primer motivo encontrado, o
+   * `null` si ninguno choca. Prioriza, POR MIEMBRO, name → sku → barcode
+   * (orden de los índices únicos parciales). Basta un miembro en conflicto
+   * para omitir la familia entera: clonar solo los que caben dejaría un padre
+   * sin hijos (o al revés) o un hijo huérfano.
    */
-  private async detectCollision(
+  private async detectFamilyCollision(
+    manager: EntityManager,
+    branchCompanyId: number,
+    family: SourceProduct[],
+  ): Promise<CloneSkipReason | null> {
+    for (const member of family) {
+      const reason = await this.detectMemberCollision(manager, branchCompanyId, member);
+      if (reason) {
+        return reason;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Detecta colisión activa en la sucursal para UN producto por name (case+trim
+   * insensible), sku_code o bar_code. Devuelve el motivo o `null`. Prioriza
+   * name → sku → barcode (orden de evaluación de los índices únicos parciales).
+   */
+  private async detectMemberCollision(
     manager: EntityManager,
     branchCompanyId: number,
     source: SourceProduct,
@@ -379,6 +435,48 @@ export class CloneProductsToBranchAction {
       }
     }
     return null;
+  }
+
+  /**
+   * Traduce un error de INSERT a un motivo de colisión SI es un `unique_violation`
+   * (23505) de uno de los índices únicos parciales de `products`. Devuelve `null`
+   * para cualquier otro error (que debe propagarse como fallo real). Es la red de
+   * seguridad ante carreras que la detección previa no puede cerrar.
+   */
+  private unifyUniqueViolation(err: unknown): CloneSkipReason | null {
+    if (!(err instanceof QueryFailedError)) {
+      return null;
+    }
+    const pg = err as QueryFailedError & { code?: string; constraint?: string; detail?: string };
+    if (pg.code !== PG_UNIQUE_VIOLATION) {
+      return null;
+    }
+    const constraint = pg.constraint ?? '';
+    const detail = pg.detail ?? '';
+    if (constraint === IDX_PRODUCT_NAME_UNIQUE || detail.includes('(name)')) {
+      return 'name';
+    }
+    if (constraint === IDX_PRODUCT_SKU_UNIQUE || detail.includes('sku_code')) {
+      return 'sku';
+    }
+    if (constraint === IDX_PRODUCT_BARCODE_UNIQUE || detail.includes('bar_code')) {
+      return 'barcode';
+    }
+    // Un 23505 de otro índice (inesperado) no es una colisión de catálogo: que
+    // se propague como fallo real.
+    return null;
+  }
+
+  /**
+   * Nombre de la raíz de una familia, para reportar en `skipped` cuando el
+   * INSERT choca en carrera (ya con la TX en rollback, hay que releerlo).
+   */
+  private async loadRootName(sourceCompanyId: number, rootId: string): Promise<string> {
+    const rows = await this.dataSource.query<Array<{ name: string }>>(
+      `SELECT name FROM products WHERE company_id = $1 AND id = $2`,
+      [String(sourceCompanyId), rootId],
+    );
+    return rows.length > 0 ? rows[0].name : '';
   }
 
   /**
