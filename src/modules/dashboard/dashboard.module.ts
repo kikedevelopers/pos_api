@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
 import { Company } from '@/modules/companies/entities/company.entity';
 
+import { GetBranchesSummaryAction } from './actions/get-branches-summary.action';
 import { GetBreakEvenProgressAction } from './actions/get-break-even-progress.action';
 import { GetExpenseImpactAction } from './actions/get-expense-impact.action';
 import { GetPerformanceAction } from './actions/get-performance.action';
@@ -34,6 +35,7 @@ import { DashboardService } from './dashboard.service';
     GetTopProductsAction,
     GetBreakEvenProgressAction,
     GetTodayByCashierAction,
+    GetBranchesSummaryAction,
   ],
   exports: [DashboardService],
 })
