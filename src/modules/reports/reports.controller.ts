@@ -2,8 +2,10 @@ import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { CreditsReportQueryDto } from './dto/credits-report-query.dto';
 import { CustomersRfmDayTicketsQueryDto } from './dto/customers-rfm-day-tickets-query.dto';
@@ -12,6 +14,7 @@ import { DailyClosureQueryDto } from './dto/daily-closure-query.dto';
 import { ExtendedSummaryQueryDto } from './dto/extended-summary-query.dto';
 import { ReportsService } from './reports.service';
 import type {
+  BranchesDailyClosureResult,
   CreditsReportResult,
   CustomersRfmDayTicketsResult,
   CustomersRfmPaginatedResult,
@@ -54,6 +57,22 @@ export class ReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<DailyClosureResult> {
     return this.reportsService.getDailyClosure(companyId, query.date);
+  }
+
+  @Get('branches-daily-closure')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Resumen del día de TODAS las sucursales (cierre diario por company) + total consolidado. Solo admin desde el negocio principal.',
+    description:
+      'Nivel admin (owner/superadmin o empleado con rol Administrador) y SOLO desde el negocio principal. Devuelve un DailyClosureResult por company (principal + sucursales activas) y un bloque `totals` consolidado. El gating fino (admin + principal) se valida en el servidor.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  branchesDailyClosure(
+    @Query() query: DailyClosureQueryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<BranchesDailyClosureResult> {
+    return this.reportsService.getBranchesDailyClosure(user, query.date);
   }
 
   @Get('sales-by-hour')

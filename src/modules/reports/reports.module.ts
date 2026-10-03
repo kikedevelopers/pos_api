@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 
 import { AppSettingsModule } from '@/modules/app-settings/app-settings.module';
+import { RolesModule } from '@/modules/roles/roles.module';
 
+import { GetBranchesDailyClosureAction } from './actions/get-branches-daily-closure.action';
 import { GetCreditsReportAction } from './actions/get-credits-report.action';
 import { GetCustomersRfmAction } from './actions/get-customers-rfm.action';
 import { GetCustomersRfmDayTicketsAction } from './actions/get-customers-rfm-day-tickets.action';
@@ -20,11 +22,12 @@ import { ReportsService } from './reports.service';
  * (facturación de pedidos en el extended-summary) por company.
  */
 @Module({
-  imports: [AppSettingsModule],
+  imports: [AppSettingsModule, RolesModule],
   controllers: [ReportsController],
   providers: [
     ReportsService,
     GetDailyClosureAction,
+    GetBranchesDailyClosureAction,
     GetSalesByHourAction,
     GetExtendedSummaryAction,
     GetCreditsReportAction,
