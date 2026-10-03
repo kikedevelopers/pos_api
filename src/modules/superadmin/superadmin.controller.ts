@@ -28,7 +28,12 @@ import { ClearTenantInventoryAction } from './actions/clear-tenant-inventory.act
 import { CreateTenantAction } from './actions/create-tenant.action';
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
+import {
+  ExportTenantCustomersAction,
+  type TenantCustomersExport,
+} from './actions/export-tenant-customers.action';
 import { GetTenantCustomersAction } from './actions/get-tenant-customers.action';
+import { ImportTenantCustomersAction } from './actions/import-tenant-customers.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
@@ -71,6 +76,11 @@ import {
   toSuperadminClearCustomersResponseDto,
   toSuperadminTenantCustomersDto,
 } from './dto/superadmin-tenant-customers.dto';
+import {
+  ImportTenantCustomersDto,
+  SuperadminImportCustomersResponseDto,
+  toSuperadminImportCustomersResponseDto,
+} from './dto/superadmin-import-customers.dto';
 import { SuperadminResendActivationResponseDto } from './dto/superadmin-resend-activation-response.dto';
 import { SuperadminTenantsResponseDto } from './dto/superadmin-tenants-response.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
@@ -115,6 +125,8 @@ export class SuperadminController {
     private readonly clearTenantInventoryAction: ClearTenantInventoryAction,
     private readonly getTenantCustomersAction: GetTenantCustomersAction,
     private readonly clearTenantCustomersAction: ClearTenantCustomersAction,
+    private readonly exportTenantCustomersAction: ExportTenantCustomersAction,
+    private readonly importTenantCustomersAction: ImportTenantCustomersAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -472,6 +484,60 @@ export class SuperadminController {
     @Param('companyId', ParseIntPipe) companyId: number,
   ): Promise<SuperadminTenantCustomersDto> {
     return toSuperadminTenantCustomersDto(await this.getTenantCustomersAction.execute(companyId));
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /superadmin/tenants/:companyId/customers/export
+  // --------------------------------------------------------------------------
+
+  @Get('tenants/:companyId/customers/export')
+  @ApiOperation({
+    summary: 'Exportar la lista de clientes ACTIVOS del tenant (para descargar como CSV).',
+    description:
+      'Solo lectura. Devuelve los clientes activos con los campos PORTABLES entre negocios ' +
+      '(person_type, name, doc_number, phone, email, address y la categoría por NOMBRE). El ' +
+      'mismo shape se vuelve a cargar en otro negocio/sucursal con POST .../customers/import.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  exportTenantCustomers(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ): Promise<TenantCustomersExport> {
+    return this.exportTenantCustomersAction.execute(companyId);
+  }
+
+  // --------------------------------------------------------------------------
+  // POST /superadmin/tenants/:companyId/customers/import
+  // --------------------------------------------------------------------------
+
+  @Post('tenants/:companyId/customers/import')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cargar una lista de clientes a un tenant (no destructivo, dedup idempotente).',
+    description:
+      'Inserta los clientes del CSV en el destino (negocio o sucursal). Omite los que ya existen ' +
+      '(dedup por doc_number y, si no hay, por nombre), también dentro del mismo archivo. La ' +
+      'categoría se resuelve por nombre (find-or-create). Solo inserta: nunca borra ni modifica ' +
+      'clientes del destino. Reporta insertados/omitidos/categorías creadas.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: SuperadminImportCustomersResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  async importTenantCustomers(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: ImportTenantCustomersDto,
+    @Req() req: Request,
+  ): Promise<SuperadminImportCustomersResponseDto> {
+    const keyId = req.header('x-kdevs-key-id') ?? 'unknown';
+    this.logger.log({
+      event: 'superadmin.tenant.customers.import.request',
+      companyId,
+      keyId,
+      rowCount: dto.customers?.length ?? 0,
+    });
+    return toSuperadminImportCustomersResponseDto(
+      await this.importTenantCustomersAction.execute(companyId, dto.customers),
+    );
   }
 
   // --------------------------------------------------------------------------

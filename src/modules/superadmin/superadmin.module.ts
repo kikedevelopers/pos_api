@@ -16,7 +16,9 @@ import { ProductImagesModule } from '@/modules/product-images/product-images.mod
 
 import { DeleteTenantAction } from './actions/delete-tenant.action';
 import { ExportTenantAction } from './actions/export-tenant.action';
+import { ExportTenantCustomersAction } from './actions/export-tenant-customers.action';
 import { GetTenantCustomersAction } from './actions/get-tenant-customers.action';
+import { ImportTenantCustomersAction } from './actions/import-tenant-customers.action';
 import { GetTenantDetailAction } from './actions/get-tenant-detail.action';
 import { GetTenantInventoryAction } from './actions/get-tenant-inventory.action';
 import { ImportTenantAction } from './actions/import-tenant.action';
@@ -81,6 +83,8 @@ import { SuperadminController } from './superadmin.controller';
     ClearTenantInventoryAction,
     GetTenantCustomersAction,
     ClearTenantCustomersAction,
+    ExportTenantCustomersAction,
+    ImportTenantCustomersAction,
   ],
 })
 export class SuperadminModule {}
