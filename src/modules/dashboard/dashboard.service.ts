@@ -9,6 +9,10 @@ import {
   type ExpenseImpactResult,
 } from './actions/get-expense-impact.action';
 import { GetPerformanceAction, type PerformanceResult } from './actions/get-performance.action';
+import {
+  GetBranchesSummaryAction,
+  type BranchesSummaryResult,
+} from './actions/get-branches-summary.action';
 import { GetTodayAction, type TodayResult } from './actions/get-today.action';
 import {
   GetTodayByCashierAction,
@@ -17,6 +21,7 @@ import {
 import { GetTopProductsAction, type TopProductItem } from './actions/get-top-products.action';
 
 export type {
+  BranchesSummaryResult,
   BreakEvenProgressResult,
   ExpenseImpactResult,
   PerformanceResult,
@@ -38,6 +43,7 @@ export class DashboardService {
     private readonly getTopProducts: GetTopProductsAction,
     private readonly getBreakEvenProgress: GetBreakEvenProgressAction,
     private readonly getTodayByCashier: GetTodayByCashierAction,
+    private readonly getBranchesSummary: GetBranchesSummaryAction,
   ) {}
 
   performance(companyId: number, from?: string, to?: string): Promise<PerformanceResult> {
@@ -62,5 +68,13 @@ export class DashboardService {
 
   todayByCashier(companyId: number, date?: string): Promise<TodayByCashierResult> {
     return this.getTodayByCashier.execute(companyId, date);
+  }
+
+  /**
+   * Resumen consolidado por sucursal del owner (negocio principal + sucursales
+   * activas). `userId` = owner autenticado; las companies se derivan de él.
+   */
+  branchesSummary(userId: number, date?: string): Promise<BranchesSummaryResult> {
+    return this.getBranchesSummary.execute(userId, date);
   }
 }

@@ -2,11 +2,14 @@ import { Controller, Get, HttpStatus, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import { DashboardService } from './dashboard.service';
 import type {
+  BranchesSummaryResult,
   BreakEvenProgressResult,
   ExpenseImpactResult,
   PerformanceResult,
@@ -98,6 +101,22 @@ export class DashboardController {
     @CurrentCompany() companyId: number,
   ): Promise<BreakEvenProgressResult> {
     return this.dashboardService.breakEvenProgress(companyId, query.date);
+  }
+
+  @Get('branches-summary')
+  @Roles('owner')
+  @ApiOperation({
+    summary:
+      'Resumen consolidado por sucursal (owner): ventas, ganancia+margen, gastos y total (venta − gastos) por company activa.',
+    description:
+      'Solo owner. Una fila por el negocio principal y por cada sucursal ACTIVA del owner (derivadas de company_members), con las mismas cifras del "Resumen de ventas del día" (base devengado). `totals` suma cada columna.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  branchesSummary(
+    @Query() query: DashboardDateQueryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<BranchesSummaryResult> {
+    return this.dashboardService.branchesSummary(user.user_id, query.date);
   }
 
   @Get('today-by-cashier')

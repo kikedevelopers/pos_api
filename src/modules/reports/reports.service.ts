@@ -14,6 +14,10 @@ import {
   GetCustomersRfmDayTicketsAction,
   type CustomersRfmDayTicketsResult,
 } from './actions/get-customers-rfm-day-tickets.action';
+import {
+  GetBranchesDailyClosureAction,
+  type BranchesDailyClosureResult,
+} from './actions/get-branches-daily-closure.action';
 import { GetDailyClosureAction, type DailyClosureResult } from './actions/get-daily-closure.action';
 import {
   GetSalesByHourAction,
@@ -26,6 +30,7 @@ import {
 import type { CreditsReportQueryDto } from './dto/credits-report-query.dto';
 
 export type {
+  BranchesDailyClosureResult,
   CreditsReportResult,
   CustomersRfmDayTicketsResult,
   CustomersRfmPaginatedResult,
@@ -42,6 +47,7 @@ export type {
 export class ReportsService {
   constructor(
     private readonly dailyClosure: GetDailyClosureAction,
+    private readonly branchesDailyClosure: GetBranchesDailyClosureAction,
     private readonly extendedSummary: GetExtendedSummaryAction,
     private readonly creditsReport: GetCreditsReportAction,
     private readonly customersRfm: GetCustomersRfmAction,
@@ -51,6 +57,13 @@ export class ReportsService {
 
   getDailyClosure(companyId: number, date?: string): Promise<DailyClosureResult> {
     return this.dailyClosure.execute(companyId, date);
+  }
+
+  getBranchesDailyClosure(
+    actor: Parameters<GetBranchesDailyClosureAction['execute']>[0],
+    date?: string,
+  ): Promise<BranchesDailyClosureResult> {
+    return this.branchesDailyClosure.execute(actor, date);
   }
 
   getSalesByHour(companyId: number, date?: string): Promise<SalesByHourResult> {
