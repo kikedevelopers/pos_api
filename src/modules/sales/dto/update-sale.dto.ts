@@ -366,4 +366,35 @@ export class UpdateSaleDto {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID(4)
   client_operation_id?: string | null;
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Compatibilidad: mesa/salón (modo restaurante). Se ACEPTAN pero se IGNORAN
+  // en la edición — editar un pedido NO reasigna su mesa (la conserva en la
+  // BD). Existen solo para que una app ya desplegada que aún los envíe en el
+  // payload de actualización NO reciba un 400 "property table_id should not
+  // exist". El POS retail no debe verse afectado por el modo restaurante.
+  // ───────────────────────────────────────────────────────────────────────
+  @ApiPropertyOptional({
+    type: 'integer',
+    nullable: true,
+    description: 'Aceptado por compatibilidad; IGNORADO en la edición (no reasigna la mesa).',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  table_id?: number | null;
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    nullable: true,
+    description: 'Aceptado por compatibilidad; IGNORADO en la edición (no reasigna el salón).',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  salon_id?: number | null;
 }
