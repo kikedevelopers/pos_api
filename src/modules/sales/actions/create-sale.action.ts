@@ -462,6 +462,7 @@ export class CreateSaleAction {
       // para no gastar una consulta que nadie va a mirar.
       customerAddress: null,
       customerPhone: null,
+      customerDocNumber: null,
       // La respuesta de creación (`toCreateSaleResponseDto`) no serializa el
       // historial; el detalle (`GET /sales/:id`) lo recarga desde BD. Neutro aquí.
       statusHistory: [],

@@ -2,6 +2,7 @@ import aiConfig, { type AiConfig } from './ai.config';
 import appConfig, { type AppConfig } from './app.config';
 import backupsConfig, { type BackupsConfig } from './backups.config';
 import databaseConfig, { type DatabaseConfig } from './database.config';
+import emailAlertsConfig, { type EmailAlertsConfig } from './email-alerts.config';
 import feConfig, { type FeConfig } from './fe.config';
 import mailConfig, { type MailConfig } from './mail.config';
 import productImagesConfig, { type ProductImagesConfig } from './product-images.config';
@@ -18,6 +19,7 @@ export const configurationLoaders = [
   aiConfig,
   mailConfig,
   feConfig,
+  emailAlertsConfig,
 ];
 
 export type AppConfiguration = {
@@ -28,6 +30,7 @@ export type AppConfiguration = {
   ai: AiConfig;
   mail: MailConfig;
   fe: FeConfig;
+  emailAlerts: EmailAlertsConfig;
 };
 
 export {
@@ -38,6 +41,7 @@ export {
   aiConfig,
   mailConfig,
   feConfig,
+  emailAlertsConfig,
 };
 export type {
   AppConfig,
@@ -47,4 +51,5 @@ export type {
   AiConfig,
   MailConfig,
   FeConfig,
+  EmailAlertsConfig,
 };

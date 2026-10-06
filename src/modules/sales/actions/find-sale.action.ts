@@ -47,6 +47,12 @@ export interface SaleAggregate {
   /** Teléfono del cliente. `null` si no lo tiene o si es venta de mostrador. */
   customerPhone: string | null;
   /**
+   * Número de documento del cliente (`customers.doc_number`, sirve para CC y
+   * NIT). `null` si no lo tiene o si es venta de mostrador. El recibo pinta la
+   * línea "Documento:" SOLO cuando hay valor (a diferencia de dirección/teléfono).
+   */
+  customerDocNumber: string | null;
+  /**
    * Línea de tiempo de las transiciones de estado de la venta, ordenada
    * cronológicamente (created_at ASC, id ASC). Alimenta el bloque
    * `statusHistory` del detalle del ticket. Vacío en ventas legadas sin
@@ -121,20 +127,22 @@ export class FindSaleAction {
     let customerPoints: number | null = null;
     let customerAddress: string | null = null;
     let customerPhone: string | null = null;
+    let customerDocNumber: string | null = null;
 
     // UNA sola lectura del cliente para todo lo que el recibo necesita de él.
-    // La dirección y el teléfono se piden SIEMPRE que la venta tenga cliente
-    // (van en el recibo impreso y en pantalla); los puntos, solo si el sistema
-    // está habilitado. Filtrado por `company_id` — anti-IDOR.
+    // La dirección, el teléfono y el documento se piden SIEMPRE que la venta
+    // tenga cliente (van en el recibo impreso y en pantalla); los puntos, solo
+    // si el sistema está habilitado. Filtrado por `company_id` — anti-IDOR.
     if (sale.customer_id) {
       const customer = await manager.findOne(Customer, {
         where: { id: sale.customer_id, company_id: String(companyId) },
-        select: { points: true, address: true, phone: true },
+        select: { points: true, address: true, phone: true, doc_number: true },
       });
       if (customer) {
         customerPoints = pointsEnabled ? customer.points : null;
         customerAddress = customer.address;
         customerPhone = customer.phone;
+        customerDocNumber = customer.doc_number;
       }
     }
 
@@ -148,6 +156,7 @@ export class FindSaleAction {
       customerPoints,
       customerAddress,
       customerPhone,
+      customerDocNumber,
       statusHistory,
     };
   }
