@@ -169,7 +169,9 @@ function applyCreditAdjustment(
   // que nadie facturó. Con precios iguales las dos formas dan lo mismo.
   existing.total = preciseNumber(new Big(existing.total).minus(noteLine.total), 2);
   existing.profit = preciseNumber(
-    new Big(existing.profit).minus(new Big(noteLine.price).minus(noteLine.cost).times(noteLine.quantity)),
+    new Big(existing.profit).minus(
+      new Big(noteLine.price).minus(noteLine.cost).times(noteLine.quantity),
+    ),
     2,
   );
 }

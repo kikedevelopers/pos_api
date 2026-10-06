@@ -96,7 +96,7 @@ describe('seedSystemRolesForCompany', () => {
     // 'Inventarista' fue eliminado en FASE 5.
     expect(roles.find((r) => r.name === 'Inventarista')).toBeUndefined();
 
-    // Administrador → metadata + TODAS las 22 keys del catálogo + INMUTABLE.
+    // Administrador → metadata + TODAS las 23 keys del catálogo + INMUTABLE.
     const admin = roles.find((r) => r.name === 'Administrador');
     expect(admin?.icon).toBe('ShieldCheck');
     expect(admin?.color).toBe('#6366f1');

@@ -67,6 +67,7 @@ describe('ProcessPaymentAction (split tender)', () => {
   // Tipo de la factura mock y sus líneas (configurables: la conversión de
   // préstamo exige ticket_type=LOAN y verifica que NO se descuenta inventario).
   let saleTicketType: string;
+  let saleTableId: string | null;
   let saleLines: Array<Record<string, unknown>>;
 
   // Estado del repo (fuera de TX) para el fast-path idempotente.
@@ -88,6 +89,7 @@ describe('ProcessPaymentAction (split tender)', () => {
               total: 150,
               cost: 80,
               is_deleted: false,
+              table_id: saleTableId,
             });
           }
           if (name === 'Bank') {
@@ -164,6 +166,7 @@ describe('ProcessPaymentAction (split tender)', () => {
     customerAdvanceBalance = 500;
     saleCustomerId = '55';
     saleTicketType = 'ORDER';
+    saleTableId = null;
     saleLines = [];
     existingPaymentsByUuid = new Map();
     paymentsByInvoice = new Map();
@@ -275,6 +278,56 @@ describe('ProcessPaymentAction (split tender)', () => {
     // FinancialMovement por el monto del tender (50), no por el total.
     expect(recordSpy).toHaveBeenCalledTimes(1);
     expect((recordSpy.mock.calls[0] as [unknown, { amount: number }])[1].amount).toBe(50);
+  });
+
+  // ─── Liberación de mesa al cobrar (ORDER→SALE, modo restaurante) ───────────
+
+  it('cobrar un pedido con mesa la LIBERA (update RestaurantTable → status free)', async () => {
+    saleTableId = '77';
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 }],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    await action.execute(dto, 42, actor, null);
+
+    const free = updates.find((u) => u.patch.status === 'free');
+    expect(free).toBeDefined();
+    expect(free?.entity).toBe('RestaurantTable');
+    expect(free?.where).toMatchObject({ id: '77', company_id: '42' });
+  });
+
+  it('cobrar un pedido a crédito también libera la mesa (se convierte a SALE)', async () => {
+    saleTableId = '77';
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 100, change_amount: 0 }],
+      is_credit: true,
+      credit_amount: 50,
+    };
+
+    await action.execute(dto, 42, actor, null);
+
+    expect(updates.find((u) => u.patch.status === 'free')).toBeDefined();
+  });
+
+  it('cobrar un pedido SIN mesa (table_id null) no toca ninguna mesa', async () => {
+    saleTableId = null;
+    const dto: ProcessPaymentDto = {
+      invoice_id: 142,
+      amount_due: 150,
+      payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 }],
+      is_credit: false,
+      credit_amount: 0,
+    };
+
+    await action.execute(dto, 42, actor, null);
+
+    expect(updates.find((u) => u.patch.status === 'free')).toBeUndefined();
   });
 
   it('split + crédito remanente: CASH 100 + crédito 50 = 150 → 1 SalePayment + SaleCredit', async () => {
@@ -687,7 +740,9 @@ describe('ProcessPaymentAction (split tender)', () => {
       const dto: ProcessPaymentDto = {
         invoice_id: 142,
         amount_due: 150,
-        payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 50, change_amount: 0 }],
+        payments: [
+          { payment_method: ProcessPaymentMethod.CASH, amount_paid: 50, change_amount: 0 },
+        ],
         is_credit: true,
         credit_amount: 100,
       };
@@ -725,7 +780,9 @@ describe('ProcessPaymentAction (split tender)', () => {
       const dto: ProcessPaymentDto = {
         invoice_id: 142,
         amount_due: 150,
-        payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 }],
+        payments: [
+          { payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 },
+        ],
         is_credit: false,
         credit_amount: 0,
       };
@@ -741,7 +798,9 @@ describe('ProcessPaymentAction (split tender)', () => {
       const dto: ProcessPaymentDto = {
         invoice_id: 142,
         amount_due: 150,
-        payments: [{ payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 }],
+        payments: [
+          { payment_method: ProcessPaymentMethod.CASH, amount_paid: 150, change_amount: 0 },
+        ],
         is_credit: false,
         credit_amount: 0,
       };

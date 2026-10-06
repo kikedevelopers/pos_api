@@ -5,6 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 
 import { RealtimeGateway } from './realtime.gateway';
 import { RealtimeInvalidationInterceptor } from './realtime-invalidation.interceptor';
+import { TablesRealtimeInterceptor } from './tables-realtime.interceptor';
 
 /**
  * Módulo de tiempo real (Socket.IO).
@@ -33,11 +34,12 @@ import { RealtimeInvalidationInterceptor } from './realtime-invalidation.interce
   ],
   providers: [
     RealtimeGateway,
+    TablesRealtimeInterceptor,
     {
       provide: APP_INTERCEPTOR,
       useClass: RealtimeInvalidationInterceptor,
     },
   ],
-  exports: [RealtimeGateway],
+  exports: [RealtimeGateway, TablesRealtimeInterceptor],
 })
 export class RealtimeModule {}

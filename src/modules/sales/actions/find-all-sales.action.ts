@@ -182,6 +182,8 @@ function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemD
     isCredit,
     creditStatus,
     customerName: invoice.customer_name || 'CONSUMIDOR FINAL',
+    tableName: invoice.table_name ?? null,
+    salonName: invoice.salon_name ?? null,
     synced: true,
     createdAt: invoice.created_at.toISOString(),
   };

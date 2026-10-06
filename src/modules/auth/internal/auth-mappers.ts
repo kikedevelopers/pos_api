@@ -1,5 +1,6 @@
 import type { Logger } from '@nestjs/common';
 
+import { resolvePosMode } from '@/common/pos-mode/pos-mode.util';
 import type { Company } from '@/modules/companies/entities/company.entity';
 import type { Employee } from '@/modules/employees/entities/employee.entity';
 import type { User } from '@/modules/users/entities/user.entity';
@@ -152,6 +153,10 @@ export function companyToCompanyProfileItemDto(
     // perfil para que el cliente sepa desde el login si mostrar la UI fiscal
     // (select de IVA, desglose por precio). Default false por resiliencia.
     electronic_billing_enabled: company.electronic_billing_enabled ?? false,
+    // Modo del POS del negocio. Viaja en el perfil para que el cliente sepa
+    // desde el login qué ventana de POS abrir. Cualquier valor desconocido cae
+    // en `retail`: el negocio nunca debe quedarse sin POS.
+    pos_mode: resolvePosMode(company.pos_mode),
     // Multi-sucursal: si esta company recibe inventario compartido del principal
     // (target de algún inventory_shares). El cliente lo usa para avisar que el
     // inventario de la sucursal es compartido. Lo computa el caller (list-branches

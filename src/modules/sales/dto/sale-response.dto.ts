@@ -274,6 +274,23 @@ export class SaleResponseDto {
   @ApiPropertyOptional({
     type: 'string',
     nullable: true,
+    example: 'Mesa 5',
+    description: 'Mesa del pedido (modo restaurante). null si no se envió a una mesa.',
+  })
+  tableName!: string | null;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: 'Sur A',
+    description:
+      'Salón de la mesa, si el pedido se envió por salón. null si fue mesa suelta o sin mesa.',
+  })
+  salonName!: string | null;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
     example: 'Pago en efectivo + transferencia.',
     description: 'Nota a nivel ticket (sale_invoices.notes). null si no tiene.',
   })
@@ -583,6 +600,8 @@ export function toSaleResponseDto(
     margin: Number(sale.margin),
     customerName: sale.customer_name || 'CONSUMIDOR FINAL',
     customerId: sale.customer_id != null ? Number(sale.customer_id) : null,
+    tableName: sale.table_name ?? null,
+    salonName: sale.salon_name ?? null,
     notes: sale.notes ?? null,
     createdBy: sale.created_by,
     synced: true,

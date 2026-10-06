@@ -86,6 +86,12 @@ export class RealtimeGateway implements OnGatewayConnection {
     // SIEMPRE: room propio del usuario dentro de su company.
     void client.join(this.userRoom(companyId, userId));
 
+    // SIEMPRE: room company-wide — TODO socket del tenant (empleados incluidos).
+    // Lo usan las señales que interesan a toda la company sin distinción de rol,
+    // p. ej. `tables:changed` (un mesero debe enterarse de que otra mesa se
+    // ocupó aunque no sea owner/manager).
+    void client.join(this.companyRoom(companyId));
+
     // No-employee (owner/manager/superadmin con company): ve TODOS los tickets
     // de la company → room agregado.
     if (type !== 'employee') {
@@ -134,6 +140,23 @@ export class RealtimeGateway implements OnGatewayConnection {
   }
 
   /**
+   * Emite `tables:changed` a la sala agregada `company:<id>:all` de la company.
+   * Señal de que el estado de salones/mesas cambió (una mesa se ocupó al enviar
+   * un pedido, se liberó al cobrar/anular, o cambió el CRUD de salones/mesas),
+   * para que los clientes del módulo "Salones y Mesas" y el selector "Enviar a"
+   * refresquen y nadie envíe un pedido a una mesa que ya está ocupada.
+   *
+   * Best-effort: el llamador envuelve en try/catch; un fallo de socket nunca
+   * rompe la operación de negocio.
+   */
+  emitTablesChanged(companyId: number, payload: TablesChangedPayload = {}): void {
+    const body: TablesChangedPayload = { companyId, ...payload };
+    // Room company-wide: alcanza a owner/manager Y empleados (meseros/cajeros),
+    // para que nadie envíe un pedido a una mesa que acaba de ocuparse.
+    this.server.to(this.companyRoom(companyId)).emit(TABLES_CHANGED_EVENT, body);
+  }
+
+  /**
    * Emite `alert:created` a la sala agregada `company:<id>:all` (owner/manager):
    * las notificaciones del centro de alertas son de nivel negocio, igual que el
    * dashboard, así que NO se emiten a rooms de employee.
@@ -176,6 +199,10 @@ export class RealtimeGateway implements OnGatewayConnection {
   private allRoom(companyId: number): string {
     return `company:${companyId}:all`;
   }
+
+  private companyRoom(companyId: number): string {
+    return `company:${companyId}`;
+  }
 }
 
 /** Evento único de invalidación de lista de tickets. */
@@ -195,11 +222,17 @@ export interface TicketChangedPayload {
 /** Evento único de invalidación de los informes del dashboard. */
 export const DASHBOARD_CHANGED_EVENT = 'dashboard:changed';
 
+export const TABLES_CHANGED_EVENT = 'tables:changed';
+
 /**
  * Señal mínima de invalidación del dashboard. El cliente solo la usa para
  * invalidar/refrescar sus informes; no transporta el contenido del informe.
  */
 export interface DashboardChangedPayload {
+  companyId?: number;
+}
+
+export interface TablesChangedPayload {
   companyId?: number;
 }
 

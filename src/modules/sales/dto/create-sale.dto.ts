@@ -349,6 +349,28 @@ export class CreateSaleDto {
     description:
       'Tipo de ticket al crear. PlacePos siempre envía ORDER; el service ignora override.',
   })
+  @ApiPropertyOptional({
+    example: 12,
+    description:
+      'Mesa a la que se envía el pedido (modo restaurante, botón "Enviar a"). La mesa debe estar libre; queda ocupada hasta cobrar. Ausente en retail y en el registro directo (F4).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'table_id debe ser entero' })
+  @Min(1, { message: 'table_id debe ser >= 1' })
+  table_id?: number | null;
+
+  @ApiPropertyOptional({
+    example: 3,
+    description:
+      'Salón de la mesa, si el pedido se envió por salón. Si viene, la mesa debe pertenecer a ese salón.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'salon_id debe ser entero' })
+  @Min(1, { message: 'salon_id debe ser >= 1' })
+  salon_id?: number | null;
+
   @IsOptional()
   @IsEnum(TicketType, { message: 'ticket_type inválido' })
   ticket_type?: TicketType;

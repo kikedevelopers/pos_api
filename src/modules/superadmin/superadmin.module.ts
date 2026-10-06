@@ -28,6 +28,7 @@ import { ResendActivationAction } from './actions/resend-activation.action';
 import { ResetTenantOwnerPasswordAction } from './actions/reset-tenant-owner-password.action';
 import { UpdateBranchesAction } from './actions/update-branches.action';
 import { UpdateElectronicBillingAction } from './actions/update-electronic-billing.action';
+import { UpdatePosModeAction } from './actions/update-pos-mode.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
@@ -71,6 +72,7 @@ import { SuperadminController } from './superadmin.controller';
     UpdateSubscriptionAction,
     UpdateBranchesAction,
     UpdateElectronicBillingAction,
+    UpdatePosModeAction,
     DeleteTenantAction,
     CreateTenantAction,
     UpdateTenantOwnerAction,

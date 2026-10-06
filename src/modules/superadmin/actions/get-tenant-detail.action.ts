@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { resolvePosMode } from '@/common/pos-mode/pos-mode.util';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Subscription } from '@/modules/subscriptions/entities/subscription.entity';
 import { User, UserType } from '@/modules/users/entities/user.entity';
@@ -140,6 +141,8 @@ export class GetTenantDetailAction {
       // Interruptor de FE del negocio. La FE no viene activa; se habilita desde
       // el panel. El proceso de FE corre en el API externo (APIDIAN).
       electronicBilling: { enabled: company.electronic_billing_enabled },
+      // Modo del POS de ESTA company (propio también en una sucursal).
+      pos_mode: resolvePosMode(company.pos_mode),
     };
   }
 
