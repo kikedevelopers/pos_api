@@ -157,6 +157,22 @@ export class RealtimeGateway implements OnGatewayConnection {
   }
 
   /**
+   * Emite `comandas:changed` a la room company-wide `company:<id>` (alcanza a
+   * owner/manager Y empleados: meseros/cocina). La lista de Comandas (pedidos
+   * ORDER activos) cambia cuando entra un pedido nuevo, se cobra (sale de la
+   * lista) o se anula. A diferencia de `ticket:changed` (que va a `:all` +
+   * vendedor), este es company-wide para que la cocina/meseros empleados vean
+   * los pedidos nuevos al instante aunque no sean el vendedor.
+   *
+   * Best-effort: el llamador envuelve en try/catch; un fallo de socket nunca
+   * rompe la operación de negocio.
+   */
+  emitComandasChanged(companyId: number, payload: ComandasChangedPayload = {}): void {
+    const body: ComandasChangedPayload = { companyId, ...payload };
+    this.server.to(this.companyRoom(companyId)).emit(COMANDAS_CHANGED_EVENT, body);
+  }
+
+  /**
    * Emite `alert:created` a la sala agregada `company:<id>:all` (owner/manager):
    * las notificaciones del centro de alertas son de nivel negocio, igual que el
    * dashboard, así que NO se emiten a rooms de employee.
@@ -233,6 +249,13 @@ export interface DashboardChangedPayload {
 }
 
 export interface TablesChangedPayload {
+  companyId?: number;
+}
+
+/** Evento único de invalidación de la lista de Comandas (pedidos ORDER activos). */
+export const COMANDAS_CHANGED_EVENT = 'comandas:changed';
+
+export interface ComandasChangedPayload {
   companyId?: number;
 }
 

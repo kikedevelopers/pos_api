@@ -39,6 +39,7 @@ import { CompaniesModule } from './modules/companies/companies.module';
 import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
 import { CreditsModule } from './modules/credits/credits.module';
 import { CustomerCategoriesModule } from './modules/customer-categories/customer-categories.module';
+import { ComandasModule } from './modules/comandas/comandas.module';
 import { SalonsModule } from './modules/salons/salons.module';
 import { RestaurantTablesModule } from './modules/restaurant-tables/restaurant-tables.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -223,6 +224,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CustomersModule,
     CustomerCategoriesModule,
     SalonsModule,
+    ComandasModule,
     RestaurantTablesModule,
     SuppliersModule,
     // Fase 2A — Transportistas (carriers + carrier-credits + analytics).

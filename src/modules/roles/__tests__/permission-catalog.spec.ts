@@ -45,10 +45,11 @@ describe('permission-catalog', () => {
     'canAccessFixedExpenses',
     'canAccessSettings',
     'canAccessSalons',
+    'canAccessComandas',
   ];
 
   it('expone exactamente 23 keys en el orden canónico', () => {
-    expect(PERMISSION_KEYS).toHaveLength(23);
+    expect(PERMISSION_KEYS).toHaveLength(24);
     expect([...PERMISSION_KEYS]).toEqual(EXPECTED_KEYS);
   });
 

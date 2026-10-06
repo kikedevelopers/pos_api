@@ -163,6 +163,12 @@ export class PaymentsController {
       } catch {
         // best-effort: nunca rompe el cobro ya confirmado.
       }
+      // Cobrar un pedido (ORDER→SALE) lo saca de la lista de Comandas.
+      try {
+        this.realtimeGateway.emitComandasChanged(companyId);
+      } catch {
+        // best-effort.
+      }
     }
 
     return publicResult;

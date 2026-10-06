@@ -68,18 +68,18 @@ describe('ResolveEffectivePermissionsAction', () => {
     company_id: 10,
   };
 
-  it('owner → TODAS las 23 keys, sin tocar la BD', async () => {
+  it('owner → TODAS las 24 keys, sin tocar la BD', async () => {
     const { action, employeeFindOne, roleFindOne } = makeAction({});
 
     const perms = await action.execute(ownerActor);
 
     expect(perms).toEqual([...PERMISSION_KEYS]);
-    expect(perms).toHaveLength(23);
+    expect(perms).toHaveLength(24);
     expect(employeeFindOne).not.toHaveBeenCalled();
     expect(roleFindOne).not.toHaveBeenCalled();
   });
 
-  it('superadmin → TODAS las 23 keys, sin tocar la BD', async () => {
+  it('superadmin → TODAS las 24 keys, sin tocar la BD', async () => {
     const { action, employeeFindOne } = makeAction({});
 
     const perms = await action.execute(superadminActor);

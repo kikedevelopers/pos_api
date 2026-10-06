@@ -15,7 +15,7 @@
 // interno de desarrollo, nunca asignable a un rol de usuario.
 
 /**
- * Las 23 keys EXACTAS, en su orden canónico. El orden importa para la paridad
+ * Las 24 keys EXACTAS, en su orden canónico. El orden importa para la paridad
  * con placepos y para derivar el set "todos los permisos" del rol Administrador.
  *
  * NOTA sobre `canViewAllSales`: a diferencia del resto (que controla VISIBILIDAD
@@ -47,6 +47,7 @@ export const PERMISSION_KEYS = [
   'canAccessFixedExpenses',
   'canAccessSettings',
   'canAccessSalons',
+  'canAccessComandas',
 ] as const;
 
 /** Tipo de una key de permiso válida, derivado del array canónico. */
@@ -134,7 +135,10 @@ export const PERMISSION_SECTIONS: readonly PermissionSection[] = [
   },
   {
     title: 'Restaurante',
-    items: [{ key: 'canAccessSalons', label: 'Salones y Mesas' }],
+    items: [
+      { key: 'canAccessSalons', label: 'Salones y Mesas' },
+      { key: 'canAccessComandas', label: 'Comandas' },
+    ],
   },
 ];
 
