@@ -20,6 +20,7 @@ import {
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
 import { recomputeSalePoints } from '@/modules/sales/internal/customer-points.helper';
+import { freeOrderTable } from '@/modules/sales/internal/resolve-order-table.helper';
 import { assertMarginAboveMinimum } from '@/modules/sales/internal/margin-guard.helper';
 import { recordSaleStatus } from '@/modules/sales/internal/record-sale-status.helper';
 import { SaleStatusEventType } from '@/modules/sales/entities/sale-status-history.entity';
@@ -238,7 +239,8 @@ export class ProcessPaymentAction {
     try {
       return await this.dataSource.transaction<ProcessPaymentResult>(
         'SERIALIZABLE',
-        async (manager) => this.run(manager, dto, companyId, actor, idempotencyKey ?? null, options),
+        async (manager) =>
+          this.run(manager, dto, companyId, actor, idempotencyKey ?? null, options),
       );
     } catch (error) {
       // Anticipo insuficiente (o monto no positivo): el lock del cliente en
@@ -475,6 +477,10 @@ export class ProcessPaymentAction {
         sold_at: new Date(),
       },
     );
+
+    // Modo restaurante: el pedido estaba en una mesa (ocupada). Al cobrarlo, la
+    // mesa se LIBERA en la misma transacción. No-op si el pedido no tenía mesa.
+    await freeOrderTable(manager, companyId, sale.table_id);
 
     // HISTORIAL: el pedido se cobró y se convirtió en venta (ORDER→SALE). El
     // monto del evento es el NETO cobrado por tenders (0 en venta 100% a crédito).

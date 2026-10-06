@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { POS_MODES, type PosMode } from '@/common/pos-mode/pos-mode.util';
 import { NumericTransformer } from '@/common/utils/numeric-transformer';
 
 import { User } from '@/modules/users/entities/user.entity';
@@ -111,6 +112,20 @@ export class Company {
    */
   @Column({ type: 'boolean', default: false })
   electronic_billing_enabled!: boolean;
+
+  /**
+   * Modo del POS del negocio: `retail` (el POS de siempre, default) o
+   * `restaurant` (POS dedicado a restaurantes y bares, con mesas/salones). Lo
+   * cambia el panel superadmin y viaja en el perfil; el cliente Electron lo usa
+   * para decidir qué ventana de POS abrir. No altera reglas de venta del backend.
+   */
+  @Column({
+    type: 'enum',
+    enum: POS_MODES,
+    enumName: 'companies_pos_mode_enum',
+    default: 'retail',
+  })
+  pos_mode!: PosMode;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

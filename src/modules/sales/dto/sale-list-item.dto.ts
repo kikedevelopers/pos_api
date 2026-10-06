@@ -59,6 +59,20 @@ export class SaleListItemDto {
   })
   customerName!: string;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Mesa 5',
+    description: 'Mesa del pedido (modo restaurante). null si no tiene mesa.',
+  })
+  tableName!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Sur A',
+    description: 'Salón de la mesa, si el pedido se envió por salón. null si no.',
+  })
+  salonName!: string | null;
+
   @ApiProperty({ example: true, description: 'Siempre true en modo cloud (no hay offline sync).' })
   synced!: boolean;
 

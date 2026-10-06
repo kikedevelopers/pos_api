@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Bank } from '@/modules/banks/entities/bank.entity';
+import { RealtimeModule } from '@/modules/realtime/realtime.module';
 import { BanksModule } from '@/modules/banks/banks.module';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import { CashRegisterLog } from '@/modules/cash-register/entities/cash-register-log.entity';
@@ -40,6 +41,7 @@ import { PaymentsService } from './payments.service';
  */
 @Module({
   imports: [
+    RealtimeModule,
     TypeOrmModule.forFeature([
       SaleInvoice,
       SaleInvoiceLine,

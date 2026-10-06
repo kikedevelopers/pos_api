@@ -33,6 +33,10 @@ import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import { assertSellableProducts } from '../internal/sellable-products.guard';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
 import { findSaleCredit, findSaleLines, findSalePayments } from '../internal/sale-lookups';
+import {
+  resolveAndOccupyOrderTable,
+  type OrderTableResult,
+} from '../internal/resolve-order-table.helper';
 import type { SaleAggregate } from './find-sale.action';
 
 /**
@@ -134,6 +138,19 @@ export class CreateSaleAction {
           }
         }
 
+        // 1b. Mesa (opcional, modo restaurante — botón "Enviar a"). Valida la
+        // mesa y la OCUPA dentro de esta misma transacción, con lock para que
+        // dos pedidos concurrentes no tomen la misma mesa.
+        let orderTable: OrderTableResult | null = null;
+        if (typeof dto.table_id === 'number' && dto.table_id > 0) {
+          orderTable = await resolveAndOccupyOrderTable(
+            manager,
+            companyId,
+            dto.table_id,
+            typeof dto.salon_id === 'number' && dto.salon_id > 0 ? dto.salon_id : null,
+          );
+        }
+
         // 2. Productos: validar que cada item_id sea ACCESIBLE para la company
         // activa (propio O compartido por el principal — FASE 2) y sea vendible
         // (SIMPLE o COMBO) y no archivado. Cross-tenant guard crítico: un producto
@@ -181,6 +198,10 @@ export class CreateSaleAction {
           // `saleOperations.createOrder`: persiste payload.customer_name ?? null
           // sin tocar el customer.name del BD).
           customer_name: dto.customer_name ?? null,
+          table_id: orderTable?.tableId ?? null,
+          salon_id: orderTable?.salonId ?? null,
+          table_name: orderTable?.tableName ?? null,
+          salon_name: orderTable?.salonName ?? null,
           subtotal: dto.total,
           tax_total: 0,
           total: dto.total,

@@ -49,6 +49,7 @@ import {
   UpdateElectronicBillingAction,
   type UpdateElectronicBillingResult,
 } from './actions/update-electronic-billing.action';
+import { UpdatePosModeAction, type UpdatePosModeResult } from './actions/update-pos-mode.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
 import { UpdateTenantOwnerAction } from './actions/update-tenant-owner.action';
@@ -58,6 +59,7 @@ import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
 import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
 import { UpdateElectronicBillingDto } from './dto/update-electronic-billing.dto';
+import { UpdatePosModeDto } from './dto/update-pos-mode.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
 import {
@@ -118,6 +120,7 @@ export class SuperadminController {
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
     private readonly updateBranchesAction: UpdateBranchesAction,
     private readonly updateElectronicBillingAction: UpdateElectronicBillingAction,
+    private readonly updatePosModeAction: UpdatePosModeAction,
     private readonly deleteTenantAction: DeleteTenantAction,
     private readonly createTenantAction: CreateTenantAction,
     private readonly updateTenantOwnerAction: UpdateTenantOwnerAction,
@@ -280,6 +283,28 @@ export class SuperadminController {
     @Body() dto: UpdateElectronicBillingDto,
   ): Promise<UpdateElectronicBillingResult> {
     return this.updateElectronicBillingAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/pos-mode
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/pos-mode')
+  @ApiOperation({
+    summary: 'Cambiar el modo del POS del negocio (retail | restaurant).',
+    description:
+      'Body: { pos_mode }. Se aplica sobre la company indicada, sea principal o sucursal: el ' +
+      'modo es del negocio. Solo mueve el selector; el cliente lo lee del perfil y decide qué ' +
+      'ventana de POS abrir.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Modo desconocido' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  updatePosMode(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdatePosModeDto,
+  ): Promise<UpdatePosModeResult> {
+    return this.updatePosModeAction.execute(companyId, dto);
   }
 
   // --------------------------------------------------------------------------

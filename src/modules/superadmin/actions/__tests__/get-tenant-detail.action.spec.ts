@@ -223,3 +223,52 @@ describe('GetTenantDetailAction · sucursal', () => {
     expect(res.subscription?.active).toBe(false);
   });
 });
+
+describe('GetTenantDetailAction · modo del POS', () => {
+  it("reporta 'retail' cuando la company no trae el campo (fila anterior a la migración)", async () => {
+    const action = build({ company: PRINCIPAL, directOwner: OWNER, directSubscription: SUB });
+
+    const res = await action.execute(8);
+
+    expect(res.pos_mode).toBe('retail');
+  });
+
+  it("reporta 'restaurant' cuando el negocio lo tiene activo", async () => {
+    const action = build({
+      company: { ...PRINCIPAL, pos_mode: 'restaurant' },
+      directOwner: OWNER,
+      directSubscription: SUB,
+    });
+
+    const res = await action.execute(8);
+
+    expect(res.pos_mode).toBe('restaurant');
+  });
+
+  it('una sucursal reporta SU modo, no el del principal', async () => {
+    const action = build({
+      company: { ...SUCURSAL, pos_mode: 'restaurant' },
+      memberRows: [{ user_id: '5' }],
+      membershipOwner: OWNER,
+      parentCompany: { ...PRINCIPAL, pos_mode: 'retail' },
+      parentSubscription: SUB,
+    });
+
+    const res = await action.execute(12);
+
+    expect(res.company.isBranch).toBe(true);
+    expect(res.pos_mode).toBe('restaurant');
+  });
+
+  it("un valor desconocido en BD se proyecta como 'retail'", async () => {
+    const action = build({
+      company: { ...PRINCIPAL, pos_mode: 'bar' },
+      directOwner: OWNER,
+      directSubscription: SUB,
+    });
+
+    const res = await action.execute(8);
+
+    expect(res.pos_mode).toBe('retail');
+  });
+});

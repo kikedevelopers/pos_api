@@ -39,6 +39,7 @@ import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
 import { SaleStatusEventType } from '../entities/sale-status-history.entity';
 import { getConsolidatedInvoice } from '../internal/consolidate-invoice.helper';
+import { freeOrderTable } from '../internal/resolve-order-table.helper';
 import { recomputeSalePoints } from '../internal/customer-points.helper';
 import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
@@ -137,6 +138,8 @@ export class VoidSaleAction {
       { id: sale.id, company_id: String(companyId) },
       { is_deleted: true },
     );
+    // Modo restaurante: anular un pedido LIBERA su mesa (si tenía). No-op si no.
+    await freeOrderTable(manager, companyId, sale.table_id);
     // HISTORIAL: pedido anulado.
     await recordSaleStatus(manager, {
       companyId,
@@ -206,6 +209,8 @@ export class VoidSaleAction {
       { id: sale.id, company_id: String(companyId) },
       { is_deleted: true },
     );
+    // Si el préstamo venía de un pedido en mesa, liberarla al anularlo.
+    await freeOrderTable(manager, companyId, sale.table_id);
 
     // HISTORIAL: préstamo anulado.
     await recordSaleStatus(manager, {

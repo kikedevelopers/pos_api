@@ -38,7 +38,11 @@ const recordSaleStatusMock = recordSaleStatus as jest.MockedFunction<typeof reco
 
 describe('VoidSaleAction (rama LOAN — préstamo a tercero)', () => {
   let action: VoidSaleAction;
-  let updates: Array<{ entity: string; where: Record<string, unknown>; patch: Record<string, unknown> }>;
+  let updates: Array<{
+    entity: string;
+    where: Record<string, unknown>;
+    patch: Record<string, unknown>;
+  }>;
   let saved: Array<{ entity: string }>;
   let saleLines: Array<Record<string, unknown>>;
 
@@ -47,7 +51,9 @@ describe('VoidSaleAction (rama LOAN — préstamo a tercero)', () => {
       findOne: jest.fn().mockResolvedValue(null),
       find: jest.fn((entity: { name?: string } | string) => {
         const name = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
-        if (name === 'SaleInvoiceLine') return Promise.resolve(saleLines);
+        if (name === 'SaleInvoiceLine') {
+          return Promise.resolve(saleLines);
+        }
         return Promise.resolve([]);
       }),
       insert: jest.fn().mockResolvedValue({ raw: [], identifiers: [], generatedMaps: [] }),
@@ -154,5 +160,63 @@ describe('VoidSaleAction (rama LOAN — préstamo a tercero)', () => {
     const result = await action.execute(300, 42, actor);
     expect(adjustInventoryMock).not.toHaveBeenCalled();
     expect(result.message).toBe('Préstamo anulado exitosamente');
+  });
+
+  // ─── Liberación de mesa (modo restaurante) ────────────────────────────────
+
+  it('anular un LOAN con mesa la libera (update RestaurantTable → status free)', async () => {
+    findSaleMock.mockResolvedValue({
+      id: '300',
+      company_id: '42',
+      customer_id: '55',
+      ticket_type: 'LOAN',
+      ticket_number: 'PED-8270',
+      is_deleted: false,
+      table_id: '88',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await action.execute(300, 42, actor, 'anulación');
+
+    const free = updates.find((u) => u.patch.status === 'free');
+    expect(free).toBeDefined();
+    expect(free?.entity).toBe('RestaurantTable');
+    expect(free?.where).toMatchObject({ id: '88', company_id: '42' });
+  });
+
+  it('anular un ORDER con mesa la libera', async () => {
+    findSaleMock.mockResolvedValue({
+      id: '301',
+      company_id: '42',
+      customer_id: null,
+      ticket_type: 'ORDER',
+      ticket_number: 'PED-9000',
+      is_deleted: false,
+      table_id: '91',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await action.execute(301, 42, actor, 'anulación');
+
+    const free = updates.find((u) => u.patch.status === 'free');
+    expect(free).toBeDefined();
+    expect(free?.where).toMatchObject({ id: '91', company_id: '42' });
+  });
+
+  it('anular un pedido SIN mesa (table_id null) no toca ninguna mesa', async () => {
+    findSaleMock.mockResolvedValue({
+      id: '302',
+      company_id: '42',
+      customer_id: null,
+      ticket_type: 'ORDER',
+      ticket_number: 'PED-9001',
+      is_deleted: false,
+      table_id: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    await action.execute(302, 42, actor, 'anulación');
+
+    expect(updates.find((u) => u.patch.status === 'free')).toBeUndefined();
   });
 });

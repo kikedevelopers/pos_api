@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+import { POS_MODES, type PosMode } from '@/common/pos-mode/pos-mode.util';
 import type { UserType } from '@/common/types/jwt-payload.type';
 import type { PermissionKey } from '@/modules/roles/internal/permission-catalog';
 
@@ -97,6 +98,14 @@ export class CompanyProfileItemDto {
    */
   @ApiProperty({ example: false })
   electronic_billing_enabled!: boolean;
+
+  /**
+   * Modo del POS del negocio (`retail` | `restaurant`). El cliente Electron lo
+   * lee del perfil para decidir qué ventana de POS abrir. Siempre viene un modo
+   * válido: un valor desconocido en BD se proyecta como `retail`.
+   */
+  @ApiProperty({ enum: POS_MODES, example: 'retail' })
+  pos_mode!: PosMode;
 
   /**
    * Multi-sucursal: `true` cuando esta company RECIBE inventario compartido del

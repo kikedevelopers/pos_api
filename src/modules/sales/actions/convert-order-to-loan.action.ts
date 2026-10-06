@@ -9,6 +9,7 @@ import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import type { ProcessLoanDto } from '../dto/process-loan.dto';
 import { recordSaleStatus } from '../internal/record-sale-status.helper';
+import { freeOrderTable } from '../internal/resolve-order-table.helper';
 
 /**
  * Actor que registra el préstamo (User u Employee logueado). Solo capturamos
@@ -198,16 +199,16 @@ export class ConvertOrderToLoanAction {
 
     // 2. Idempotencia dentro de la TX: si este mismo pedido ya se convirtió con
     //    esta llave (carrera que ganó la otra request), devolvemos replay.
-    if (sale.ticket_type === TicketType.LOAN && sale.client_operation_id === dto.client_operation_id) {
+    if (
+      sale.ticket_type === TicketType.LOAN &&
+      sale.client_operation_id === dto.client_operation_id
+    ) {
       return this.replayFromSale(sale);
     }
 
     // 2.1. Solo un ORDER es convertible.
     if (sale.ticket_type !== TicketType.ORDER) {
-      return this.fail(
-        'Solo se puede prestar un pedido (ORDER)',
-        ERR.INVOICE_NOT_ORDER,
-      );
+      return this.fail('Solo se puede prestar un pedido (ORDER)', ERR.INVOICE_NOT_ORDER);
     }
 
     // 3. Exige cliente (igual que el crédito): un préstamo va a un tercero.
@@ -238,6 +239,9 @@ export class ConvertOrderToLoanAction {
         client_operation_id: dto.client_operation_id,
       },
     );
+
+    // Convertir un pedido en préstamo lo saca de la mesa: liberarla (si tenía).
+    await freeOrderTable(manager, companyId, sale.table_id);
 
     // 5. Descuento de inventario, EXACTAMENTE como una venta (reason SALE):
     //    respeta el control estricto de stock; el owner puede forzar negativo

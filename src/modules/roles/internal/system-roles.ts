@@ -27,7 +27,7 @@ export interface SystemRoleSeed {
  * con placepos. El orden es estable (Administrador primero) por prolijidad,
  * pero el seed es idempotente por nombre, no por orden.
  *
- *   - Administrador → TODAS las 22 keys (derivadas de `PERMISSION_KEYS` para
+ *   - Administrador → TODAS las 24 keys (derivadas de `PERMISSION_KEYS` para
  *     que el set crezca solo si el catálogo crece). INMUTABLE
  *     (`is_editable = false`): no se puede editar ni eliminar, ni siquiera el
  *     owner — concede siempre acceso total.

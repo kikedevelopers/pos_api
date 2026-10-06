@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
@@ -57,7 +58,10 @@ const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 @ApiBearerAuth('bearer')
 @Controller('payments')
 export class PaymentsController {
-  constructor(private readonly paymentsService: PaymentsService) {}
+  constructor(
+    private readonly paymentsService: PaymentsService,
+    private readonly realtimeGateway: RealtimeGateway,
+  ) {}
 
   @Post()
   @Roles('owner', 'manager', 'employee')
@@ -150,6 +154,23 @@ export class PaymentsController {
     // `{ success: true, payload }`.
     const { replay: _replay, ...publicResult } = result;
     void _replay;
+
+    // Modo restaurante: cobrar un pedido libera su mesa. Avisa en tiempo real
+    // (best-effort) a los clientes para que la mesa reaparezca como disponible.
+    if (result.replay !== true) {
+      try {
+        this.realtimeGateway.emitTablesChanged(companyId);
+      } catch {
+        // best-effort: nunca rompe el cobro ya confirmado.
+      }
+      // Cobrar un pedido (ORDER→SALE) lo saca de la lista de Comandas.
+      try {
+        this.realtimeGateway.emitComandasChanged(companyId);
+      } catch {
+        // best-effort.
+      }
+    }
+
     return publicResult;
   }
 }

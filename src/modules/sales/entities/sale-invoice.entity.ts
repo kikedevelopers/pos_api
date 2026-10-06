@@ -15,6 +15,8 @@ import {
 import { NumericTransformer } from '@/common/utils/numeric-transformer';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Customer } from '@/modules/customers/entities/customer.entity';
+import { RestaurantTable } from '@/modules/restaurant-tables/entities/restaurant-table.entity';
+import { Salon } from '@/modules/salons/entities/salon.entity';
 
 import { SaleCredit } from './sale-credit.entity';
 import { SaleInvoiceLine } from './sale-invoice-line.entity';
@@ -156,6 +158,33 @@ export class SaleInvoice {
    */
   @Column({ type: 'text', nullable: true })
   customer_name!: string | null;
+
+  /**
+   * Mesa a la que se envió el pedido (modo restaurante). NULL en retail. Al
+   * crear el ORDER con mesa, la mesa queda OCUPADA hasta que el pedido se cobre.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  table_id!: string | null;
+
+  @ManyToOne(() => RestaurantTable, { onDelete: 'SET NULL', onUpdate: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'table_id' })
+  table!: RestaurantTable | null;
+
+  /** Snapshot del nombre de la mesa al crear el pedido (auditoría histórica). */
+  @Column({ type: 'text', nullable: true })
+  table_name!: string | null;
+
+  /** Salón de la mesa, si el pedido se envió por salón. NULL si fue mesa suelta. */
+  @Column({ type: 'bigint', nullable: true })
+  salon_id!: string | null;
+
+  @ManyToOne(() => Salon, { onDelete: 'SET NULL', onUpdate: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'salon_id' })
+  salon!: Salon | null;
+
+  /** Snapshot del nombre del salón al crear el pedido. */
+  @Column({ type: 'text', nullable: true })
+  salon_name!: string | null;
 
   @Column({
     type: 'numeric',

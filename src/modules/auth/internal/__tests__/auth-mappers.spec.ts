@@ -166,3 +166,39 @@ describe('auth-mappers · subpermisos del configurador (margen/ganancia del prod
     expect(profile.can_view_product_profit).toBe(false);
   });
 });
+
+describe('auth-mappers · pos_mode en CompanyProfileItemDto', () => {
+  const base = {
+    id: '8',
+    name: 'Esencia & Grano',
+    is_branch: false,
+    balance: '0',
+    document_number: null,
+    address: null,
+    email: null,
+    phone_number: null,
+    created_at: new Date('2025-01-01T00:00:00.000Z'),
+    updated_at: new Date('2025-01-01T00:00:00.000Z'),
+    electronic_billing_enabled: false,
+  };
+  const project = (pos_mode?: unknown) =>
+    companyToCompanyProfileItemDto({ ...base, pos_mode } as unknown as Company, logger).pos_mode;
+
+  it("propaga 'retail'", () => {
+    expect(project('retail')).toBe('retail');
+  });
+
+  it("propaga 'restaurant'", () => {
+    expect(project('restaurant')).toBe('restaurant');
+  });
+
+  it("cae en 'retail' si la company no trae el campo", () => {
+    expect(project(undefined)).toBe('retail');
+    expect(project(null)).toBe('retail');
+  });
+
+  it("cae en 'retail' ante un valor desconocido (el negocio nunca queda sin POS)", () => {
+    expect(project('bar')).toBe('retail');
+    expect(project('RESTAURANT')).toBe('retail');
+  });
+});

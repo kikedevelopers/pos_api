@@ -297,6 +297,25 @@ export class SalesController {
       );
     }
 
+    // Modo restaurante: un pedido nuevo (ORDER) entra a la lista de Comandas.
+    // Evento company-wide para que cocina/meseros (empleados) lo vean al
+    // instante, aunque el pedido no tenga mesa.
+    try {
+      this.realtimeGateway.emitComandasChanged(companyId);
+    } catch {
+      // best-effort: nunca rompe la creación ya confirmada.
+    }
+
+    // Modo restaurante: si el pedido ocupó una mesa, avisa en tiempo real para
+    // que el selector "Enviar a" la marque ocupada en todos los clientes.
+    if (sale.table_id) {
+      try {
+        this.realtimeGateway.emitTablesChanged(companyId);
+      } catch {
+        // best-effort: nunca rompe la creación ya confirmada.
+      }
+    }
+
     return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number);
   }
 
@@ -408,6 +427,18 @@ export class SalesController {
       body?.reason ?? null,
       body?.refund_source ?? null,
     );
+    // Anular un pedido puede liberar su mesa → avisa en tiempo real.
+    try {
+      this.realtimeGateway.emitTablesChanged(companyId);
+    } catch {
+      // best-effort.
+    }
+    // Anular un pedido lo saca de la lista de Comandas.
+    try {
+      this.realtimeGateway.emitComandasChanged(companyId);
+    } catch {
+      // best-effort.
+    }
     return toVoidSaleResponseDto(result);
   }
 

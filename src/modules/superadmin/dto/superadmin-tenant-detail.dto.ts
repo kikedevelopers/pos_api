@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+import { POS_MODES, type PosMode } from '@/common/pos-mode/pos-mode.util';
+
 /**
  * Datos de la company en el detalle del tenant.
  */
@@ -227,6 +229,14 @@ export class SuperadminTenantDetailDto {
 
   @ApiProperty({ type: SuperadminTenantElectronicBillingDto })
   electronicBilling!: SuperadminTenantElectronicBillingDto;
+
+  /**
+   * Modo del POS de ESTA company (`retail` | `restaurant`). A diferencia de la
+   * FE, es propio de cada negocio: una sucursal reporta el suyo, no el del
+   * principal.
+   */
+  @ApiProperty({ enum: POS_MODES, example: 'retail' })
+  pos_mode!: PosMode;
 
   @ApiProperty({
     type: SuperadminTenantActivationDto,

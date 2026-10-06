@@ -46,6 +46,7 @@ interface SaleRow {
   customer_id: string | null;
   client_operation_id: string | null;
   is_deleted: boolean;
+  table_id?: string | null;
 }
 
 /**
@@ -81,6 +82,7 @@ describe('ConvertOrderToLoanAction', () => {
       customer_id: '5',
       client_operation_id: null,
       is_deleted: false,
+      table_id: null,
       ...over,
     };
   }
@@ -152,6 +154,27 @@ describe('ConvertOrderToLoanAction', () => {
     expect(statusArgs.amount).toBeNull();
   });
 
+  // ─── Liberación de mesa (modo restaurante) ──────────────────────────────
+
+  it('libera la mesa ocupada al convertir un pedido que tenía mesa', async () => {
+    saleInTx = baseOrder({ table_id: '77' });
+    await action.execute(INVOICE_ID, dto, COMPANY_ID, OWNER);
+    const freeCall = managerUpdate.mock.calls.find(
+      (c) => (c[2] as Record<string, unknown>)?.status === 'free',
+    );
+    expect(freeCall).toBeDefined();
+    expect(freeCall?.[1]).toMatchObject({ id: '77', company_id: String(COMPANY_ID) });
+  });
+
+  it('no toca ninguna mesa si el pedido no tenía mesa (table_id null)', async () => {
+    saleInTx = baseOrder({ table_id: null });
+    await action.execute(INVOICE_ID, dto, COMPANY_ID, OWNER);
+    const freeCall = managerUpdate.mock.calls.find(
+      (c) => (c[2] as Record<string, unknown>)?.status === 'free',
+    );
+    expect(freeCall).toBeUndefined();
+  });
+
   // ─── Gates 403 ───────────────────────────────────────────────────────────
 
   it('403 LOAN_NOT_OWNER si el actor no es el dueño (ni siquiera admin)', async () => {
@@ -167,9 +190,9 @@ describe('ConvertOrderToLoanAction', () => {
 
   it('403 LOAN_NOT_OWNER expone el código en el payload', async () => {
     const manager: ProcessLoanActor = { id: 3, fullName: 'Manager', type: 'manager' };
-    await expect(
-      action.execute(INVOICE_ID, dto, COMPANY_ID, manager),
-    ).rejects.toMatchObject({ response: { payload: { code: 'LOAN_NOT_OWNER' } } });
+    await expect(action.execute(INVOICE_ID, dto, COMPANY_ID, manager)).rejects.toMatchObject({
+      response: { payload: { code: 'LOAN_NOT_OWNER' } },
+    });
   });
 
   it('403 LOAN_DISABLED (fail-closed) si el setting está apagado en la BD', async () => {
@@ -213,7 +236,12 @@ describe('ConvertOrderToLoanAction', () => {
   // ─── Stock ────────────────────────────────────────────────────────────────
 
   it('override_stock del owner se propaga a adjustInventory', async () => {
-    await action.execute(INVOICE_ID, { client_operation_id: OP_ID, override_stock: true }, COMPANY_ID, OWNER);
+    await action.execute(
+      INVOICE_ID,
+      { client_operation_id: OP_ID, override_stock: true },
+      COMPANY_ID,
+      OWNER,
+    );
     const ctx = adjustInventoryMock.mock.calls[0][4] as { overrideStock?: boolean };
     expect(ctx.overrideStock).toBe(true);
   });
