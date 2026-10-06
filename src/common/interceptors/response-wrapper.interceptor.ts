@@ -1,4 +1,10 @@
-import { CallHandler, ExecutionContext, Injectable, type NestInterceptor } from '@nestjs/common';
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  StreamableFile,
+  type NestInterceptor,
+} from '@nestjs/common';
 import type { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
@@ -22,19 +28,24 @@ export interface SuccessEnvelope<T> {
 }
 
 @Injectable()
-export class ResponseWrapperInterceptor<T> implements NestInterceptor<
-  T,
-  SuccessEnvelope<T | null>
-> {
+export class ResponseWrapperInterceptor<T>
+  implements NestInterceptor<T, SuccessEnvelope<T | null> | StreamableFile>
+{
   intercept(
     _context: ExecutionContext,
     next: CallHandler<T>,
-  ): Observable<SuccessEnvelope<T | null>> {
+  ): Observable<SuccessEnvelope<T | null> | StreamableFile> {
     return next.handle().pipe(
-      map((payload) => ({
-        success: true as const,
-        payload: payload ?? null,
-      })),
+      map((payload) => {
+        // Descargas binarias (StreamableFile, p. ej. el PDF de alertas) NO se
+        // envuelven: envolverlas en `{success, payload}` serializaría el stream a
+        // JSON y rompería el archivo. Se devuelven tal cual para que Nest las
+        // transmita como binario.
+        if (payload instanceof StreamableFile) {
+          return payload;
+        }
+        return { success: true as const, payload: payload ?? null };
+      }),
     );
   }
 }

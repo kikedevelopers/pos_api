@@ -230,6 +230,7 @@ export class SalesController {
       customerPoints,
       customerAddress,
       customerPhone,
+      customerDocNumber,
       statusHistory,
     } = await this.salesService.findOne(id, companyId);
     return toSaleResponseDto(
@@ -243,6 +244,7 @@ export class SalesController {
       statusHistory,
       customerAddress,
       customerPhone,
+      customerDocNumber,
     );
   }
 

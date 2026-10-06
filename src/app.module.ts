@@ -21,6 +21,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { AlertConfigsModule } from './modules/alert-configs/alert-configs.module';
+import { EmailAlertsModule } from './modules/email-alerts/email-alerts.module';
 import { AppAlertsModule } from './modules/app-alerts/app-alerts.module';
 import { AppSettingsModule } from './modules/app-settings/app-settings.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -262,6 +263,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     AppSettingsModule,
     AppAlertsModule,
     AlertConfigsModule,
+    EmailAlertsModule,
     // Fase 11 — Reportes y dashboard. Read-only sobre tablas de fases previas.
     DashboardModule,
     ReportsModule,

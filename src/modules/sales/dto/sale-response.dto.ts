@@ -373,6 +373,16 @@ export class SaleResponseDto {
       'mostrador. El recibo lo pinta como "-" cuando falta.',
   })
   customerPhone!: string | null;
+
+  @ApiPropertyOptional({
+    example: '1098765432',
+    nullable: true,
+    description:
+      'Número de documento del cliente (`customers.doc_number`, sirve para CC ' +
+      'y NIT). `null` si no lo tiene o si la venta es de mostrador. El recibo ' +
+      'pinta la línea "Documento:" SOLO cuando hay valor (no muestra "-").',
+  })
+  customerDocNumber!: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +556,7 @@ export function toSaleResponseDto(
   statusHistory: SaleStatusHistory[] = [],
   customerAddress: string | null = null,
   customerPhone: string | null = null,
+  customerDocNumber: string | null = null,
 ): SaleResponseDto {
   const sortedNotes = [...creditNotes].sort(
     (a, b) => a.created_at.getTime() - b.created_at.getTime(),
@@ -590,6 +601,7 @@ export function toSaleResponseDto(
     customerPoints,
     customerAddress,
     customerPhone,
+    customerDocNumber,
     // Ya llega ordenado por created_at ASC, id ASC desde la action; el `.map`
     // preserva ese orden para la línea de tiempo del TicketViewer.
     statusHistory: statusHistory.map(toStatusHistory),
