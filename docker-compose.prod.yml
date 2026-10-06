@@ -88,6 +88,26 @@ services:
       BACKUP_TIMEOUT_MS: ${BACKUP_TIMEOUT_MS:-600000}
       # Vacío = pg_dump del PATH (la imagen ya trae postgresql18-client).
       PG_DUMP_BIN: ${PG_DUMP_BIN:-}
+      # Correo saliente (módulo `mail`). Sin estas variables el contenedor no ve
+      # credenciales y el driver cae a `log` (NO envía, solo escribe el correo en
+      # el log). En producción el proveedor es Resend: fija RESEND_API_KEY en el
+      # .env de la VM y verifica el DOMINIO de MAIL_FROM en Resend (SPF+DKIM) o la
+      # API responde 422 "domain is not verified". MAIL_DRIVER vacío se resuelve
+      # solo (resend si hay API key, si no smtp, si no log).
+      MAIL_DRIVER: ${MAIL_DRIVER:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-15000}
+      MAIL_ASSETS_BASE_URL: ${MAIL_ASSETS_BASE_URL:-}
+      MAIL_LOGO_URL: ${MAIL_LOGO_URL:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_BASE_URL: ${RESEND_BASE_URL:-https://api.resend.com}
+      # SMTP genérico (alternativa a Resend; Mailtrap en dev). Vacío = no se usa.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-2525}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
       # Facturación Electrónica (APIDIAN). pos_api solo consume los catálogos del
       # API externo (proxy con caché); no firma ni envía a la DIAN. OJO: el
       # default de la app es http://127.0.0.1:8081/api, que DENTRO del contenedor
