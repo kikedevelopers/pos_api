@@ -316,7 +316,7 @@ export class SalesController {
       }
     }
 
-    return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number);
+    return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number, sale.turn_number ?? null);
   }
 
   // --------------------------------------------------------------------------

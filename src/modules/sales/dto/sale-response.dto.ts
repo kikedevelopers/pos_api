@@ -289,6 +289,15 @@ export class SaleResponseDto {
   salonName!: string | null;
 
   @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 7,
+    description:
+      'Turno de pedido asignado (modo restaurante). null si los turnos están apagados o en retail. Se imprime en el 2º ticket de turno.',
+  })
+  turnNumber!: number | null;
+
+  @ApiPropertyOptional({
     type: 'string',
     nullable: true,
     example: 'Pago en efectivo + transferencia.',
@@ -602,6 +611,7 @@ export function toSaleResponseDto(
     customerId: sale.customer_id != null ? Number(sale.customer_id) : null,
     tableName: sale.table_name ?? null,
     salonName: sale.salon_name ?? null,
+    turnNumber: sale.turn_number ?? null,
     notes: sale.notes ?? null,
     createdBy: sale.created_by,
     synced: true,

@@ -186,6 +186,15 @@ export class SaleInvoice {
   @Column({ type: 'text', nullable: true })
   salon_name!: string | null;
 
+  /**
+   * TURNO de pedido asignado al crear el ORDER (modo restaurante), cuando la
+   * feature "Turnos" está activa. Contador cíclico per-company (1..turnos_max).
+   * NULL cuando los turnos están desactivados o en retail. Se imprime en un 2º
+   * ticket (número grande) y queda fijo en el pedido para reimpresiones.
+   */
+  @Column({ type: 'integer', nullable: true })
+  turn_number!: number | null;
+
   @Column({
     type: 'numeric',
     precision: 15,

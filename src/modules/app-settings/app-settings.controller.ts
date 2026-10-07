@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Put } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -20,6 +20,8 @@ import { GetPosMarginsAction } from './actions/get-pos-margins.action';
 import { GetShowAllBaseProductsInPurchasesAction } from './actions/get-show-all-base-products-in-purchases.action';
 import { GetShowDailyQuotaBarAction } from './actions/get-show-daily-quota-bar.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
+import { GetTurnosAction } from './actions/get-turnos.action';
+import { ResetTurnosCounterAction } from './actions/reset-turnos-counter.action';
 import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.action';
 import { UpsertEnableCreditPaymentAction } from './actions/upsert-enable-credit-payment.action';
 import { UpsertEnableThirdPartyLoanAction } from './actions/upsert-enable-third-party-loan.action';
@@ -28,6 +30,7 @@ import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertShowAllBaseProductsInPurchasesAction } from './actions/upsert-show-all-base-products-in-purchases.action';
 import { UpsertShowDailyQuotaBarAction } from './actions/upsert-show-daily-quota-bar.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
+import { UpsertTurnosAction } from './actions/upsert-turnos.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
 import { CreditPaymentConfigDto, UpdateCreditPaymentDto } from './dto/credit-payment.dto';
@@ -47,6 +50,7 @@ import {
   UpdateShowDailyQuotaBarDto,
 } from './dto/show-daily-quota-bar.dto';
 import { StrictInventoryConfigDto, UpdateStrictInventoryDto } from './dto/strict-inventory.dto';
+import { TurnosConfigDto, UpdateTurnosDto } from './dto/turnos.dto';
 import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
 
 /**
@@ -93,6 +97,9 @@ export class AppSettingsController {
     private readonly upsertEnableCreditPaymentAction: UpsertEnableCreditPaymentAction,
     private readonly getEnableThirdPartyLoanAction: GetEnableThirdPartyLoanAction,
     private readonly upsertEnableThirdPartyLoanAction: UpsertEnableThirdPartyLoanAction,
+    private readonly getTurnosAction: GetTurnosAction,
+    private readonly upsertTurnosAction: UpsertTurnosAction,
+    private readonly resetTurnosCounterAction: ResetTurnosCounterAction,
   ) {}
 
   // ----------------------------------------------------------------------
@@ -378,6 +385,55 @@ export class AppSettingsController {
     @CurrentCompany() companyId: number,
   ): Promise<ThirdPartyLoanConfigDto> {
     return this.upsertEnableThirdPartyLoanAction.execute(dto, companyId);
+  }
+
+  // ----------------------------------------------------------------------
+  // TURNOS de pedido (solo modo restaurante). Contador cíclico + 2º ticket.
+  // ----------------------------------------------------------------------
+
+  @Get('turnos')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Configuración de turnos de pedido',
+    description:
+      'Devuelve `{ enabled, max, counter }`. `counter` es el último turno asignado (solo lectura). Solo relevante en modo restaurante.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: TurnosConfigDto })
+  async getTurnos(@CurrentCompany() companyId: number): Promise<TurnosConfigDto> {
+    return this.getTurnosAction.execute(companyId);
+  }
+
+  @Put('turnos')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set configuración de turnos de pedido',
+    description:
+      'Upsert de `turnos_enabled` + `turnos_max` (1..99). NO toca el contador. Al activar, cada pedido nuevo recibe un turno y se imprime un 2º ticket con el número grande.',
+  })
+  @ApiBody({ type: UpdateTurnosDto })
+  @ApiResponse({ status: HttpStatus.OK, type: TurnosConfigDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido (max fuera de 1..99)' })
+  async upsertTurnos(
+    @Body() dto: UpdateTurnosDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<TurnosConfigDto> {
+    return this.upsertTurnosAction.execute(dto, companyId);
+  }
+
+  @Post('turnos/reset')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Reiniciar el contador de turnos a 0',
+    description: 'El próximo turno asignado será 1. No cambia `enabled` ni `max`.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: TurnosConfigDto })
+  async resetTurnosCounter(@CurrentCompany() companyId: number): Promise<TurnosConfigDto> {
+    return this.resetTurnosCounterAction.execute(companyId);
   }
 
   // ----------------------------------------------------------------------
