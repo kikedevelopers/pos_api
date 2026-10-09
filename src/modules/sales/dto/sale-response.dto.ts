@@ -308,6 +308,15 @@ export class SaleResponseDto {
   @ApiPropertyOptional({
     type: 'number',
     nullable: true,
+    example: 5,
+    description:
+      'users.id del creador de la venta (el vendedor). El front lo usa para excluirlo del selector de "compartir pedido".',
+  })
+  createdById!: number | null;
+
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
     example: 42,
     description:
       'Empleado (users.id) al que se compartió el pedido para alistar (retail). null si no se compartió.',
@@ -630,6 +639,7 @@ export function toSaleResponseDto(
     salonName: sale.salon_name ?? null,
     turnNumber: sale.turn_number ?? null,
     notes: sale.notes ?? null,
+    createdById: sale.created_by_id != null ? Number(sale.created_by_id) : null,
     assignedToUserId: sale.assigned_to_user_id != null ? Number(sale.assigned_to_user_id) : null,
     assignedToName: sale.assigned_to_name ?? null,
     createdBy: sale.created_by,
