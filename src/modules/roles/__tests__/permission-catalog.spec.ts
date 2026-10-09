@@ -40,6 +40,7 @@ describe('permission-catalog', () => {
     'canAccessDailyClosureReport',
     'canAccessCashierReport',
     'canAccessClientsReport',
+    'canAccessNetWorthReport',
     'canViewAllSales',
     'canAccessExpenses',
     'canAccessFixedExpenses',
@@ -48,8 +49,8 @@ describe('permission-catalog', () => {
     'canAccessComandas',
   ];
 
-  it('expone exactamente 23 keys en el orden canónico', () => {
-    expect(PERMISSION_KEYS).toHaveLength(24);
+  it('expone exactamente 25 keys en el orden canónico', () => {
+    expect(PERMISSION_KEYS).toHaveLength(25);
     expect([...PERMISSION_KEYS]).toEqual(EXPECTED_KEYS);
   });
 

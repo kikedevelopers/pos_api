@@ -27,6 +27,14 @@ import {
   GetExtendedSummaryAction,
   type ExtendedSummaryResult,
 } from './actions/get-extended-summary.action';
+import {
+  GetNetWorthReportAction,
+  type NetWorthReport,
+} from './actions/get-net-worth-report.action';
+import {
+  GetNetWorthInventoryAction,
+  type NetWorthInventoryItem,
+} from './actions/get-net-worth-inventory.action';
 import type { CreditsReportQueryDto } from './dto/credits-report-query.dto';
 
 export type {
@@ -38,6 +46,8 @@ export type {
   DailyClosureResult,
   ExtendedSummaryResult,
   SalesByHourResult,
+  NetWorthReport,
+  NetWorthInventoryItem,
 };
 
 /**
@@ -53,7 +63,17 @@ export class ReportsService {
     private readonly customersRfm: GetCustomersRfmAction,
     private readonly customersRfmDayTickets: GetCustomersRfmDayTicketsAction,
     private readonly salesByHour: GetSalesByHourAction,
+    private readonly netWorthReport: GetNetWorthReportAction,
+    private readonly netWorthInventory: GetNetWorthInventoryAction,
   ) {}
+
+  getNetWorth(companyId: number): Promise<NetWorthReport> {
+    return this.netWorthReport.execute(companyId);
+  }
+
+  getNetWorthInventory(companyId: number): Promise<NetWorthInventoryItem[]> {
+    return this.netWorthInventory.execute(companyId);
+  }
 
   getDailyClosure(companyId: number, date?: string): Promise<DailyClosureResult> {
     return this.dailyClosure.execute(companyId, date);
