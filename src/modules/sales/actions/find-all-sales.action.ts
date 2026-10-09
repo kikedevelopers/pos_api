@@ -90,7 +90,14 @@ export class FindAllSalesAction {
       company_id: actor.company_id,
     });
     if (!effective.includes('canViewAllSales')) {
-      qb.andWhere('s.created_by_id = :actorId', { actorId: String(actor.user_id) });
+      // Visibilidad: lo propio MÁS los pedidos compartidos conmigo (feature
+      // retail "Compartir pedido para alistar"). La asignación amplía lo que
+      // VEO; NO cambia la atribución de la venta (`created_by_id`), así que esto
+      // nunca suma a mis totales en los informes (ver get-sales-report / cajeros).
+      qb.andWhere(
+        '(s.created_by_id = :actorId OR s.assigned_to_user_id = :actorId)',
+        { actorId: String(actor.user_id) },
+      );
     }
 
     if (typeof query.limit === 'number' && query.limit > 0) {
@@ -124,7 +131,9 @@ export class FindAllSalesAction {
       }
     }
 
-    return invoices.map((inv) => buildListItem(inv, notesBySale.get(inv.id) ?? []));
+    return invoices.map((inv) =>
+      buildListItem(inv, notesBySale.get(inv.id) ?? [], actor.user_id),
+    );
   }
 }
 
@@ -167,9 +176,19 @@ function sumLineCost(lines: CreditNoteLine[]): number {
   return lines.reduce((s, l) => s + Number(l.unit_cost) * Number(l.quantity), 0);
 }
 
-function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemDto {
+function buildListItem(
+  invoice: SaleInvoice,
+  notes: CreditNote[],
+  actorUserId: number,
+): SaleListItemDto {
   const consolidated = consolidate(invoice, notes);
   const { isCredit, creditStatus } = deriveTicketCredit(invoice.credit);
+  // Esta fila le aparece al actor SOLO por asignación (no la creó él): es
+  // informativa y NO debe sumar a sus totales. El front la atenúa/etiqueta.
+  const isAssignedToMe =
+    invoice.assigned_to_user_id !== null &&
+    invoice.assigned_to_user_id === String(actorUserId) &&
+    invoice.created_by_id !== String(actorUserId);
   return {
     id: Number(invoice.id),
     ticketType: invoice.ticket_type,
@@ -184,6 +203,9 @@ function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemD
     customerName: invoice.customer_name || 'CONSUMIDOR FINAL',
     tableName: invoice.table_name ?? null,
     salonName: invoice.salon_name ?? null,
+    assignedToUserId: invoice.assigned_to_user_id ? Number(invoice.assigned_to_user_id) : null,
+    assignedToName: invoice.assigned_to_name ?? null,
+    isAssignedToMe,
     synced: true,
     createdAt: invoice.created_at.toISOString(),
   };

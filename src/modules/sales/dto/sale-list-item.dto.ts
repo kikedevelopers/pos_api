@@ -73,6 +73,28 @@ export class SaleListItemDto {
   })
   salonName!: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 42,
+    description:
+      'Empleado (users.id) al que se compartió el pedido para alistar (retail). null si no se compartió.',
+  })
+  assignedToUserId!: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Carlos Bodega',
+    description: 'Snapshot del nombre del empleado asignado. null si no se compartió.',
+  })
+  assignedToName!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'La fila le aparece al actor SOLO por asignación (no la creó él): es informativa y NO suma a sus totales.',
+  })
+  isAssignedToMe!: boolean;
+
   @ApiProperty({ example: true, description: 'Siempre true en modo cloud (no hay offline sync).' })
   synced!: boolean;
 

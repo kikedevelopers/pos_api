@@ -305,6 +305,23 @@ export class SaleResponseDto {
   })
   notes!: string | null;
 
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 42,
+    description:
+      'Empleado (users.id) al que se compartió el pedido para alistar (retail). null si no se compartió.',
+  })
+  assignedToUserId!: number | null;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: 'Carlos Bodega',
+    description: 'Snapshot del nombre del empleado asignado. null si no se compartió.',
+  })
+  assignedToName!: string | null;
+
   @ApiPropertyOptional({ type: 'string', nullable: true })
   createdBy!: string | null;
 
@@ -613,6 +630,8 @@ export function toSaleResponseDto(
     salonName: sale.salon_name ?? null,
     turnNumber: sale.turn_number ?? null,
     notes: sale.notes ?? null,
+    assignedToUserId: sale.assigned_to_user_id != null ? Number(sale.assigned_to_user_id) : null,
+    assignedToName: sale.assigned_to_name ?? null,
     createdBy: sale.created_by,
     synced: true,
     isDeleted: sale.is_deleted,
