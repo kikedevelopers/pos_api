@@ -231,6 +231,19 @@ export class UpdateProductAction {
       // (`POST /inventory/:id/image` y `.../image/remove`), que además borra el
       // archivo anterior del bucket. Escribirla desde el patch dejaría objetos
       // huérfanos y permitiría apuntar a la carpeta de otro tenant.
+      // Vínculo a la imagen del base: solo tiene sentido en presentaciones.
+      //   - Si deja de serlo (pasa a base/combo) se apaga siempre.
+      //   - Si sigue siendo presentación, se aplica lo que mande el cliente.
+      // El `image` propio lo borra el front (`removeProductImage`) al activar el
+      // vínculo; aquí no hace falta, porque al servir el flag SIEMPRE gana sobre
+      // la ruta propia (ver resolución de image_url). `finalParentId` ya está
+      // resuelto arriba.
+      const willBePresentation = !isCombo && finalParentId != null;
+      if (!willBePresentation) {
+        patch.use_parent_image = false;
+      } else if (dto.use_parent_image !== undefined) {
+        patch.use_parent_image = dto.use_parent_image === true;
+      }
       if (dto.show_in_pos !== undefined) {
         patch.show_in_pos = dto.show_in_pos;
       }

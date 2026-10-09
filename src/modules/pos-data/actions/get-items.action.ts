@@ -109,6 +109,7 @@ interface RawPosItemRow {
   stock: string | number;
   company_id: string;
   image: string | null;
+  use_parent_image: boolean | null;
   description: string | null;
   prices:
     | {
@@ -147,6 +148,7 @@ export class GetItemsAction {
         p.stock         AS stock,
         p.company_id    AS company_id,
         p.image         AS image,
+        p.use_parent_image AS use_parent_image,
         p.description   AS description,
         pk.id           AS packaging__id,
         pk.name         AS packaging__name,
@@ -209,6 +211,7 @@ export class GetItemsAction {
       owner_company_id: Number(p.company_id),
       is_shared: Number(p.company_id) !== companyId,
       image: p.image ?? null,
+      use_parent_image: p.use_parent_image === true,
       description: p.description ?? null,
     }));
 
@@ -275,8 +278,9 @@ export class GetItemsAction {
           },
           is_shared: child.is_shared,
           owner_company_id: child.owner_company_id,
-          image: child.image,
+          // Presentación vinculada: pinta la imagen del BASE (no tiene propia).
           // La firma se resuelve en lote fuera de esta action (PosDataService).
+          image: child.use_parent_image ? parent.image : child.image,
           image_url: null,
           description: child.description,
         };

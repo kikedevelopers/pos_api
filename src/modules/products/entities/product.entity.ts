@@ -237,6 +237,17 @@ export class Product {
   image!: string | null;
 
   /**
+   * PRESENTACIÓN vinculada a la imagen de su producto base. Cuando es `true`, la
+   * fila NO guarda imagen propia (`image` queda NULL) y al servir su `image_url`
+   * se resuelve desde la imagen del padre (en tiempo de lectura). Evita subir una
+   * copia de la misma foto y ocupar almacenamiento de más, sin compartir la ruta
+   * del objeto en el bucket (lo que rompería al borrar/reemplazar la del base).
+   * Solo aplica a presentaciones; base y combo quedan siempre en `false`.
+   */
+  @Column({ type: 'boolean', default: false })
+  use_parent_image!: boolean;
+
+  /**
    * Instante a partir del cual la imagen puede borrarse del bucket. Se marca al
    * ARCHIVAR el producto (hoy + los días de retención configurados) y un cron
    * diario limpia lo vencido. `null` = sin purga programada, que es el estado de
