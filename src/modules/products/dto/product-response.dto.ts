@@ -154,6 +154,14 @@ export class ProductResponseDto {
   @ApiPropertyOptional({ example: 'https://storage.googleapis.com/…', nullable: true })
   image_url!: string | null;
 
+  /**
+   * Presentación VINCULADA a la imagen del base: no tiene imagen propia y su
+   * `image_url` se resuelve desde la del padre. `false` en base/combo y en
+   * presentaciones con imagen propia.
+   */
+  @ApiProperty({ example: false })
+  use_parent_image!: boolean;
+
   @ApiProperty({ example: true })
   show_in_pos!: boolean;
 
@@ -275,8 +283,10 @@ export function toProductResponseDto(
     image: p.image ?? null,
     // La firma es asíncrona y se resuelve en lote fuera del mapper (ver
     // `ProductsController.attachImageUrls`): firmar aquí obligaría a una
-    // llamada a Google por producto.
+    // llamada a Google por producto. En presentaciones vinculadas, esa misma
+    // resolución toma la ruta de la imagen del padre.
     image_url: null,
+    use_parent_image: p.use_parent_image === true,
     show_in_pos: p.show_in_pos,
     is_purchasable: p.is_purchasable,
     is_archived: p.is_archived,

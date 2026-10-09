@@ -138,6 +138,18 @@ export class CreateProductDto {
   @Min(0, { message: 'packaging_value debe ser >= 0' })
   packaging_value?: number;
 
+  @ApiPropertyOptional({
+    example: false,
+    default: false,
+    description:
+      'Solo PRESENTACIONES: vincula la imagen a la del producto base en vez de subir ' +
+      'una copia (ahorra almacenamiento). Si es true, el item no guarda imagen propia y ' +
+      'su image_url se resuelve desde la del padre. Se ignora en base/combo (queda false).',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'use_parent_image debe ser booleano' })
+  use_parent_image?: boolean;
+
   // NOTA: `image` NO se acepta en el payload. La imagen es un archivo que se
   // sube aparte (`POST /inventory/:id/image`) y la columna guarda la ruta del
   // objeto en el bucket, que escribe solo el servidor. Dejar que el cliente la

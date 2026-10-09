@@ -85,12 +85,20 @@ describe('CreateProductAction', () => {
   let createdInput: Partial<Product> | null;
   let insertedPrices: Array<Partial<ProductPrice>> | null;
   let transactionSpy: jest.Mock;
+  let managerMock: {
+    query: jest.Mock;
+    findOne: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+    insert: jest.Mock;
+    findOneOrFail: jest.Mock;
+  };
 
   beforeEach(async () => {
     createdInput = null;
     insertedPrices = null;
 
-    const managerMock = {
+    managerMock = {
       // `query` se usa por `assertPackagingBelongsToCompany`. Devuelve []
       // (no hay packaging → válido si no se envía).
       query: jest.fn(() => Promise.resolve([])),
@@ -220,5 +228,65 @@ describe('CreateProductAction', () => {
       fullName: 'Owner',
     });
     expect(transactionSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('nace siempre sin imagen propia (image = null)', async () => {
+    await action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 1, {
+      id: 1,
+      fullName: 'Owner',
+    });
+    expect(createdInput?.image).toBeNull();
+  });
+
+  it('use_parent_image = false en un producto BASE aunque el DTO mande true', async () => {
+    // Sin parent_id no es presentación: el vínculo a la imagen del base no
+    // aplica y debe quedar en false pase lo que pase.
+    await action.execute(
+      { name: 'Base', cost: 1, stock: 0, use_parent_image: true, prices: [{ sale_price: 2 }] },
+      1,
+      { id: 1, fullName: 'Owner' },
+    );
+    expect(createdInput?.use_parent_image).toBe(false);
+  });
+
+  it('persiste use_parent_image = true en una PRESENTACIÓN (tiene parent_id)', async () => {
+    // El padre existe, es de la misma company y no es combo (SIMPLE), sin IVA.
+    managerMock.findOne.mockResolvedValue({
+      id: '5',
+      name: 'Base',
+      product_type: ProductType.SIMPLE,
+      tax_rate_id: null,
+    });
+    await action.execute(
+      {
+        name: 'Presentación *G',
+        cost: 1,
+        stock: 0,
+        parent_id: 5,
+        use_parent_image: true,
+        prices: [{ sale_price: 2 }],
+      },
+      1,
+      { id: 1, fullName: 'Owner' },
+    );
+    expect(createdInput?.parent_id).toBe('5');
+    expect(createdInput?.use_parent_image).toBe(true);
+    // Vinculada o no, nace sin imagen propia: se resuelve desde el padre.
+    expect(createdInput?.image).toBeNull();
+  });
+
+  it('presentación SIN el flag: use_parent_image = false (imagen propia por defecto)', async () => {
+    managerMock.findOne.mockResolvedValue({
+      id: '5',
+      name: 'Base',
+      product_type: ProductType.SIMPLE,
+      tax_rate_id: null,
+    });
+    await action.execute(
+      { name: 'Presentación *G', cost: 1, stock: 0, parent_id: 5, prices: [{ sale_price: 2 }] },
+      1,
+      { id: 1, fullName: 'Owner' },
+    );
+    expect(createdInput?.use_parent_image).toBe(false);
   });
 });
