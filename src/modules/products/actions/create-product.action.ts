@@ -126,6 +126,9 @@ export class CreateProductAction {
         // La imagen se sube aparte (`POST /inventory/:id/image`): un producto
         // nace sin ella y el formulario la envía en cuanto tiene el id.
         image: null,
+        // Vínculo a la imagen del base: SOLO presentaciones (base/combo en false).
+        // Si nace vinculada, jamás sube imagen propia: se resuelve desde el padre.
+        use_parent_image: isChild ? dto.use_parent_image === true : false,
         show_in_pos: dto.show_in_pos !== false,
         is_purchasable: isCombo ? false : dto.is_purchasable === true,
         is_archived: false,

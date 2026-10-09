@@ -60,6 +60,7 @@ import {
 import { QuickCreateProductDto } from './dto/quick-create-product.dto';
 import { SupplierHistoryResponseDto } from './dto/supplier-history-response.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { effectiveImagePath } from './internal/effective-image-path';
 import { ProductsService } from './products.service';
 
 /**
@@ -128,10 +129,18 @@ export class ProductsController {
           : null;
       return toProductResponseDto(p, parentStock);
     });
+    // Mapa id -> ruta de imagen de los PADRES (bases): las presentaciones
+    // vinculadas (`use_parent_image`) firman la foto de su base, no una propia.
+    const parentImageById = new Map<number, string | null>();
+    for (const dto of dtos) {
+      if (dto.parent_id === null) {
+        parentImageById.set(dto.id, dto.image);
+      }
+    }
     // Las URLs firmadas se resuelven en UN lote contra el caché en memoria: sin
     // esto, un catálogo con foto firmaría una URL por producto en cada refresco
     // y agotaría la cuota de firma de Google.
-    return this.attachImageUrls(dtos, companyId);
+    return this.attachImageUrls(dtos, companyId, parentImageById);
   }
 
   /**
@@ -275,13 +284,20 @@ export class ProductsController {
     // Si es presentación, resolvemos el stock del padre para que el
     // `stock_display` derive correctamente (espejo PlacePos).
     let parentStock: number | null = null;
+    // Presentación vinculada: necesitamos la ruta de la imagen del padre para
+    // firmar su URL (no tiene foto propia).
+    let parentImageById: Map<number, string | null> | undefined;
     if (product.parent_id !== null && product.parent_id !== undefined) {
       const parent = await this.productsService.findById(Number(product.parent_id), companyId);
       parentStock = parent ? Number(parent.stock) : null;
+      if (parent) {
+        parentImageById = new Map([[Number(parent.id), parent.image ?? null]]);
+      }
     }
     const [dto] = await this.attachImageUrls(
       [toProductResponseDto(product, parentStock)],
       companyId,
+      parentImageById,
     );
     return dto;
   }
@@ -389,16 +405,21 @@ export class ProductsController {
   private async attachImageUrls(
     dtos: ProductResponseDto[],
     companyId: number,
+    parentImageById?: Map<number, string | null>,
   ): Promise<ProductResponseDto[]> {
+    // Ruta EFECTIVA de la imagen: una presentación vinculada
+    // (`use_parent_image`) no tiene foto propia, así que se firma la del padre
+    // (ver `effectiveImagePath`). El resto usa su propia `image`.
     const urls = await this.productImagesService.resolveUrls(
-      dtos.map((dto) => dto.image),
+      dtos.map((dto) => effectiveImagePath(dto, parentImageById)),
       companyId,
     );
     if (urls.size === 0) {
       return dtos;
     }
     for (const dto of dtos) {
-      dto.image_url = dto.image ? (urls.get(dto.image) ?? null) : null;
+      const path = effectiveImagePath(dto, parentImageById);
+      dto.image_url = path ? (urls.get(path) ?? null) : null;
     }
     return dtos;
   }
