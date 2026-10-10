@@ -183,6 +183,17 @@ export class Employee {
   can_view_product_profit!: boolean;
 
   /**
+   * Permiso por-empleado para COBRAR PEDIDOS (ORDER→SALE) en el POS. Nace en
+   * false y actúa como OVERRIDE solo para roles NO elevados (p. ej. Vendedor):
+   * la capacidad efectiva es `owner/superadmin || rolConcedeCanViewAllSales ||
+   * can_charge_orders`, por lo que los roles elevados (Cajero/Admin) pueden
+   * cobrar aunque el flag esté en false. Solo el owner lo cambia desde el
+   * detalle del empleado (`PUT /employees/:id/charge-permission`).
+   */
+  @Column({ type: 'boolean', default: false })
+  can_charge_orders!: boolean;
+
+  /**
    * Snapshot del `full_name` del owner que creó al employee. Texto
    * congelado al momento de creación (no se actualiza si el owner cambia
    * su nombre). Evita un join para el listado.

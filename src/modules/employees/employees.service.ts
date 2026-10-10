@@ -32,6 +32,7 @@ import {
   SetEmployeeProfitVisibilityAction,
 } from './actions/set-employee-profit-visibility.action';
 import { SetEmployeeCashVisibilityAction } from './actions/set-employee-cash-visibility.action';
+import { SetEmployeeChargePermissionAction } from './actions/set-employee-charge-permission.action';
 import { GetEmployeeCashLogsAction } from './actions/get-employee-cash-logs.action';
 import { ToggleEmployeeLoginAction } from './actions/toggle-employee-login.action';
 import { UpdateEmployeeAction } from './actions/update-employee.action';
@@ -71,6 +72,7 @@ export class EmployeesService {
     private readonly setEmployeeCashBaseAction: SetEmployeeCashBaseAction,
     private readonly setEmployeeProfitVisibilityAction: SetEmployeeProfitVisibilityAction,
     private readonly setEmployeeCashVisibilityAction: SetEmployeeCashVisibilityAction,
+    private readonly setEmployeeChargePermissionAction: SetEmployeeChargePermissionAction,
     private readonly getEmployeeCashLogsAction: GetEmployeeCashLogsAction,
     private readonly adjustEmployeeCashAction: AdjustEmployeeCashAction,
     private readonly closeEmployeeCashAction: CloseEmployeeCashAction,
@@ -129,6 +131,14 @@ export class EmployeesService {
 
   setCashVisibility(id: number, canViewCash: boolean, companyId: number): Promise<Employee> {
     return this.setEmployeeCashVisibilityAction.execute(id, canViewCash, companyId);
+  }
+
+  setChargePermission(
+    id: number,
+    canChargeOrders: boolean,
+    companyId: number,
+  ): Promise<Employee> {
+    return this.setEmployeeChargePermissionAction.execute(id, canChargeOrders, companyId);
   }
 
   getCashLogs(id: number, companyId: number, limit: number) {

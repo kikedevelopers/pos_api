@@ -23,6 +23,7 @@ import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
+import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
 
 import type { ProcessPaymentResult } from './actions/process-payment.action';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
@@ -61,6 +62,7 @@ export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly assertCanChargeOrders: AssertCanChargeOrdersAction,
   ) {}
 
   @Post()
@@ -96,6 +98,16 @@ export class PaymentsController {
     @Res({ passthrough: true }) res: Response,
     @Headers('idempotency-key') idempotencyKeyHeader?: string,
   ): Promise<ProcessPaymentResult> {
+    // Gate fail-closed: cobrar un pedido requiere owner/superadmin, rol elevado
+    // (canViewAllSales) o el flag per-empleado can_charge_orders. Un Vendedor
+    // sin el permiso recibe 403 (CHARGE_ORDERS_NOT_ALLOWED) antes de tocar nada.
+    await this.assertCanChargeOrders.execute({
+      type: currentUser.type,
+      account: currentUser.account,
+      user_id: currentUser.user_id,
+      company_id: currentUser.company_id,
+    });
+
     // HIGH-3: validamos formato UUID v4 ANTES de tocar el service. Reintento
     // legítimo de cliente PlacePos envía v4 generado server-side; cualquier
     // otra cosa es bug de cliente y debe rechazarse temprano.

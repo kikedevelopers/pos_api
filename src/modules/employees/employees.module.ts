@@ -16,6 +16,7 @@ import { RestoreEmployeeAction } from './actions/restore-employee.action';
 import { SetEmployeeCashBaseAction } from './actions/set-employee-cash-base.action';
 import { SetEmployeeProfitVisibilityAction } from './actions/set-employee-profit-visibility.action';
 import { SetEmployeeCashVisibilityAction } from './actions/set-employee-cash-visibility.action';
+import { SetEmployeeChargePermissionAction } from './actions/set-employee-charge-permission.action';
 import { GetEmployeeCashLogsAction } from './actions/get-employee-cash-logs.action';
 import { ToggleEmployeeLoginAction } from './actions/toggle-employee-login.action';
 import { UpdateEmployeeAction } from './actions/update-employee.action';
@@ -62,6 +63,7 @@ import { Employee } from './entities/employee.entity';
     SetEmployeeCashBaseAction,
     SetEmployeeProfitVisibilityAction,
     SetEmployeeCashVisibilityAction,
+    SetEmployeeChargePermissionAction,
     GetEmployeeCashLogsAction,
     AdjustEmployeeCashAction,
     ArchiveEmployeeAction,

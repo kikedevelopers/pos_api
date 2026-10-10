@@ -78,11 +78,12 @@ export function userToUserProfileDto(
     created_at: user.created_at.toISOString(),
     branches_enabled: user.branches_enabled ?? false,
     branches_allowed: user.branches_allowed ?? 0,
-    // owner/superadmin ven márgenes/ganancias y caja siempre.
+    // owner/superadmin ven márgenes/ganancias y caja, y cobran pedidos, siempre.
     can_view_profit: true,
     can_view_cash: true,
     can_view_product_margin: true,
     can_view_product_profit: true,
+    can_charge_orders: true,
     permissions,
   };
 }
@@ -115,6 +116,9 @@ export function employeeToUserProfileDto(
     can_view_cash: employee.can_view_cash,
     can_view_product_margin: employee.can_view_product_margin,
     can_view_product_profit: employee.can_view_product_profit,
+    // Override per-empleado; la capacidad efectiva (incl. rol elevado) la
+    // combina el renderer en buildPermissions.
+    can_charge_orders: employee.can_charge_orders,
     permissions,
   };
 }

@@ -64,11 +64,12 @@ export class GetProfileAction {
           created_at: new Date(0).toISOString(),
           branches_enabled: false,
           branches_allowed: 0,
-          // superadmin → acceso total, incluidos márgenes/ganancias y caja.
+          // superadmin → acceso total, incluidos márgenes/ganancias, caja y cobro.
           can_view_profit: true,
           can_view_cash: true,
           can_view_product_margin: true,
           can_view_product_profit: true,
+          can_charge_orders: true,
           permissions: [...PERMISSION_KEYS],
         },
       };

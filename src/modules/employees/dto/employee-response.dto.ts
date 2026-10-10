@@ -97,6 +97,13 @@ export class EmployeeResponseDto {
   })
   can_view_product_profit!: boolean;
 
+  @ApiProperty({
+    example: false,
+    description:
+      'Permiso por-empleado para cobrar pedidos (ORDER→SALE) en el POS. Override para roles no elevados (Vendedor).',
+  })
+  can_charge_orders!: boolean;
+
   @ApiPropertyOptional({
     example: 'Kike Pacheco',
     nullable: true,
@@ -172,6 +179,7 @@ function toEmployeeBaseResponse(
     is_archived: employee.is_archived,
     can_view_profit: employee.can_view_profit,
     can_view_cash: employee.can_view_cash,
+    can_charge_orders: employee.can_charge_orders,
     can_view_product_margin: employee.can_view_product_margin,
     can_view_product_profit: employee.can_view_product_profit,
     created_by: employee.created_by,

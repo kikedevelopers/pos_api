@@ -9,6 +9,7 @@ import { CashRegisterLog } from '@/modules/cash-register/entities/cash-register-
 import { CashRegisterModule } from '@/modules/cash-register/cash-register.module';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
 import { ProductsModule } from '@/modules/products/products.module';
+import { RolesModule } from '@/modules/roles/roles.module';
 import { SaleCredit } from '@/modules/sales/entities/sale-credit.entity';
 import { SaleInvoice } from '@/modules/sales/entities/sale-invoice.entity';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
@@ -56,6 +57,7 @@ import { PaymentsService } from './payments.service';
     CashRegisterModule,
     FinancialMovementsModule,
     ProductsModule,
+    RolesModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService, ProcessPaymentAction],

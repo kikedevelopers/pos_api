@@ -178,6 +178,15 @@ export class UserProfileDto {
   can_view_product_profit!: boolean;
 
   /**
+   * Permiso por-empleado para cobrar pedidos (ORDER→SALE) en el POS.
+   * owner/superadmin siempre true; empleado según su flag `can_charge_orders`.
+   * El cliente deriva la capacidad efectiva en buildPermissions:
+   * `isAdmin || concede canViewAllSales || can_charge_orders`.
+   */
+  @ApiProperty({ example: true })
+  can_charge_orders!: boolean;
+
+  /**
    * FASE 2 (ROLES) — Permisos EFECTIVOS de acceso a módulos del usuario.
    *
    *   - owner/superadmin → las 18 keys del catálogo (acceso total).
