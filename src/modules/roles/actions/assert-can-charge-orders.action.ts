@@ -9,7 +9,9 @@ import {
 } from './resolve-effective-permissions.action';
 
 /**
- * Gate fail-closed de "cobrar pedidos" (ORDER→SALE, `POST /payments`).
+ * Gate fail-closed de "cobrar": cobro de pedido (ORDER→SALE, `POST /payments`) y
+ * abonos (re-cobro de saldo `POST /sales/:id/collect` y abono a crédito
+ * `POST /credits`).
  *
  * Capacidad efectiva = `owner/superadmin || rol concede canViewAllSales ||
  * employee.can_charge_orders`. El flag per-empleado actúa como OVERRIDE solo
@@ -17,8 +19,7 @@ import {
  * `canViewAllSales` (Cajero/Admin) cobran igual aunque el flag esté en false.
  *
  * Lanza `ForbiddenException` (código `CHARGE_ORDERS_NOT_ALLOWED`) si el actor no
- * puede cobrar. Se invoca desde el controller de cobro (payments) ANTES de
- * ejecutar la operación.
+ * puede cobrar. Se invoca desde los controllers de cobro/abono ANTES de ejecutar.
  */
 @Injectable()
 export class AssertCanChargeOrdersAction {
