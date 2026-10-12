@@ -31,6 +31,7 @@ import {
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
@@ -93,6 +94,7 @@ export class SalesController {
   constructor(
     private readonly salesService: SalesService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly assertCanChargeOrders: AssertCanChargeOrdersAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -513,6 +515,13 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<CollectSaleBalanceResult> {
+    // Abonar/re-cobrar un saldo es "cobrar": mismo gate que el cobro de pedido.
+    await this.assertCanChargeOrders.execute({
+      type: currentUser.type,
+      account: currentUser.account,
+      user_id: currentUser.user_id,
+      company_id: currentUser.company_id,
+    });
     return this.salesService.collect(saleId, dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
