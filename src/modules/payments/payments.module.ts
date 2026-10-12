@@ -16,6 +16,8 @@ import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.enti
 import { SalePayment } from '@/modules/sales/entities/sale-payment.entity';
 import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.module';
 
+import { AssertNotAssignedViewerAction } from '@/modules/sales/actions/assert-not-assigned-viewer.action';
+
 import { ProcessPaymentAction } from './actions/process-payment.action';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
@@ -60,7 +62,7 @@ import { PaymentsService } from './payments.service';
     RolesModule,
   ],
   controllers: [PaymentsController],
-  providers: [PaymentsService, ProcessPaymentAction],
+  providers: [PaymentsService, ProcessPaymentAction, AssertNotAssignedViewerAction],
   exports: [PaymentsService],
 })
 export class PaymentsModule {}

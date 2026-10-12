@@ -20,6 +20,7 @@ import { TicketSettingsModule } from '@/modules/ticket-settings/ticket-settings.
 import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 import { WalletsModule } from '@/modules/wallets/wallets.module';
 
+import { AssertNotAssignedViewerAction } from './actions/assert-not-assigned-viewer.action';
 import { AssignOrderAction } from './actions/assign-order.action';
 import { CollectSaleBalanceAction } from './actions/collect-sale-balance.action';
 import { ConvertOrderToLoanAction } from './actions/convert-order-to-loan.action';
@@ -100,6 +101,7 @@ import { SalesService } from './sales.service';
     FindAllSalesAction,
     FindSaleAction,
     AssignOrderAction,
+    AssertNotAssignedViewerAction,
     CreateSaleAction,
     UpdateSaleAction,
     UpdateSaleNoteAction,
