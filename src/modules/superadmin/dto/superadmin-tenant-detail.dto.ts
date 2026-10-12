@@ -231,6 +231,14 @@ export class SuperadminTenantDetailDto {
   electronicBilling!: SuperadminTenantElectronicBillingDto;
 
   /**
+   * Acceso al asistente Place (IA) de ESTA company. `false` por defecto; se
+   * habilita por cuenta desde el panel. Opcional en el contrato por si el panel
+   * habla con un pos_api anterior que aún no manda el campo.
+   */
+  @ApiProperty({ example: false, description: 'Acceso al asistente Place (IA) de la cuenta.' })
+  aiEnabled!: boolean;
+
+  /**
    * Modo del POS de ESTA company (`retail` | `restaurant`). A diferencia de la
    * FE, es propio de cada negocio: una sucursal reporta el suyo, no el del
    * principal.

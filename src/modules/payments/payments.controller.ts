@@ -24,6 +24,7 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
+import { AssertNotAssignedViewerAction } from '@/modules/sales/actions/assert-not-assigned-viewer.action';
 
 import type { ProcessPaymentResult } from './actions/process-payment.action';
 import { ProcessPaymentDto } from './dto/process-payment.dto';
@@ -63,6 +64,7 @@ export class PaymentsController {
     private readonly paymentsService: PaymentsService,
     private readonly realtimeGateway: RealtimeGateway,
     private readonly assertCanChargeOrders: AssertCanChargeOrdersAction,
+    private readonly assertNotAssignedViewer: AssertNotAssignedViewerAction,
   ) {}
 
   @Post()
@@ -106,6 +108,14 @@ export class PaymentsController {
       account: currentUser.account,
       user_id: currentUser.user_id,
       company_id: currentUser.company_id,
+    });
+
+    // El empleado al que se le COMPARTIÓ el pedido solo lo ve/imprime: aunque
+    // tenga permiso de cobro, no puede cobrar un pedido que no es suyo (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId: dto.invoice_id,
+      companyId,
+      actorUserId: currentUser.user_id,
     });
 
     // HIGH-3: validamos formato UUID v4 ANTES de tocar el service. Reintento

@@ -10,6 +10,8 @@ import { SaleCredit } from '@/modules/sales/entities/sale-credit.entity';
 import { SaleInvoice } from '@/modules/sales/entities/sale-invoice.entity';
 import { SalePayment } from '@/modules/sales/entities/sale-payment.entity';
 
+import { AssertNotAssignedViewerAction } from '@/modules/sales/actions/assert-not-assigned-viewer.action';
+
 import { ProcessCreditPaymentAction } from './actions/process-credit-payment.action';
 import { CreditsController } from './credits.controller';
 import { CreditsService } from './credits.service';
@@ -45,7 +47,7 @@ import { CreditsService } from './credits.service';
     RolesModule,
   ],
   controllers: [CreditsController],
-  providers: [CreditsService, ProcessCreditPaymentAction],
+  providers: [CreditsService, ProcessCreditPaymentAction, AssertNotAssignedViewerAction],
   exports: [CreditsService],
 })
 export class CreditsModule {}

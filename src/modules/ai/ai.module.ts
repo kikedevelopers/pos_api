@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { Company } from '@/modules/companies/entities/company.entity';
 import { DashboardModule } from '@/modules/dashboard/dashboard.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 import { TreasuryModule } from '@/modules/treasury/treasury.module';
@@ -26,7 +28,7 @@ import { GeminiClient } from './internal/gemini-client';
  * del chat vive en el cliente.
  */
 @Module({
-  imports: [DashboardModule, TreasuryModule, RolesModule],
+  imports: [TypeOrmModule.forFeature([Company]), DashboardModule, TreasuryModule, RolesModule],
   controllers: [AiController],
   providers: [
     AiService,

@@ -34,6 +34,7 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
 import { RetailModeGuard } from '@/common/guards/retail-mode.guard';
+import { AssertNotAssignedViewerAction } from './actions/assert-not-assigned-viewer.action';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
@@ -99,6 +100,7 @@ export class SalesController {
     private readonly salesService: SalesService,
     private readonly realtimeGateway: RealtimeGateway,
     private readonly assertCanChargeOrders: AssertCanChargeOrdersAction,
+    private readonly assertNotAssignedViewer: AssertNotAssignedViewerAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -361,6 +363,12 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<UpdateSaleResponseDto> {
+    // El asignado solo ve/imprime el pedido: no puede editarlo (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId: id,
+      companyId,
+      actorUserId: currentUser.user_id,
+    });
     const result = await this.salesService.update(id, dto, companyId, {
       id: currentUser.user_id,
       fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
@@ -391,7 +399,14 @@ export class SalesController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSaleNoteDto,
     @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
   ): Promise<UpdateSaleNoteActionResult> {
+    // El asignado solo ve/imprime el pedido: no puede editar su nota (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId: id,
+      companyId,
+      actorUserId: currentUser.user_id,
+    });
     return this.salesService.updateNote(id, companyId, dto.notes ?? null);
   }
 
@@ -475,6 +490,12 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<VoidSaleResponseDto> {
+    // El asignado solo ve/imprime el pedido: no puede anularlo (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId: id,
+      companyId,
+      actorUserId: currentUser.user_id,
+    });
     const result = await this.salesService.void(
       id,
       companyId,
@@ -530,6 +551,12 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<DeleteSalePaymentResult> {
+    // El asignado solo ve/imprime el pedido: no puede reversar sus pagos (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId,
+      companyId,
+      actorUserId: currentUser.user_id,
+    });
     return this.salesService.deletePayment(
       saleId,
       paymentId,
@@ -572,6 +599,12 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<CollectSaleBalanceResult> {
+    // El asignado solo ve/imprime el pedido: no puede re-cobrar su saldo (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId,
+      companyId,
+      actorUserId: currentUser.user_id,
+    });
     // Abonar/re-cobrar un saldo es "cobrar": mismo gate que el cobro de pedido.
     await this.assertCanChargeOrders.execute({
       type: currentUser.type,

@@ -114,6 +114,16 @@ export class Company {
   electronic_billing_enabled!: boolean;
 
   /**
+   * Gate de acceso al asistente **Place** (IA). `false` por defecto: Place no
+   * viene activo; se habilita por cuenta desde el panel superadmin. Con el flag
+   * apagado, pos_api rechaza `/ai/chat` y reporta `enabled:false` en el estado;
+   * el cliente oculta el botón y bloquea la ruta del chat. El acceso es por
+   * negocio (todos los usuarios de la company lo comparten).
+   */
+  @Column({ type: 'boolean', default: false })
+  ai_enabled!: boolean;
+
+  /**
    * Modo del POS del negocio: `retail` (el POS de siempre, default) o
    * `restaurant` (POS dedicado a restaurantes y bares, con mesas/salones). Lo
    * cambia el panel superadmin y viaja en el perfil; el cliente Electron lo usa

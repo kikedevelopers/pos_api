@@ -162,6 +162,8 @@ export class GetTenantDetailAction {
       // Interruptor de FE del negocio. La FE no viene activa; se habilita desde
       // el panel. El proceso de FE corre en el API externo (APIDIAN).
       electronicBilling: { enabled: company.electronic_billing_enabled },
+      // Acceso al asistente Place (IA) de ESTA company. Apagado por defecto.
+      aiEnabled: company.ai_enabled === true,
       // Modo del POS de ESTA company (propio también en una sucursal).
       pos_mode: resolvePosMode(company.pos_mode),
       activation,

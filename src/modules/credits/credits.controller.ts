@@ -11,6 +11,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nes
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
+import { AssertNotAssignedViewerAction } from '@/modules/sales/actions/assert-not-assigned-viewer.action';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -36,6 +37,7 @@ export class CreditsController {
   constructor(
     private readonly creditsService: CreditsService,
     private readonly assertCanChargeOrders: AssertCanChargeOrdersAction,
+    private readonly assertNotAssignedViewer: AssertNotAssignedViewerAction,
   ) {}
 
   // --------------------------------------------------------------------------
@@ -77,6 +79,12 @@ export class CreditsController {
       account: user.account,
       user_id: user.user_id,
       company_id: user.company_id,
+    });
+    // El asignado solo ve/imprime el pedido: no puede abonar su crédito (403).
+    await this.assertNotAssignedViewer.execute({
+      saleId: dto.invoice_id,
+      companyId,
+      actorUserId: user.user_id,
     });
     const fullName = `${user.name} ${user.lastname}`.trim();
     const result = await this.creditsService.processCreditPayment(dto, companyId, {

@@ -49,6 +49,10 @@ import {
   UpdateElectronicBillingAction,
   type UpdateElectronicBillingResult,
 } from './actions/update-electronic-billing.action';
+import {
+  UpdateAiAccessAction,
+  type UpdateAiAccessResult,
+} from './actions/update-ai-access.action';
 import { UpdatePosModeAction, type UpdatePosModeResult } from './actions/update-pos-mode.action';
 import { UpdateSubscriptionAction } from './actions/update-subscription.action';
 import { UpdateTenantCompanyAction } from './actions/update-tenant-company.action';
@@ -59,6 +63,7 @@ import { ResetOwnerPasswordDto } from './dto/reset-owner-password.dto';
 import { UpdateActivationDto } from './dto/update-activation.dto';
 import { UpdateBranchesDto } from './dto/update-branches.dto';
 import { UpdateElectronicBillingDto } from './dto/update-electronic-billing.dto';
+import { UpdateAiAccessDto } from './dto/update-ai-access.dto';
 import { UpdatePosModeDto } from './dto/update-pos-mode.dto';
 import { SuperadminCreateTenantResponseDto } from './dto/superadmin-create-tenant-response.dto';
 import { SuperadminDeleteTenantResponseDto } from './dto/superadmin-delete-tenant-response.dto';
@@ -120,6 +125,7 @@ export class SuperadminController {
     private readonly updateSubscriptionAction: UpdateSubscriptionAction,
     private readonly updateBranchesAction: UpdateBranchesAction,
     private readonly updateElectronicBillingAction: UpdateElectronicBillingAction,
+    private readonly updateAiAccessAction: UpdateAiAccessAction,
     private readonly updatePosModeAction: UpdatePosModeAction,
     private readonly deleteTenantAction: DeleteTenantAction,
     private readonly createTenantAction: CreateTenantAction,
@@ -283,6 +289,28 @@ export class SuperadminController {
     @Body() dto: UpdateElectronicBillingDto,
   ): Promise<UpdateElectronicBillingResult> {
     return this.updateElectronicBillingAction.execute(companyId, dto);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /superadmin/tenants/:companyId/ai-access
+  // --------------------------------------------------------------------------
+
+  @Patch('tenants/:companyId/ai-access')
+  @ApiOperation({
+    summary: 'Activar/desactivar el acceso al asistente Place (IA) de la cuenta.',
+    description:
+      'Body: { enabled }. Setea companies.ai_enabled. Apagado por defecto: con el flag en ' +
+      'false, pos_api rechaza /ai/chat (403 AI_NOT_ENABLED) y reporta enabled:false; el ' +
+      'cliente oculta el botón del asistente y bloquea la ruta del chat. El acceso es por ' +
+      'negocio (todos los usuarios de la company lo comparten).',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  updateAiAccess(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateAiAccessDto,
+  ): Promise<UpdateAiAccessResult> {
+    return this.updateAiAccessAction.execute(companyId, dto);
   }
 
   // --------------------------------------------------------------------------
