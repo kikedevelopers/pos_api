@@ -81,6 +81,11 @@ export class AiController {
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
+    // Gate por cuenta ANTES de abrir el stream: si Place no está habilitado para
+    // esta company, respondemos 403 (AI_NOT_ENABLED) como error HTTP normal —
+    // el cliente lo muestra sin siquiera iniciar la respuesta.
+    await this.aiService.assertAvailableFor(companyId);
+
     const writer = new SseWriter(response);
     const abort = new AbortController();
 
