@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Between, In, Repository } from 'typeorm';
 
+import { parseDateRange, todayUtc } from '@/modules/dashboard/internal/date-range';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '@/modules/sales/entities/sale-invoice.entity';
 
@@ -15,6 +16,12 @@ import { ComandaDto, toComandaDto } from '../dto/comanda.dto';
  *   de la lista solo.
  * - Anular un pedido lo marca `is_deleted = true` (ver VoidSaleAction) → sale
  *   de la lista solo.
+ *
+ * Filtro por DÍA (`dateInput`, `YYYY-MM-DD` hora Colombia; default = hoy): la
+ * cocina trabaja contra el día en curso, pero se puede pedir un día anterior
+ * para ver si quedó algún pedido pendiente. El día se interpreta como día
+ * CALENDARIO colombiano y se filtra por `created_at` (el instante en que entró
+ * el pedido), convertido al rango UTC correspondiente (ver `parseDateRange`).
  *
  * Orden FIFO (`created_at` ASC): el más viejo primero, el más nuevo al final —
  * la cola natural de cocina. Trae las líneas en UN batch (sin N+1) y las agrupa
@@ -30,12 +37,18 @@ export class FindActiveOrdersAction {
     private readonly linesRepo: Repository<SaleInvoiceLine>,
   ) {}
 
-  async execute(companyId: number): Promise<ComandaDto[]> {
+  async execute(companyId: number, dateInput?: string): Promise<ComandaDto[]> {
+    // `date ?? hoy`; parseDateRange(from=to) valida el formato y da el rango
+    // [00:00, 23:59:59.999] del día colombiano convertido a UTC.
+    const day = dateInput ?? todayUtc();
+    const range = parseDateRange(day, day);
+
     const orders = await this.salesRepo.find({
       where: {
         company_id: String(companyId),
         ticket_type: TicketType.ORDER,
         is_deleted: false,
+        created_at: Between(range.dateStart, range.dateEnd),
       },
       order: { created_at: 'ASC', id: 'ASC' },
     });

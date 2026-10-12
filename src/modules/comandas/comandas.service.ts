@@ -8,7 +8,7 @@ import type { ComandaDto } from './dto/comanda.dto';
 export class ComandasService {
   constructor(private readonly findActiveOrdersAction: FindActiveOrdersAction) {}
 
-  findActive(companyId: number): Promise<ComandaDto[]> {
-    return this.findActiveOrdersAction.execute(companyId);
+  findActive(companyId: number, date?: string): Promise<ComandaDto[]> {
+    return this.findActiveOrdersAction.execute(companyId, date);
   }
 }

@@ -35,16 +35,26 @@ export class CreateSaleResponseDto {
 
   @ApiProperty({ example: '001' })
   ticket_number!: string;
+
+  @ApiProperty({
+    example: 7,
+    nullable: true,
+    description:
+      'Turno asignado al pedido (modo restaurante con turnos activos). null cuando los turnos están apagados o en retail. El cliente imprime el 2º ticket de turno solo si viene no-nulo.',
+  })
+  turn_number!: number | null;
 }
 
 export function toCreateSaleResponseDto(
   invoiceId: number,
   ticketNumber: string,
+  turnNumber: number | null = null,
 ): CreateSaleResponseDto {
   return {
     success: true,
     message: 'Pedido registrado exitosamente',
     invoice_id: invoiceId,
     ticket_number: ticketNumber,
+    turn_number: turnNumber,
   };
 }

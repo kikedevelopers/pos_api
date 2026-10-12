@@ -289,12 +289,47 @@ export class SaleResponseDto {
   salonName!: string | null;
 
   @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 7,
+    description:
+      'Turno de pedido asignado (modo restaurante). null si los turnos están apagados o en retail. Se imprime en el 2º ticket de turno.',
+  })
+  turnNumber!: number | null;
+
+  @ApiPropertyOptional({
     type: 'string',
     nullable: true,
     example: 'Pago en efectivo + transferencia.',
     description: 'Nota a nivel ticket (sale_invoices.notes). null si no tiene.',
   })
   notes!: string | null;
+
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 5,
+    description:
+      'users.id del creador de la venta (el vendedor). El front lo usa para excluirlo del selector de "compartir pedido".',
+  })
+  createdById!: number | null;
+
+  @ApiPropertyOptional({
+    type: 'number',
+    nullable: true,
+    example: 42,
+    description:
+      'Empleado (users.id) al que se compartió el pedido para alistar (retail). null si no se compartió.',
+  })
+  assignedToUserId!: number | null;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    nullable: true,
+    example: 'Carlos Bodega',
+    description: 'Snapshot del nombre del empleado asignado. null si no se compartió.',
+  })
+  assignedToName!: string | null;
 
   @ApiPropertyOptional({ type: 'string', nullable: true })
   createdBy!: string | null;
@@ -602,7 +637,11 @@ export function toSaleResponseDto(
     customerId: sale.customer_id != null ? Number(sale.customer_id) : null,
     tableName: sale.table_name ?? null,
     salonName: sale.salon_name ?? null,
+    turnNumber: sale.turn_number ?? null,
     notes: sale.notes ?? null,
+    createdById: sale.created_by_id != null ? Number(sale.created_by_id) : null,
+    assignedToUserId: sale.assigned_to_user_id != null ? Number(sale.assigned_to_user_id) : null,
+    assignedToName: sale.assigned_to_name ?? null,
     createdBy: sale.created_by,
     synced: true,
     isDeleted: sale.is_deleted,

@@ -9,7 +9,7 @@ import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resol
 
 import type { ListSalesQueryDto } from '../dto/list-sales-query.dto';
 import { SaleListItemDto } from '../dto/sale-list-item.dto';
-import { SaleInvoice } from '../entities/sale-invoice.entity';
+import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { deriveTicketCredit } from '../internal/derive-ticket-credit';
 
 /**
@@ -90,7 +90,35 @@ export class FindAllSalesAction {
       company_id: actor.company_id,
     });
     if (!effective.includes('canViewAllSales')) {
-      qb.andWhere('s.created_by_id = :actorId', { actorId: String(actor.user_id) });
+      // Visibilidad: lo propio MÁS los pedidos compartidos conmigo (feature
+      // retail "Compartir pedido para alistar"). La asignación amplía lo que
+      // VEO; NO cambia la atribución de la venta (`created_by_id`), así que esto
+      // nunca suma a mis totales en los informes (ver get-sales-report / cajeros).
+      qb.andWhere(
+        '(s.created_by_id = :actorId OR s.assigned_to_user_id = :actorId)',
+        { actorId: String(actor.user_id) },
+      );
+    }
+
+    // Modo de organización del feed (espejo del getTickets local de PlacePos). El
+    // filtro/orden va al SQL para que un modo considere TODOS los tickets del día
+    // y el `limit` acote el RESULTADO ya filtrado. Default 'mixed' = feed normal.
+    const mode = query.mode ?? 'mixed';
+    if (mode === 'orders_only') {
+      qb.andWhere('s.ticket_type = :orderType', { orderType: TicketType.ORDER });
+    } else if (mode === 'sales_only') {
+      qb.andWhere('s.ticket_type = :saleType', { saleType: TicketType.SALE });
+    } else if (mode === 'credit_only') {
+      // "Solo crédito": los que tienen SaleCredit (el leftJoin 'credit' ya está).
+      qb.andWhere('credit.id IS NOT NULL');
+    }
+    if (mode === 'orders_first') {
+      // Pedidos arriba, el resto después; reciente→antiguo dentro de cada grupo.
+      // Reemplaza el orderBy por defecto (created_at DESC) con el grupo primero.
+      qb.orderBy("CASE WHEN s.ticket_type = 'ORDER' THEN 0 ELSE 1 END", 'ASC').addOrderBy(
+        's.created_at',
+        'DESC',
+      );
     }
 
     if (typeof query.limit === 'number' && query.limit > 0) {
@@ -124,7 +152,9 @@ export class FindAllSalesAction {
       }
     }
 
-    return invoices.map((inv) => buildListItem(inv, notesBySale.get(inv.id) ?? []));
+    return invoices.map((inv) =>
+      buildListItem(inv, notesBySale.get(inv.id) ?? [], actor.user_id),
+    );
   }
 }
 
@@ -167,9 +197,19 @@ function sumLineCost(lines: CreditNoteLine[]): number {
   return lines.reduce((s, l) => s + Number(l.unit_cost) * Number(l.quantity), 0);
 }
 
-function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemDto {
+function buildListItem(
+  invoice: SaleInvoice,
+  notes: CreditNote[],
+  actorUserId: number,
+): SaleListItemDto {
   const consolidated = consolidate(invoice, notes);
   const { isCredit, creditStatus } = deriveTicketCredit(invoice.credit);
+  // Esta fila le aparece al actor SOLO por asignación (no la creó él): es
+  // informativa y NO debe sumar a sus totales. El front la atenúa/etiqueta.
+  const isAssignedToMe =
+    invoice.assigned_to_user_id !== null &&
+    invoice.assigned_to_user_id === String(actorUserId) &&
+    invoice.created_by_id !== String(actorUserId);
   return {
     id: Number(invoice.id),
     ticketType: invoice.ticket_type,
@@ -184,6 +224,9 @@ function buildListItem(invoice: SaleInvoice, notes: CreditNote[]): SaleListItemD
     customerName: invoice.customer_name || 'CONSUMIDOR FINAL',
     tableName: invoice.table_name ?? null,
     salonName: invoice.salon_name ?? null,
+    assignedToUserId: invoice.assigned_to_user_id ? Number(invoice.assigned_to_user_id) : null,
+    assignedToName: invoice.assigned_to_name ?? null,
+    isAssignedToMe,
     synced: true,
     createdAt: invoice.created_at.toISOString(),
   };

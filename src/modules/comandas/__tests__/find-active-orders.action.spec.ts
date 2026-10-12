@@ -1,9 +1,17 @@
-import { In, type Repository } from 'typeorm';
+import { BadRequestException } from '@nestjs/common';
+import { type FindOperator, In, type Repository } from 'typeorm';
 
+import { parseDateRange, todayUtc } from '@/modules/dashboard/internal/date-range';
 import { SaleInvoiceLine } from '@/modules/sales/entities/sale-invoice-line.entity';
 import { SaleInvoice, TicketType } from '@/modules/sales/entities/sale-invoice.entity';
 
 import { FindActiveOrdersAction } from '../actions/find-active-orders.action';
+
+/** Extrae los límites [inicio, fin] de un `Between(...)` de TypeORM. */
+function betweenBounds(op: unknown): [Date, Date] {
+  const operator = op as FindOperator<Date>;
+  return (operator as unknown as { value: [Date, Date] }).value;
+}
 
 const COMPANY_ID = 42;
 
@@ -67,6 +75,34 @@ describe('FindActiveOrdersAction', () => {
       is_deleted: false,
     });
     expect(arg.order).toMatchObject({ created_at: 'ASC' });
+  });
+
+  it('sin fecha: filtra por el día ACTUAL (hora Colombia) vía created_at', async () => {
+    orders = [order()];
+    await action.execute(COMPANY_ID);
+
+    const arg = salesFind.mock.calls[0][0] as { where: Record<string, unknown> };
+    const expected = parseDateRange(todayUtc(), todayUtc());
+    expect(betweenBounds(arg.where.created_at)).toEqual([expected.dateStart, expected.dateEnd]);
+  });
+
+  it('con fecha: filtra por ese día colombiano [00:00, 23:59:59.999] → UTC', async () => {
+    orders = [order()];
+    await action.execute(COMPANY_ID, '2026-10-06');
+
+    const arg = salesFind.mock.calls[0][0] as { where: Record<string, unknown> };
+    const expected = parseDateRange('2026-10-06', '2026-10-06');
+    // Colombia es UTC-5: el día arranca a las 05:00Z y termina 04:59:59.999Z del día siguiente.
+    expect(expected.dateStart.toISOString()).toBe('2026-10-06T05:00:00.000Z');
+    expect(expected.dateEnd.toISOString()).toBe('2026-10-07T04:59:59.999Z');
+    expect(betweenBounds(arg.where.created_at)).toEqual([expected.dateStart, expected.dateEnd]);
+  });
+
+  it('fecha con formato inválido: lanza BadRequestException y NO consulta', async () => {
+    await expect(action.execute(COMPANY_ID, '07-10-2026')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(salesFind).not.toHaveBeenCalled();
   });
 
   it('mapea el pedido: ticketNumber, fecha ISO, mesa/salón y detalle de productos', async () => {

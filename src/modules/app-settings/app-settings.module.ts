@@ -21,6 +21,10 @@ import { UpsertEnableCreditPaymentAction } from './actions/upsert-enable-credit-
 import { UpsertEnableThirdPartyLoanAction } from './actions/upsert-enable-third-party-loan.action';
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
+import { AssignTurnNumberAction } from './actions/assign-turn-number.action';
+import { GetTurnosAction } from './actions/get-turnos.action';
+import { ResetTurnosCounterAction } from './actions/reset-turnos-counter.action';
+import { UpsertTurnosAction } from './actions/upsert-turnos.action';
 import { AppSettingsController } from './app-settings.controller';
 import { AppSettingsService } from './app-settings.service';
 import { AppSetting } from './entities/app-setting.entity';
@@ -54,6 +58,10 @@ import { AppSetting } from './entities/app-setting.entity';
     UpsertEnableCreditPaymentAction,
     GetEnableThirdPartyLoanAction,
     UpsertEnableThirdPartyLoanAction,
+    GetTurnosAction,
+    UpsertTurnosAction,
+    ResetTurnosCounterAction,
+    AssignTurnNumberAction,
   ],
   exports: [
     AppSettingsService,
@@ -61,6 +69,9 @@ import { AppSetting } from './entities/app-setting.entity';
     // Lo inyecta `SalesModule` (ConvertOrderToLoanAction) para el gate
     // fail-closed del préstamo a tercero.
     GetEnableThirdPartyLoanAction,
+    // Lo inyecta `SalesModule` (CreateSaleAction) para asignar el turno al
+    // crear un pedido (ORDER) en modo restaurante.
+    AssignTurnNumberAction,
     // `GetIncludeOrdersInReportsAction` se exporta porque lo inyectan los
     // módulos `reports`/`pos-reports`/`dashboard`. El flag de compras NO se
     // exporta: su filtro es de presentación (vive en el cliente) y ningún

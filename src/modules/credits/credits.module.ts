@@ -5,6 +5,7 @@ import { Bank } from '@/modules/banks/entities/bank.entity';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import { CashRegisterLog } from '@/modules/cash-register/entities/cash-register-log.entity';
 import { FinancialMovementsModule } from '@/modules/financial-movements/financial-movements.module';
+import { RolesModule } from '@/modules/roles/roles.module';
 import { SaleCredit } from '@/modules/sales/entities/sale-credit.entity';
 import { SaleInvoice } from '@/modules/sales/entities/sale-invoice.entity';
 import { SalePayment } from '@/modules/sales/entities/sale-payment.entity';
@@ -41,6 +42,7 @@ import { CreditsService } from './credits.service';
       CashRegisterLog,
     ]),
     FinancialMovementsModule,
+    RolesModule,
   ],
   controllers: [CreditsController],
   providers: [CreditsService, ProcessCreditPaymentAction],

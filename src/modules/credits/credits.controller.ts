@@ -10,6 +10,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nes
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
@@ -32,7 +33,10 @@ import { CreditsService } from './credits.service';
 @ApiBearerAuth('bearer')
 @Controller('credits')
 export class CreditsController {
-  constructor(private readonly creditsService: CreditsService) {}
+  constructor(
+    private readonly creditsService: CreditsService,
+    private readonly assertCanChargeOrders: AssertCanChargeOrdersAction,
+  ) {}
 
   // --------------------------------------------------------------------------
   // POST /credits
@@ -66,6 +70,14 @@ export class CreditsController {
     credit_status: 'PENDING' | 'PARTIAL' | 'PAID';
     credit_balance: number;
   }> {
+    // Abonar a un crédito es "cobrar": mismo gate que el cobro de pedido. Un
+    // Vendedor sin permiso recibe 403 antes de registrar el abono.
+    await this.assertCanChargeOrders.execute({
+      type: user.type,
+      account: user.account,
+      user_id: user.user_id,
+      company_id: user.company_id,
+    });
     const fullName = `${user.name} ${user.lastname}`.trim();
     const result = await this.creditsService.processCreditPayment(dto, companyId, {
       id: user.user_id,

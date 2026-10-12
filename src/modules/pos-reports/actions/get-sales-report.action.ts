@@ -51,6 +51,11 @@ interface InvoiceRow {
   // Medios de pago DISTINTOS de los pagos vivos, separados por coma
   // (p. ej. "CASH" o "CASH,TRANSFER"). null si no hay pagos vivos.
   payment_methods: string | null;
+  // La fila aparece en el scope del actor SOLO por asignación (un pedido retail
+  // compartido con él para alistar): NO la creó él. Se MUESTRA en la lista pero
+  // se EXCLUYE del summary y los conteos (lo ve, no le suma). Siempre false para
+  // quien ve todas las ventas (owner/Cajero) o para sus propias ventas.
+  assigned_only: boolean;
 }
 
 // Clasifica el tipo de pago de una venta a partir de los medios DISTINTOS de
@@ -189,10 +194,19 @@ export class GetSalesReportAction {
       }
     }
 
-    // Summary: ventas activas (SALE, !is_deleted) + ajustes por notas.
-    const activeSales = invoiceRows.filter((r) => r.ticket_type === 'SALE' && !r.is_deleted);
+    // Summary: ventas activas (SALE, !is_deleted) + ajustes por notas. Las filas
+    // `assigned_only` (pedidos que el actor solo ve por asignación) quedan FUERA
+    // de TODO el summary/conteos: se muestran en la lista, pero no son ventas
+    // suyas (su atribución es del creador) → nunca le suman (sin doble conteo).
+    const own = (r: InvoiceRow): boolean => !r.assigned_only;
+    const activeSales = invoiceRows.filter(
+      (r) => r.ticket_type === 'SALE' && !r.is_deleted && own(r),
+    );
     const salesForRevenue = invoiceRows.filter(
-      (r) => r.ticket_type === 'SALE' && (!r.is_deleted || notesByInvoice.has(Number(r.id))),
+      (r) =>
+        r.ticket_type === 'SALE' &&
+        own(r) &&
+        (!r.is_deleted || notesByInvoice.has(Number(r.id))),
     );
 
     let summaryRevenue = zeroBig();
@@ -209,7 +223,7 @@ export class GetSalesReportAction {
     // cobrada canónica (base caja), que se calcula aparte.
     if (includeOrders) {
       for (const inv of invoiceRows) {
-        if (inv.ticket_type === 'ORDER' && !inv.is_deleted) {
+        if (inv.ticket_type === 'ORDER' && !inv.is_deleted && own(inv)) {
           summaryRevenue = summaryRevenue.plus(toBig(inv.original_total));
           summaryCost = summaryCost.plus(toBig(inv.original_cost));
         }
@@ -243,14 +257,15 @@ export class GetSalesReportAction {
     const summary = {
       total_sales_count: activeSales.length,
       total_notes_count: visibleNotesCount,
-      total_orders_count: invoiceRows.filter((r) => r.ticket_type === 'ORDER' && !r.is_deleted)
-        .length,
-      total_voided_count: invoiceRows.filter((r) => r.is_deleted).length,
+      total_orders_count: invoiceRows.filter(
+        (r) => r.ticket_type === 'ORDER' && !r.is_deleted && own(r),
+      ).length,
+      total_voided_count: invoiceRows.filter((r) => r.is_deleted && own(r)).length,
       total_partial_void_count: invoiceRows.filter(
-        (r) => r.note_types?.includes('PARTIAL_VOID') && !r.is_deleted,
+        (r) => r.note_types?.includes('PARTIAL_VOID') && !r.is_deleted && own(r),
       ).length,
       total_debit_note_count: invoiceRows.filter(
-        (r) => r.note_types?.includes('ADDITION') && !r.is_deleted,
+        (r) => r.note_types?.includes('ADDITION') && !r.is_deleted && own(r),
       ).length,
       total_revenue: totalRevenue,
       total_cost: totalCost,
@@ -331,6 +346,9 @@ export class GetSalesReportAction {
       balanceDue,
       isPending,
       paymentType,
+      // Pedido que el actor solo ve por asignación (compartido para alistar): el
+      // front lo etiqueta "Asignado" y lo atenúa. NO suma a sus totales.
+      assignedOnly: inv.assigned_only,
     };
   }
 
@@ -396,11 +414,20 @@ export class GetSalesReportAction {
       );
     }
 
-    // Scope por `canViewAllSales`: si el actor NO puede ver todas las ventas
-    // (Vendedor, empleado legacy), solo ve las suyas. null = ve todas
+    // Scope por `canViewAllSales` + visibilidad de pedidos ASIGNADOS. Un actor
+    // scopeado (Vendedor, empleado legacy) ve lo SUYO más lo que le compartieron
+    // (`assigned_to_user_id`, feature retail "Compartir pedido para alistar").
+    // Las filas que solo ve por asignación se marcan `assigned_only` para
+    // EXCLUIRLAS del summary y los conteos: las VE en la lista, pero NO le suman
+    // (la atribución es del creador → sin doble conteo). null = ve todas
     // (owner/superadmin/Cajero). Paridad PlacePos (`POSReportController`).
+    let assignedOnlyExpr = 'false AS assigned_only';
     if (scopeToUserId !== null) {
-      conditions.push(`si.created_by_id = ${placeholder(scopeToUserId)}`);
+      const scopePh = placeholder(scopeToUserId);
+      conditions.push(
+        `(si.created_by_id = ${scopePh} OR si.assigned_to_user_id = ${scopePh})`,
+      );
+      assignedOnlyExpr = `(si.created_by_id IS DISTINCT FROM ${scopePh}) AS assigned_only`;
     }
 
     this.applyNoteFilter(conditions, params, filters, dateFrom, dateTo);
@@ -460,7 +487,8 @@ export class GetSalesReportAction {
           WHERE sp.sale_invoice_id = si.id
             AND sp.company_id = $1
             AND sp.is_voided = false
-        ) AS payment_methods
+        ) AS payment_methods,
+        ${assignedOnlyExpr}
       FROM sale_invoices si
       LEFT JOIN "v_sale_note_adjustments" adj
         ON adj.sale_invoice_id = si.id
