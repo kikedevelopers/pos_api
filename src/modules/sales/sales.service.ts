@@ -24,6 +24,7 @@ import {
   type DeleteSalePaymentActor,
   type DeleteSalePaymentResult,
 } from './actions/delete-sale-payment.action';
+import { AssignOrderAction, type AssignOrderActionResult } from './actions/assign-order.action';
 import { FindAllSalesAction } from './actions/find-all-sales.action';
 import { FindSaleAction, type SaleAggregate } from './actions/find-sale.action';
 import { GetConsolidatedInvoiceAction } from './actions/get-consolidated-invoice.action';
@@ -72,6 +73,7 @@ export class SalesService {
   constructor(
     private readonly findAllSalesAction: FindAllSalesAction,
     private readonly findSaleAction: FindSaleAction,
+    private readonly assignOrderAction: AssignOrderAction,
     private readonly createSaleAction: CreateSaleAction,
     private readonly updateSaleAction: UpdateSaleAction,
     private readonly updateSaleNoteAction: UpdateSaleNoteAction,
@@ -137,6 +139,14 @@ export class SalesService {
     notes: string | null,
   ): Promise<UpdateSaleNoteActionResult> {
     return this.updateSaleNoteAction.execute({ invoiceId, companyId, notes });
+  }
+
+  assignOrder(
+    invoiceId: number,
+    companyId: number,
+    assignedToUserId: number | null,
+  ): Promise<AssignOrderActionResult> {
+    return this.assignOrderAction.execute({ invoiceId, companyId, assignedToUserId });
   }
 
   void(

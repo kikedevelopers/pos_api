@@ -16,6 +16,7 @@ import { resolveAccessibleProducts } from '@/modules/products/internal/accessibl
 import type { ComboRecipeSnapshot } from '@/modules/products/internal/adjust-inventory.helper';
 import { resolveComboRecipes } from '@/modules/products/internal/resolve-combo-recipe.helper';
 import { resolvePackagingValues } from '@/modules/products/internal/resolve-packaging-value.helper';
+import { AssignTurnNumberAction } from '@/modules/app-settings/actions/assign-turn-number.action';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
@@ -102,6 +103,7 @@ export class CreateSaleAction {
     private readonly dataSource: DataSource,
     private readonly incrementTicketNumberAction: IncrementTicketNumberAction,
     private readonly financialMovementsService: FinancialMovementsService,
+    private readonly assignTurnNumberAction: AssignTurnNumberAction,
   ) {}
 
   async execute(
@@ -175,6 +177,12 @@ export class CreateSaleAction {
           TicketSettingType.ORDER,
         );
 
+        // 3b. TURNO de pedido (modo restaurante). `null` si la feature está
+        // apagada. Atómico y cíclico (reinicia en 1 al superar `turnos_max`);
+        // participa de esta transacción → si el pedido falla, el turno no se
+        // quema. Se imprime en un 2º ticket y queda fijo en el pedido.
+        const turnNumber = await this.assignTurnNumberAction.execute(manager, companyId);
+
         // 4. INSERT SaleInvoice con los totales del payload. El cliente PlacePos
         // los pre-calcula con Big.js; el service los persiste tal cual (paridad
         // con `saleOperations.createOrder`). `subtotal = total` y `tax_total = 0`
@@ -202,6 +210,7 @@ export class CreateSaleAction {
           salon_id: orderTable?.salonId ?? null,
           table_name: orderTable?.tableName ?? null,
           salon_name: orderTable?.salonName ?? null,
+          turn_number: turnNumber,
           subtotal: dto.total,
           tax_total: 0,
           total: dto.total,

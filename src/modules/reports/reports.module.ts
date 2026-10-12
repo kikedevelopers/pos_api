@@ -10,6 +10,8 @@ import { GetCustomersRfmDayTicketsAction } from './actions/get-customers-rfm-day
 import { GetDailyClosureAction } from './actions/get-daily-closure.action';
 import { GetSalesByHourAction } from './actions/get-sales-by-hour.action';
 import { GetExtendedSummaryAction } from './actions/get-extended-summary.action';
+import { GetNetWorthReportAction } from './actions/get-net-worth-report.action';
+import { GetNetWorthInventoryAction } from './actions/get-net-worth-inventory.action';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 
@@ -33,6 +35,8 @@ import { ReportsService } from './reports.service';
     GetCreditsReportAction,
     GetCustomersRfmAction,
     GetCustomersRfmDayTicketsAction,
+    GetNetWorthReportAction,
+    GetNetWorthInventoryAction,
   ],
   exports: [ReportsService],
 })

@@ -186,6 +186,15 @@ export class SaleInvoice {
   @Column({ type: 'text', nullable: true })
   salon_name!: string | null;
 
+  /**
+   * TURNO de pedido asignado al crear el ORDER (modo restaurante), cuando la
+   * feature "Turnos" está activa. Contador cíclico per-company (1..turnos_max).
+   * NULL cuando los turnos están desactivados o en retail. Se imprime en un 2º
+   * ticket (número grande) y queda fijo en el pedido para reimpresiones.
+   */
+  @Column({ type: 'integer', nullable: true })
+  turn_number!: number | null;
+
   @Column({
     type: 'numeric',
     precision: 15,
@@ -268,6 +277,21 @@ export class SaleInvoice {
 
   @Column({ type: 'bigint', nullable: true })
   created_by_id!: string | null;
+
+  /**
+   * Empleado (vía su User espejo = `users.id`) al que se COMPARTIÓ este pedido
+   * para que lo aliste. Feature RETAIL de pedidos (ticket_type=ORDER): amplía la
+   * VISIBILIDAD del asignado (lo ve en su feed) sin tocar la ATRIBUCIÓN de la
+   * venta —`created_by_id` sigue siendo el vendedor—, de modo que los informes
+   * de totales (por cajero / summary) jamás lo doble-cuentan. NULL si no se ha
+   * compartido. Se congela al cobrar (ORDER→SALE): no se reasigna ni se quita.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  assigned_to_user_id!: string | null;
+
+  /** Snapshot del nombre del empleado asignado al compartir (como `created_by`). */
+  @Column({ type: 'text', nullable: true })
+  assigned_to_name!: string | null;
 
   @Column({ type: 'boolean', default: false })
   is_deleted!: boolean;

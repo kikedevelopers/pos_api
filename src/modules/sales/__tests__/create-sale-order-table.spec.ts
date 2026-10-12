@@ -40,6 +40,7 @@ jest.mock('../internal/sale-lookups', () => ({
 
 import { resolveAccessibleProducts } from '@/modules/products/internal/accessible-products.helper';
 import type { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
+import type { AssignTurnNumberAction } from '@/modules/app-settings/actions/assign-turn-number.action';
 import type { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
 
 import { CreateSaleAction, type SaleCreator } from '../actions/create-sale.action';
@@ -64,6 +65,7 @@ describe('CreateSaleAction · ocupación de mesa (modo restaurante)', () => {
   let action: CreateSaleAction;
   let createdSale: Record<string, unknown> | null;
   let managerMock: Record<string, jest.Mock>;
+  let assignTurnMock: { execute: jest.Mock };
 
   function baseDto(over: Partial<CreateSaleDto> = {}): CreateSaleDto {
     return {
@@ -116,7 +118,14 @@ describe('CreateSaleAction · ocupación de mesa (modo restaurante)', () => {
 
     const financialMock = { record: jest.fn() } as unknown as FinancialMovementsService;
 
-    action = new CreateSaleAction(dataSourceMock, incrementMock, financialMock);
+    assignTurnMock = { execute: jest.fn().mockResolvedValue(null) };
+
+    action = new CreateSaleAction(
+      dataSourceMock,
+      incrementMock,
+      financialMock,
+      assignTurnMock as unknown as AssignTurnNumberAction,
+    );
   });
 
   it('con table_id → ocupa la mesa y persiste su snapshot en la factura', async () => {
@@ -180,6 +189,23 @@ describe('CreateSaleAction · ocupación de mesa (modo restaurante)', () => {
 
     expect(resolveTableMock).not.toHaveBeenCalled();
     expect(createdSale).toMatchObject({ table_id: null });
+  });
+
+  it('turnos activos → asigna el turno devuelto y lo persiste en la factura', async () => {
+    assignTurnMock.execute.mockResolvedValue(9);
+
+    await action.execute(baseDto({ table_id: 77 }), COMPANY_ID, CREATOR);
+
+    expect(assignTurnMock.execute).toHaveBeenCalledWith(managerMock, COMPANY_ID);
+    expect(createdSale).toMatchObject({ turn_number: 9 });
+  });
+
+  it('turnos apagados → turn_number null en la factura', async () => {
+    assignTurnMock.execute.mockResolvedValue(null);
+
+    await action.execute(baseDto(), COMPANY_ID, CREATOR);
+
+    expect(createdSale).toMatchObject({ turn_number: null });
   });
 
   it('propaga el error del helper (p. ej. 409 TABLE_OCCUPIED) sin crear la factura', async () => {

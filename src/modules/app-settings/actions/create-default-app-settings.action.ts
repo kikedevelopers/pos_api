@@ -36,6 +36,10 @@ const DEFAULT_SETTINGS: Array<{ key: string; value: string }> = [
   // Ventana de Cobro de Pedido: crédito visible por defecto, préstamo oculto.
   { key: APP_SETTING_KEYS.ENABLE_CREDIT_PAYMENT, value: 'true' },
   { key: APP_SETTING_KEYS.ENABLE_THIRD_PARTY_LOAN, value: 'false' },
+  // Turnos de pedido (modo restaurante): apagados, ciclo 1..99, contador en 0.
+  { key: APP_SETTING_KEYS.TURNOS_ENABLED, value: 'false' },
+  { key: APP_SETTING_KEYS.TURNOS_MAX, value: '99' },
+  { key: APP_SETTING_KEYS.TURNOS_COUNTER, value: '0' },
 ];
 
 /**

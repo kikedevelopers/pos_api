@@ -12,6 +12,8 @@ import { CustomersRfmDayTicketsQueryDto } from './dto/customers-rfm-day-tickets-
 import { CustomersRfmQueryDto } from './dto/customers-rfm-query.dto';
 import { DailyClosureQueryDto } from './dto/daily-closure-query.dto';
 import { ExtendedSummaryQueryDto } from './dto/extended-summary-query.dto';
+import type { NetWorthInventoryItem } from './actions/get-net-worth-inventory.action';
+import type { NetWorthReport } from './actions/get-net-worth-report.action';
 import { ReportsService } from './reports.service';
 import type {
   BranchesDailyClosureResult,
@@ -118,6 +120,34 @@ export class ReportsController {
     @CurrentCompany() companyId: number,
   ): Promise<CreditsReportResult> {
     return this.reportsService.getCreditsReport(companyId, query);
+  }
+
+  // `net-worth/inventory` ANTES de `net-worth` para priorizar la ruta más
+  // específica (mismo criterio que customers-rfm/day-tickets).
+  @Get('net-worth/inventory')
+  @Roles('owner', 'manager')
+  @RequirePermission('canAccessNetWorthReport')
+  @ApiOperation({
+    summary: 'Detalle del inventario a costo (productos base con stock) del Informe Patrimonial.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  netWorthInventory(
+    @CurrentCompany() companyId: number,
+  ): Promise<NetWorthInventoryItem[]> {
+    return this.reportsService.getNetWorthInventory(companyId);
+  }
+
+  @Get('net-worth')
+  @Roles('owner', 'manager')
+  @RequirePermission('canAccessNetWorthReport')
+  @ApiOperation({
+    summary: 'Informe Patrimonial (snapshot a hoy): Activos − Pasivos = Patrimonio.',
+    description:
+      'Activos: inventario a costo (base), cartera, efectivo, bancos, billeteras, saldo a favor con proveedores y mercancía prestada. Pasivos: deuda a proveedores, anticipos de clientes y deuda a transportistas. Incluye el detalle por línea.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  netWorth(@CurrentCompany() companyId: number): Promise<NetWorthReport> {
+    return this.reportsService.getNetWorth(companyId);
   }
 
   /**

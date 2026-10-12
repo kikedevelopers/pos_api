@@ -50,6 +50,15 @@ export const APP_SETTING_KEYS = {
   CUSTOMER_POINTS_ENABLED: 'customer_points_enabled',
   CUSTOMER_POINTS_PESO_BASE: 'customer_points_peso_base',
   CUSTOMER_POINTS_PER_BASE: 'customer_points_per_base',
+  // TURNOS de pedido (solo modo restaurante). Contador cíclico estilo
+  // consecutivo que se asigna al crear un ORDER y se imprime en un 2º ticket.
+  //   - `turnos_enabled`  (`'true'` | `'false'`). Default false.
+  //   - `turnos_max`      tope del ciclo (1..99). Al superarlo reinicia en 1.
+  //   - `turnos_counter`  último turno asignado (0 = aún ninguno). Se incrementa
+  //     ATÓMICAMENTE dentro de la transacción de creación del pedido.
+  TURNOS_ENABLED: 'turnos_enabled',
+  TURNOS_MAX: 'turnos_max',
+  TURNOS_COUNTER: 'turnos_counter',
 } as const;
 
 export type AppSettingKey = (typeof APP_SETTING_KEYS)[keyof typeof APP_SETTING_KEYS];

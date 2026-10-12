@@ -17,6 +17,7 @@ import {
   Query,
   Res,
   UnprocessableEntityException,
+  UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -32,6 +33,7 @@ import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
+import { RetailModeGuard } from '@/common/guards/retail-mode.guard';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
@@ -41,6 +43,8 @@ import type { ProcessPaymentResult } from '@/modules/payments/actions/process-pa
 import { ProcessPaymentDto } from '@/modules/payments/dto/process-payment.dto';
 import type { DeleteSalePaymentResult } from './actions/delete-sale-payment.action';
 import type { LastSaleResult } from './actions/get-last-sale.action';
+import type { AssignOrderActionResult } from './actions/assign-order.action';
+import { AssignOrderDto } from './dto/assign-order.dto';
 import { CollectSaleBalanceDto } from './dto/collect-sale-balance.dto';
 import { CreateSaleResponseDto, toCreateSaleResponseDto } from './dto/create-sale-response.dto';
 import { CreateSaleDto } from './dto/create-sale.dto';
@@ -318,7 +322,7 @@ export class SalesController {
       }
     }
 
-    return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number);
+    return toCreateSaleResponseDto(Number(sale.id), sale.ticket_number, sale.turn_number ?? null);
   }
 
   // --------------------------------------------------------------------------
@@ -389,6 +393,59 @@ export class SalesController {
     @CurrentCompany() companyId: number,
   ): Promise<UpdateSaleNoteActionResult> {
     return this.salesService.updateNote(id, companyId, dto.notes ?? null);
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /sales/:id/assign
+  // --------------------------------------------------------------------------
+
+  @Patch(':id/assign')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager')
+  @UseGuards(RetailModeGuard)
+  @ApiOperation({
+    summary:
+      'Compartir un PEDIDO (retail) con un empleado para que lo aliste, o quitar la ' +
+      'asignación (assigned_to_user_id: null). Solo owner/admin. Solo pedidos ' +
+      '(ORDER) no cobrados: al cobrar, la asignación queda bloqueada. La asignación ' +
+      'amplía la visibilidad del asignado, NO la atribución de la venta (no suma a ' +
+      'sus totales). Retorna { id, assignedToUserId, assignedToName }.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: AssignOrderDto })
+  @ApiResponse({ status: HttpStatus.OK, description: '{ id, assignedToUserId, assignedToName }' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Pedido no encontrado' })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'El ticket no es un pedido o ya fue cobrado (asignación bloqueada)',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'El empleado no tiene acceso, o es el creador del pedido',
+  })
+  async assign(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignOrderDto,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<AssignOrderActionResult> {
+    const result = await this.salesService.assignOrder(id, companyId, dto.assigned_to_user_id ?? null);
+    // Tiempo real: refresca el feed del nuevo asignado (para que le aparezca),
+    // del asignado anterior (para que le desaparezca) y de los admins (:all).
+    // emitTicketChanged ya incluye la sala :all; lo llamamos por cada usuario
+    // afectado. Best-effort: nunca rompe la asignación.
+    const affected = new Set<number>();
+    if (result.assignedToUserId) affected.add(result.assignedToUserId);
+    if (result.previousAssignedToUserId) affected.add(result.previousAssignedToUserId);
+    affected.add(currentUser.user_id);
+    for (const userId of affected) {
+      try {
+        this.realtimeGateway.emitTicketChanged(companyId, userId, { invoiceId: id });
+      } catch {
+        // best-effort.
+      }
+    }
+    return result;
   }
 
   // --------------------------------------------------------------------------

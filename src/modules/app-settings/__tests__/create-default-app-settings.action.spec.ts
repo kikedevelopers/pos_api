@@ -36,7 +36,7 @@ describe('CreateDefaultAppSettingsAction', () => {
       createdBy: { id: 7, fullName: 'Kike Pacheco' },
     });
 
-    expect(createdRows).toHaveLength(7);
+    expect(createdRows).toHaveLength(10);
 
     const map = new Map(createdRows.map((r) => [r.key, r.value]));
     expect(map.get(APP_SETTING_KEYS.APP_COLOR_MODE)).toBe('white');
@@ -50,6 +50,10 @@ describe('CreateDefaultAppSettingsAction', () => {
     // histórico del POS: la tarjeta de crédito siempre estuvo disponible).
     expect(map.get(APP_SETTING_KEYS.ENABLE_THIRD_PARTY_LOAN)).toBe('false');
     expect(map.get(APP_SETTING_KEYS.ENABLE_CREDIT_PAYMENT)).toBe('true');
+    // Turnos de pedido: apagados, ciclo 1..99, contador en 0.
+    expect(map.get(APP_SETTING_KEYS.TURNOS_ENABLED)).toBe('false');
+    expect(map.get(APP_SETTING_KEYS.TURNOS_MAX)).toBe('99');
+    expect(map.get(APP_SETTING_KEYS.TURNOS_COUNTER)).toBe('0');
 
     for (const row of createdRows) {
       expect(row.company_id).toBe('42');
