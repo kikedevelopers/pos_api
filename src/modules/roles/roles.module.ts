@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Employee } from '@/modules/employees/entities/employee.entity';
 
+import { AssertCanChargeOrdersAction } from './actions/assert-can-charge-orders.action';
 import { CreateRoleAction } from './actions/create-role.action';
 import { DeleteRoleAction } from './actions/delete-role.action';
 import { ListRolesAction } from './actions/list-roles.action';
@@ -33,10 +34,12 @@ import { RolesService } from './roles.service';
     UpdateRoleAction,
     DeleteRoleAction,
     ResolveEffectivePermissionsAction,
+    AssertCanChargeOrdersAction,
   ],
   // `RolesService` para `AuthModule` (perfil) y
   // `ResolveEffectivePermissionsAction` para el `PermissionsGuard` global
   // (FASE 4), que se instancia en el contexto raíz de `AppModule`.
-  exports: [RolesService, ResolveEffectivePermissionsAction],
+  // `AssertCanChargeOrdersAction` para los controllers de cobro (payments, sales).
+  exports: [RolesService, ResolveEffectivePermissionsAction, AssertCanChargeOrdersAction],
 })
 export class RolesModule {}

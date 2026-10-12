@@ -9,7 +9,7 @@ import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resol
 
 import type { ListSalesQueryDto } from '../dto/list-sales-query.dto';
 import { SaleListItemDto } from '../dto/sale-list-item.dto';
-import { SaleInvoice } from '../entities/sale-invoice.entity';
+import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import { deriveTicketCredit } from '../internal/derive-ticket-credit';
 
 /**
@@ -91,6 +91,27 @@ export class FindAllSalesAction {
     });
     if (!effective.includes('canViewAllSales')) {
       qb.andWhere('s.created_by_id = :actorId', { actorId: String(actor.user_id) });
+    }
+
+    // Modo de organización del feed (espejo del getTickets local de PlacePos). El
+    // filtro/orden va al SQL para que un modo considere TODOS los tickets del día
+    // y el `limit` acote el RESULTADO ya filtrado. Default 'mixed' = feed normal.
+    const mode = query.mode ?? 'mixed';
+    if (mode === 'orders_only') {
+      qb.andWhere('s.ticket_type = :orderType', { orderType: TicketType.ORDER });
+    } else if (mode === 'sales_only') {
+      qb.andWhere('s.ticket_type = :saleType', { saleType: TicketType.SALE });
+    } else if (mode === 'credit_only') {
+      // "Solo crédito": los que tienen SaleCredit (el leftJoin 'credit' ya está).
+      qb.andWhere('credit.id IS NOT NULL');
+    }
+    if (mode === 'orders_first') {
+      // Pedidos arriba, el resto después; reciente→antiguo dentro de cada grupo.
+      // Reemplaza el orderBy por defecto (created_at DESC) con el grupo primero.
+      qb.orderBy("CASE WHEN s.ticket_type = 'ORDER' THEN 0 ELSE 1 END", 'ASC').addOrderBy(
+        's.created_at',
+        'DESC',
+      );
     }
 
     if (typeof query.limit === 'number' && query.limit > 0) {

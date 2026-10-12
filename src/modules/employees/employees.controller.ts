@@ -45,6 +45,7 @@ import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { SetCashBaseDto } from './dto/set-cash-base.dto';
 import { SetProfitVisibilityDto } from './dto/set-profit-visibility.dto';
 import { SetCashVisibilityDto } from './dto/set-cash-visibility.dto';
+import { SetChargePermissionDto } from './dto/set-charge-permission.dto';
 import {
   CashRegisterLogResponseDto,
   toCashRegisterLogResponseDto,
@@ -403,6 +404,37 @@ export class EmployeesController {
     const employee = await this.employeesService.setCashVisibility(
       id,
       dto.can_view_cash,
+      companyId,
+    );
+    const detail = await this.employeesService.findOne(Number(employee.id), companyId);
+    return toEmployeeDetailResponseDto(detail);
+  }
+
+  // COBRAR PEDIDOS: permiso por-empleado. Owner-only SIN `@RequirePermission`
+  // (solo el admin lo cambia). Espejo de cash-visibility. Override para roles no
+  // elevados; los roles con canViewAllSales cobran igual sin este flag.
+  @Put(':id/charge-permission')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Conceder/revocar el permiso del empleado para cobrar pedidos',
+    description:
+      'Persiste `employees.can_charge_orders`. Override para roles no elevados (Vendedor); no afecta a roles con canViewAllSales. Solo owner.',
+  })
+  @ApiParam({ name: 'id', type: 'integer', example: 1 })
+  @ApiBody({ type: SetChargePermissionDto })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Rol distinto a owner' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Employee no encontrado' })
+  async setChargePermission(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetChargePermissionDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<EmployeeDetailResponseDto> {
+    const employee = await this.employeesService.setChargePermission(
+      id,
+      dto.can_charge_orders,
       companyId,
     );
     const detail = await this.employeesService.findOne(Number(employee.id), companyId);

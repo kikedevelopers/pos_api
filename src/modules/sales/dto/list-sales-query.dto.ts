@@ -1,8 +1,24 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsInt, IsOptional, Min } from 'class-validator';
+import { IsDateString, IsEnum, IsIn, IsInt, IsOptional, Min } from 'class-validator';
 
 import { TicketType } from '../entities/sale-invoice.entity';
+
+/**
+ * Modo de organización del feed de tickets del POS. El filtro/orden se aplica en
+ * SQL sobre TODOS los tickets del día (no sobre el slice ya cargado), por lo que
+ * un modo trae coincidencias aunque estén más allá de los primeros N. Debe
+ * coincidir con el `TicketsViewMode` del renderer PlacePos.
+ */
+export const TICKETS_LIST_MODES = [
+  'mixed',
+  'orders_first',
+  'orders_only',
+  'sales_only',
+  'credit_only',
+] as const;
+
+export type TicketsListMode = (typeof TICKETS_LIST_MODES)[number];
 
 /**
  * Query de `GET /sales`. Espejo PlacePos: por defecto retorna feed
@@ -24,6 +40,15 @@ export class ListSalesQueryDto {
   @IsOptional()
   @IsEnum(TicketType, { message: 'ticket_type inválido' })
   ticket_type?: TicketType;
+
+  @ApiPropertyOptional({
+    enum: TICKETS_LIST_MODES,
+    description:
+      'Modo de organización del feed: mixed (default), orders_first, orders_only, sales_only, credit_only.',
+  })
+  @IsOptional()
+  @IsIn(TICKETS_LIST_MODES, { message: 'mode inválido' })
+  mode?: TicketsListMode;
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()
