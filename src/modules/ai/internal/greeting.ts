@@ -31,12 +31,21 @@ const TOPIC_BY_TOOL: Partial<Record<AiToolName, string>> = {
   get_low_stock: 'inventario',
   get_debtors: 'cartera',
   search_customers: 'clientes',
+  search_suppliers: 'proveedores',
   get_expenses_summary: 'gastos',
   get_treasury_accounts: 'caja',
 };
 
 /** Orden fijo: así el saludo suena igual de ordenado siempre. */
-const TOPIC_ORDER = ['ventas', 'caja', 'inventario', 'cartera', 'clientes', 'gastos'];
+const TOPIC_ORDER = [
+  'ventas',
+  'caja',
+  'inventario',
+  'cartera',
+  'clientes',
+  'proveedores',
+  'gastos',
+];
 
 export const describeTopics = (toolNames: readonly string[]): string[] => {
   const topics = new Set<string>();
@@ -108,7 +117,10 @@ export const buildGreetingPrompt = ({ businessName, topics }: GreetingContext): 
  * La condición innegociable: el saludo TIENE que nombrar al negocio. Si el
  * modelo se lo saltó o se lo inventó, no se muestra.
  */
-export const sanitizeGreeting = (raw: string | null | undefined, businessName: string): string | null => {
+export const sanitizeGreeting = (
+  raw: string | null | undefined,
+  businessName: string,
+): string | null => {
   const flat = (raw ?? '')
     .replace(/[\r\n]+/g, ' ')
     // Markdown que el modelo cuela aunque se le pida texto plano.

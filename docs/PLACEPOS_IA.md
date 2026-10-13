@@ -87,8 +87,22 @@ declaración es para el modelo; el `summary`, para la persona.
 | `get_low_stock` | `canAccessInventory` | SQL sobre `products` |
 | `get_debtors` | `canAccessCreditsReport` | SQL sobre `sale_credits` + `customers` |
 | `search_customers` | `canAccessCustomers` | SQL sobre `customers` |
+| `search_suppliers` | `canAccessSuppliers` | SQL sobre `suppliers` + `purchases` / `purchase_credits` / `purchase_lines` |
 | `get_expenses_summary` | `canAccessExpenses` | SQL sobre `expenses` |
 | `get_treasury_accounts` | `canAccessBanks` | `TreasuryService.accounts` |
+
+`search_suppliers` entrega la información completa de uno o varios proveedores y
+sus compras: datos de contacto y cuentas para consignar, cuánto se le debe hoy
+(`debt` = `accumulated_debt`, la misma deuda que suma el informe de Proveedores),
+el saldo a favor, y el detalle de compras (total comprado/pagado/pendiente, cuáles
+están pagas y cuáles se deben, y qué se compró en cada una). **Incluye proveedores
+archivados**: si uno está archivado, el modelo avisa que ya no está activo y aun
+así entrega la información.
+
+Las búsquedas por texto (`search_customers`, `search_products` y el filtro de
+cliente de `list_sales`) comparan **sin importar mayúsculas ni acentos** vía
+`accentInsensitiveLike` (`internal/tool-sql.ts`), para que "BELTRÁN" encuentre
+"BELTRAN".
 
 Las métricas financieras **no se recalculan aquí**: se reutiliza la maquinaria
 canónica (dashboard/tesorería) para que la IA diga exactamente los mismos

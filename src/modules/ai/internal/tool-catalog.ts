@@ -22,6 +22,7 @@ export const AI_TOOL_NAMES = [
   'get_low_stock',
   'get_debtors',
   'search_customers',
+  'search_suppliers',
   'get_expenses_summary',
   'get_treasury_accounts',
 ] as const;
@@ -54,8 +55,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'get_daily_summary',
     label: 'Resumen del día',
-    summary:
-      'Cómo va el día: recaudo, ventas, ganancia, gastos y saldos de caja.',
+    summary: 'Cómo va el día: recaudo, ventas, ganancia, gastos y saldos de caja.',
     permission: 'canAccessDashboard',
     exposesProfit: true,
     declaration: {
@@ -73,8 +73,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'list_sales',
     label: 'Ventas del día',
-    summary:
-      'Las ventas una por una: ticket, hora, cliente, productos y forma de pago.',
+    summary: 'Las ventas una por una: ticket, hora, cliente, productos y forma de pago.',
     permission: 'canAccessSalesReport',
     exposesProfit: true,
     declaration: {
@@ -102,8 +101,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'get_performance_range',
     label: 'Rendimiento del período',
-    summary:
-      'Tendencia de un rango de fechas: ventas, ganancia, gastos y créditos, día por día.',
+    summary: 'Tendencia de un rango de fechas: ventas, ganancia, gastos y créditos, día por día.',
     permission: 'canAccessDashboard',
     exposesProfit: true,
     declaration: {
@@ -123,8 +121,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'get_top_products',
     label: 'Productos más vendidos',
-    summary:
-      'Los productos que más se venden, con su ganancia y margen.',
+    summary: 'Los productos que más se venden, con su ganancia y margen.',
     permission: 'canAccessDashboard',
     exposesProfit: true,
     declaration: {
@@ -145,8 +142,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'search_products',
     label: 'Búsqueda en inventario',
-    summary:
-      'Cualquier producto del inventario: existencias, costo, precios y empaque.',
+    summary: 'Cualquier producto del inventario: existencias, costo, precios y empaque.',
     permission: 'canAccessInventory',
     exposesProfit: true,
     declaration: {
@@ -172,8 +168,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'get_low_stock',
     label: 'Productos por agotarse',
-    summary:
-      'Lo que está por agotarse, de lo más crítico a lo menos.',
+    summary: 'Lo que está por agotarse, de lo más crítico a lo menos.',
     permission: 'canAccessInventory',
     exposesProfit: true,
     declaration: {
@@ -198,8 +193,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'get_debtors',
     label: 'Cartera de clientes',
-    summary:
-      'La cartera: cuánto te deben y quiénes tienen la deuda más vieja.',
+    summary: 'La cartera: cuánto te deben y quiénes tienen la deuda más vieja.',
     permission: 'canAccessCreditsReport',
     exposesProfit: false,
     declaration: {
@@ -220,8 +214,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'search_customers',
     label: 'Búsqueda de clientes',
-    summary:
-      'Tus clientes: deuda, anticipos, puntos y su última compra.',
+    summary: 'Tus clientes: deuda, anticipos, puntos y su última compra.',
     permission: 'canAccessCustomers',
     exposesProfit: false,
     declaration: {
@@ -245,10 +238,36 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
     },
   },
   {
+    name: 'search_suppliers',
+    label: 'Proveedores y compras',
+    summary:
+      'Tus proveedores: datos, cuánto les debes y el detalle de tus compras (pagadas y pendientes).',
+    permission: 'canAccessSuppliers',
+    exposesProfit: false,
+    declaration: {
+      name: 'search_suppliers',
+      description:
+        'Información completa de uno o varios proveedores y sus compras. Devuelve datos del proveedor (razón social, contacto/broker, teléfono, dirección, documento, correo y cuentas para consignarle), cuánto le debe el negocio HOY ("debt"), el saldo a favor, y el detalle de las compras: total comprado, total pagado, total pendiente, cuáles compras están pagas y cuáles aún se deben, y QUÉ se compró en cada una. Úsala para "¿cuánto le debo a X?", "¿qué le he comprado a Y?", "¿qué compras tengo pendientes de pagar con Z?" o cualquier dato de un proveedor. Si se omite "query" lista los proveedores ordenados por mayor deuda. INCLUYE proveedores archivados: si "isArchived" es true, avisa que el proveedor ya no está activo y aun así entrega la información.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description:
+              'Opcional: nombre, documento, teléfono o correo del proveedor (coincidencia parcial, sin importar tildes). Si se omite, lista los proveedores con mayor deuda.',
+          },
+          limit: {
+            type: 'integer',
+            description: 'Máximo de proveedores a devolver (1-10). Por defecto 5.',
+          },
+        },
+      },
+    },
+  },
+  {
     name: 'get_expenses_summary',
     label: 'Gastos del período',
-    summary:
-      'Los gastos de un período: total, fijos vs. variables y por categoría.',
+    summary: 'Los gastos de un período: total, fijos vs. variables y por categoría.',
     permission: 'canAccessExpenses',
     exposesProfit: false,
     declaration: {
@@ -268,8 +287,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
   {
     name: 'get_treasury_accounts',
     label: 'Saldos de tesorería',
-    summary:
-      'El saldo de cada caja, banco y billetera, con el total del negocio.',
+    summary: 'El saldo de cada caja, banco y billetera, con el total del negocio.',
     permission: 'canAccessBanks',
     exposesProfit: false,
     declaration: {

@@ -10,9 +10,12 @@ import { TreasuryService } from '@/modules/treasury/treasury.service';
 
 import { readDate, readDateRange, readInt, readNumber, readString } from '../internal/tool-args';
 import {
+  accentInsensitiveLike,
   buildCustomerDebtSubquery,
   buildDebtorTotalsSql,
+  buildSearchSuppliersSql,
   buildTopDebtorsSql,
+  SUPPLIER_RECENT_PURCHASES,
 } from '../internal/tool-sql';
 import {
   findTool,
@@ -35,6 +38,13 @@ export interface AiToolExecution {
 
 const num = (value: unknown): number => preciseNumber(value ?? 0, 2);
 const qty = (value: unknown): number => preciseNumber(value ?? 0, 4);
+
+/** Estado del crédito de compra (`purchase_credits.status`) en español. */
+const PURCHASE_PAYMENT_LABEL: Record<string, string> = {
+  PAID: 'Pagada',
+  PARTIALLY_PAID: 'Abonada',
+  PENDING: 'Pendiente',
+};
 
 /**
  * Ejecuta las herramientas de PlacePOS IA contra la base de datos del tenant.
@@ -140,6 +150,8 @@ export class RunAiToolAction {
         return this.debtors(companyId, args);
       case 'search_customers':
         return this.searchCustomers(companyId, args);
+      case 'search_suppliers':
+        return this.searchSuppliers(companyId, args);
       case 'get_expenses_summary':
         return this.expensesSummary(companyId, args);
       case 'get_treasury_accounts':
@@ -218,7 +230,10 @@ export class RunAiToolAction {
     }
     if (customer) {
       params.push(`%${customer.toLowerCase()}%`);
-      filters.push(`LOWER(COALESCE(c.name, si.customer_name, '')) LIKE $${params.length}`);
+      // Sin tildes: "qué le vendí a Beltrán" encuentra "BELTRAN".
+      filters.push(
+        accentInsensitiveLike("COALESCE(c.name, si.customer_name, '')", `$${params.length}`),
+      );
     }
     params.push(limit);
     const limitIdx = `$${params.length}`;
@@ -426,9 +441,9 @@ export class RunAiToolAction {
       WHERE ${access.sql}
         AND p.is_archived = false
         AND (
-          LOWER(p.name) LIKE ${searchIdx}
-          OR LOWER(COALESCE(p.sku_code, '')) LIKE ${searchIdx}
-          OR LOWER(COALESCE(p.bar_code, '')) LIKE ${searchIdx}
+          ${accentInsensitiveLike('p.name', searchIdx)}
+          OR ${accentInsensitiveLike("COALESCE(p.sku_code, '')", searchIdx)}
+          OR ${accentInsensitiveLike("COALESCE(p.bar_code, '')", searchIdx)}
         )
       ORDER BY p.name ASC
       LIMIT ${limitIdx}
@@ -594,10 +609,10 @@ export class RunAiToolAction {
       WHERE c.company_id = $1
         AND c.is_archived = false
         AND (
-          LOWER(c.name) LIKE $2
-          OR LOWER(COALESCE(c.doc_number, '')) LIKE $2
-          OR LOWER(COALESCE(c.phone, '')) LIKE $2
-          OR LOWER(COALESCE(c.email, '')) LIKE $2
+          ${accentInsensitiveLike('c.name', '$2')}
+          OR ${accentInsensitiveLike("COALESCE(c.doc_number, '')", '$2')}
+          OR ${accentInsensitiveLike("COALESCE(c.phone, '')", '$2')}
+          OR ${accentInsensitiveLike("COALESCE(c.email, '')", '$2')}
         )
       ORDER BY c.name ASC
       LIMIT $3
@@ -618,6 +633,132 @@ export class RunAiToolAction {
         salesCount: Number(row.sales_count),
         lastPurchase: row.last_sale ? row.last_sale.toISOString().slice(0, 10) : null,
       })),
+    };
+  }
+
+  /**
+   * Proveedores + sus compras, con el desglose de lo pagado y lo pendiente.
+   *
+   * Incluye proveedores ARCHIVADOS (no filtra `is_archived`): si el usuario
+   * pregunta por uno archivado, el asistente debe avisar que ya no está activo y
+   * aun así entregar la información. El flag `isArchived` y la `note` se lo
+   * recuerdan al modelo.
+   *
+   * "debt" (= `accumulated_debt`) es la deuda canónica, la misma que suma el
+   * informe de Proveedores; el desglose por compra sale de `purchase_credits`.
+   */
+  private async searchSuppliers(
+    companyId: number,
+    args: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const query = readString(args, 'query');
+    const limit = readInt(args, 'limit', 5, 1, 10);
+    // NULL = listar sin filtrar (los de mayor deuda primero).
+    const pattern = query ? `%${query.toLowerCase()}%` : null;
+
+    const rows = await this.dataSource.query<
+      Array<{
+        legal_name: string;
+        broker: string | null;
+        phone: string | null;
+        address: string | null;
+        doc_number: string | null;
+        email: string | null;
+        is_archived: boolean;
+        accumulated_debt: string;
+        credit_balance: string;
+        payment_accounts: Array<{
+          entity_name: string;
+          account_type: string;
+          account_number: string;
+          document_type: string;
+          document_number: string;
+          agreement_number: string | null;
+        }> | null;
+        purchases_count: string;
+        total_purchased: string;
+        total_paid: string;
+        total_pending: string;
+        pending_count: string;
+        paid_count: string;
+        received_count: string;
+        purchases: Array<{
+          number: string;
+          invoice_number: string | null;
+          invoice_date: string | null;
+          created_at: string;
+          received: boolean;
+          total: string;
+          paid: string;
+          balance: string;
+          payment_status: string;
+          items: Array<{ name: string; quantity: string; total: string }> | null;
+        }> | null;
+      }>
+    >(buildSearchSuppliersSql(), [String(companyId), pattern, limit]);
+
+    const dateOnly = (value: string | null): string | null => (value ? value.slice(0, 10) : null);
+
+    const suppliers = rows.map((row) => ({
+      name: row.legal_name,
+      broker: row.broker,
+      phone: row.phone,
+      address: row.address,
+      document: row.doc_number,
+      email: row.email,
+      isArchived: row.is_archived,
+      debt: num(row.accumulated_debt),
+      creditBalance: num(row.credit_balance),
+      paymentAccounts: (row.payment_accounts ?? []).map((account) => ({
+        entity: account.entity_name,
+        accountType: account.account_type,
+        accountNumber: account.account_number,
+        document: `${account.document_type} ${account.document_number}`.trim(),
+        agreementNumber: account.agreement_number,
+      })),
+      purchasesSummary: {
+        count: Number(row.purchases_count ?? 0),
+        totalPurchased: num(row.total_purchased),
+        totalPaid: num(row.total_paid),
+        totalPending: num(row.total_pending),
+        pendingCount: Number(row.pending_count ?? 0),
+        paidCount: Number(row.paid_count ?? 0),
+        receivedCount: Number(row.received_count ?? 0),
+      },
+      recentPurchases: (row.purchases ?? []).map((purchase) => ({
+        number: purchase.number,
+        invoiceNumber: purchase.invoice_number,
+        date: dateOnly(purchase.created_at),
+        invoiceDate: dateOnly(purchase.invoice_date),
+        received: purchase.received,
+        total: num(purchase.total),
+        paid: num(purchase.paid),
+        balance: num(purchase.balance),
+        status: PURCHASE_PAYMENT_LABEL[purchase.payment_status] ?? 'Pendiente',
+        isPaid: num(purchase.balance) <= 0,
+        items: (purchase.items ?? []).map((item) => ({
+          product: item.name,
+          quantity: qty(item.quantity),
+          total: num(item.total),
+        })),
+      })),
+    }));
+
+    const anyArchived = suppliers.some((supplier) => supplier.isArchived);
+
+    return {
+      query: query ?? null,
+      count: suppliers.length,
+      suppliers,
+      note: [
+        '"debt" es lo que el negocio le debe HOY al proveedor (cuadra con el informe de Proveedores); "creditBalance" es saldo a favor del negocio.',
+        `"purchasesSummary" cuenta TODAS las compras del proveedor; "recentPurchases" son solo las últimas ${SUPPLIER_RECENT_PURCHASES}. En cada compra: "balance" > 0 significa que aún se le debe, "status" Pagada/Abonada/Pendiente, e "items" es lo que se compró.`,
+        anyArchived
+          ? 'IMPORTANTE: algún proveedor tiene "isArchived" en true, es decir está ARCHIVADO (ya no activo). Avísaselo al usuario con claridad y, aun así, entrégale la información que pidió.'
+          : null,
+      ]
+        .filter((line): line is string => line !== null)
+        .join(' '),
     };
   }
 
