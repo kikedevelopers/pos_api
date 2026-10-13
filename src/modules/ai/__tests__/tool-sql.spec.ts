@@ -1,6 +1,8 @@
 import {
+  accentInsensitiveLike,
   buildCustomerDebtSubquery,
   buildDebtorTotalsSql,
+  buildSearchSuppliersSql,
   buildTopDebtorsSql,
 } from '../internal/tool-sql';
 
@@ -88,5 +90,58 @@ describe('buildCustomerDebtSubquery', () => {
 
   it('devuelve 0 y no NULL cuando el cliente no debe nada', () => {
     expect(flat(buildCustomerDebtSubquery('$1'))).toContain('COALESCE(SUM(sc.balance), 0)');
+  });
+});
+
+describe('accentInsensitiveLike', () => {
+  it('normaliza ambos lados: la tilde deja de importar', () => {
+    const sql = flat(accentInsensitiveLike('c.name', '$2'));
+
+    // Columna y parámetro pasan por lower + btrim + translate de acentos.
+    expect(sql).toContain(
+      "translate(lower(btrim(c.name)), 'áàäâãéèëêíìïîóòöôõúùüû', 'aaaaaeeeeiiiiooooouuuu')",
+    );
+    expect(sql).toContain(
+      "LIKE translate(lower(btrim($2)), 'áàäâãéèëêíìïîóòöôõúùüû', 'aaaaaeeeeiiiiooooouuuu')",
+    );
+  });
+
+  it('ya no se compara con un LOWER() pelado, que dejaba la tilde fuera', () => {
+    const sql = flat(accentInsensitiveLike('c.name', '$2'));
+    // El bug: "LOWER(c.name) LIKE $2" no encontraba BELTRAN al buscar BELTRÁN.
+    expect(sql).not.toContain('LOWER(c.name) LIKE $2');
+  });
+});
+
+describe('buildSearchSuppliersSql', () => {
+  const sql = flat(buildSearchSuppliersSql());
+
+  it('filtra por company en proveedor, compras, créditos y líneas', () => {
+    expect(sql).toContain('s.company_id = $1');
+    expect(sql).toContain('p.company_id = s.company_id');
+    expect(sql).toContain('pc.company_id = p.company_id');
+    expect(sql).toContain('l.company_id = p.company_id');
+  });
+
+  it('solo cuenta compras vivas (no anuladas)', () => {
+    expect(sql).toContain('p.is_deleted = false');
+  });
+
+  it('NO filtra archivados: un proveedor archivado también se consulta', () => {
+    expect(sql).not.toContain('s.is_archived = false');
+    // Pero los devuelve ordenados después de los activos.
+    expect(sql).toContain('ORDER BY s.is_archived ASC');
+  });
+
+  it('busca por nombre/documento sin importar la tilde', () => {
+    expect(sql).toContain('translate(lower(btrim(s.legal_name))');
+    expect(sql).toContain('$2::text IS NULL');
+  });
+
+  it('trae el detalle de lo comprado y el desglose por crédito', () => {
+    expect(sql).toContain('purchase_lines');
+    expect(sql).toContain('pc.balance');
+    expect(sql).toContain('pc.paid_amount');
+    expect(sql).toContain('LIMIT $3');
   });
 });
