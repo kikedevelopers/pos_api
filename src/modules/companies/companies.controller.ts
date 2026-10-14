@@ -7,23 +7,36 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  Patch,
+  Post,
   Put,
+  Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
+import { resolveMaxCoverImageSizeBytes } from '@/config/product-images.config';
 
+import type { SlugAvailability } from './actions/check-catalog-slug.action';
 import { CompaniesService } from './companies.service';
 import { CompanyResponseDto, toCompanyResponseDto } from './dto/company-response.dto';
+import { UpdateCatalogSettingsDto } from './dto/update-catalog-settings.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 
 /**
@@ -52,6 +65,9 @@ import { UpdateCompanyDto } from './dto/update-company.dto';
 @ApiBearerAuth('bearer')
 @Controller('companies')
 export class CompaniesController {
+  /** Techo multer de la portada: el tope real + holgura. */
+  private static readonly MULTER_COVER_CEILING_BYTES = resolveMaxCoverImageSizeBytes() + 1024;
+
   constructor(private readonly companiesService: CompaniesService) {}
 
   @Get()
@@ -64,7 +80,8 @@ export class CompaniesController {
   })
   async getCurrent(@CurrentCompany() companyId: number): Promise<CompanyResponseDto> {
     const company = await this.companiesService.getCurrent(companyId);
-    return toCompanyResponseDto(company);
+    const coverUrl = await this.companiesService.resolveCatalogCoverUrl(company);
+    return toCompanyResponseDto(company, coverUrl);
   }
 
   @Put(':companyId')
@@ -97,5 +114,107 @@ export class CompaniesController {
 
     const company = await this.companiesService.update(tenantCompanyId, dto);
     return toCompanyResponseDto(company);
+  }
+
+  /**
+   * Comprueba si un slug de catálogo está disponible (para validar en vivo
+   * mientras el dueño escribe en Configuraciones → Catálogo). Devuelve el slug
+   * ya NORMALIZADO, si cumple el formato y si está libre.
+   */
+  @Get('catalog/slug-available')
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({ summary: 'Disponibilidad de un slug de catálogo' })
+  @ApiQuery({ name: 'slug', type: 'string', required: true })
+  async checkCatalogSlug(
+    @Query('slug') slug: string,
+    @CurrentCompany() companyId: number,
+  ): Promise<SlugAvailability> {
+    return this.companiesService.checkCatalogSlug(companyId, slug ?? '');
+  }
+
+  /**
+   * Configura el catálogo público del negocio: define/normaliza el slug y
+   * habilita o deshabilita la publicación. Mismo gate que Mi Negocio
+   * (`canAccessSettings`).
+   */
+  @Patch('catalog')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({ summary: 'Configurar el catálogo público del negocio' })
+  @ApiBody({ type: UpdateCatalogSettingsDto })
+  @ApiResponse({ status: HttpStatus.OK, type: CompanyResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Slug inválido o falta slug' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Slug ya en uso' })
+  async updateCatalog(
+    @Body() dto: UpdateCatalogSettingsDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<CompanyResponseDto> {
+    const company = await this.companiesService.updateCatalogSettings(companyId, dto);
+    const coverUrl = await this.companiesService.resolveCatalogCoverUrl(company);
+    return toCompanyResponseDto(company, coverUrl);
+  }
+
+  /**
+   * `POST /companies/catalog/cover` — Sube o reemplaza la imagen de PORTADA
+   * (hero) del catálogo público. Multipart con el campo `image` (JPG/PNG/WebP,
+   * validado por los bytes reales). La portada anterior se borra del bucket.
+   */
+  @Post('catalog/cover')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: CompaniesController.MULTER_COVER_CEILING_BYTES, files: 1 },
+    }),
+  )
+  @ApiOperation({ summary: 'Subir o reemplazar la portada del catálogo' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { image: { type: 'string', format: 'binary' } },
+      required: ['image'],
+    },
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: CompanyResponseDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Archivo ausente o formato inválido' })
+  @ApiResponse({ status: HttpStatus.PAYLOAD_TOO_LARGE, description: 'La imagen supera el límite' })
+  @ApiResponse({
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    description: 'Almacenamiento de imágenes no configurado',
+  })
+  async uploadCatalogCover(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentCompany() companyId: number,
+    @CurrentUser() currentUser: AuthUser,
+  ): Promise<CompanyResponseDto> {
+    const { company, cover_image_url } = await this.companiesService.uploadCatalogCover({
+      companyId,
+      file,
+      actor: {
+        id: currentUser.user_id,
+        fullName: `${currentUser.name} ${currentUser.lastname}`.trim(),
+      },
+    });
+    return toCompanyResponseDto(company, cover_image_url);
+  }
+
+  /**
+   * `POST /companies/catalog/cover/remove` — Quita la portada del catálogo (la
+   * borra del bucket). Idempotente. Es POST y no DELETE por convención del API.
+   */
+  @Post('catalog/cover/remove')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({ summary: 'Quitar la portada del catálogo' })
+  @ApiResponse({ status: HttpStatus.OK, type: CompanyResponseDto })
+  async removeCatalogCover(@CurrentCompany() companyId: number): Promise<CompanyResponseDto> {
+    const company = await this.companiesService.removeCatalogCover(companyId);
+    const coverUrl = await this.companiesService.resolveCatalogCoverUrl(company);
+    return toCompanyResponseDto(company, coverUrl);
   }
 }

@@ -268,6 +268,22 @@ export class Product {
   @Column({ type: 'boolean', default: true })
   show_in_pos!: boolean;
 
+  /**
+   * Catálogo público: si el producto (o presentación) aparece en la página
+   * `/catalog/<slug>`. `true` por defecto (todos visibles, incluidos combos).
+   * Independiente de `show_in_pos` (visibilidad en el POS del negocio).
+   */
+  @Column({ type: 'boolean', default: true })
+  catalog_visible!: boolean;
+
+  /**
+   * Catálogo público: el negocio marcó el producto como fuera de stock. Sigue
+   * apareciendo, pero se muestra atenuado y como "No disponible". `false` por
+   * defecto (disponible).
+   */
+  @Column({ type: 'boolean', default: false })
+  catalog_out_of_stock!: boolean;
+
   @Column({ type: 'boolean', default: false })
   is_archived!: boolean;
 

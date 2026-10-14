@@ -39,6 +39,24 @@ export class CompanyResponseDto {
   @ApiProperty({ example: 30 })
   break_even_period_days!: number;
 
+  @ApiPropertyOptional({ example: 'esenciaygrano', nullable: true })
+  catalog_slug!: string | null;
+
+  @ApiProperty({ example: false })
+  catalog_enabled!: boolean;
+
+  @ApiProperty({ example: false })
+  catalog_group_by_category!: boolean;
+
+  @ApiPropertyOptional({
+    example: '/product-images/serve?o=...',
+    nullable: true,
+    description:
+      'URL (RELATIVA al API) de la imagen de portada del catálogo, o null si no hay. ' +
+      'El front le antepone la base del API.',
+  })
+  catalog_cover_image_url!: string | null;
+
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   created_at!: string;
 
@@ -46,7 +64,10 @@ export class CompanyResponseDto {
   updated_at!: string;
 }
 
-export function toCompanyResponseDto(company: Company): CompanyResponseDto {
+export function toCompanyResponseDto(
+  company: Company,
+  catalogCoverImageUrl: string | null = null,
+): CompanyResponseDto {
   return {
     id: Number(company.id),
     name: company.name,
@@ -56,6 +77,10 @@ export function toCompanyResponseDto(company: Company): CompanyResponseDto {
     phone_number: company.phone_number,
     break_even_amount: Number(company.break_even_amount),
     break_even_period_days: company.break_even_period_days,
+    catalog_slug: company.catalog_slug ?? null,
+    catalog_enabled: company.catalog_enabled ?? false,
+    catalog_group_by_category: company.catalog_group_by_category ?? false,
+    catalog_cover_image_url: catalogCoverImageUrl,
     created_at: company.created_at.toISOString(),
     updated_at: company.updated_at.toISOString(),
   };

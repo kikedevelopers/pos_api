@@ -51,6 +51,11 @@ export class ProductImageStorageService {
     return this.config.maxSizeBytes;
   }
 
+  /** Tope de peso de la portada del catálogo (mayor que el de producto). */
+  get coverMaxSizeBytes(): number {
+    return this.config.coverMaxSizeBytes;
+  }
+
   get signedUrlTtlSeconds(): number {
     return this.config.signedUrlTtlSeconds;
   }

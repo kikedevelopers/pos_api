@@ -15,6 +15,10 @@ import {
   UploadProductImageAction,
   type UploadedProductImage,
 } from './actions/upload-product-image.action';
+import {
+  UploadStandaloneImageAction,
+  type UploadedStandaloneImage,
+} from './actions/upload-standalone-image.action';
 import { isObjectOwnedByCompany } from './internal/image-object-name';
 import type { UploadedImageFile } from './internal/image-file';
 import { ALLOWED_IMAGE_TYPES, RECOMMENDED_IMAGE_SIZE_PX } from './internal/image-file';
@@ -42,6 +46,7 @@ export class ProductImagesService {
     private readonly storage: ProductImageStorageService,
     private readonly cache: ProductImageUrlCache,
     private readonly uploadAction: UploadProductImageAction,
+    private readonly uploadStandaloneAction: UploadStandaloneImageAction,
     private readonly removeAction: RemoveProductImageAction,
     private readonly resolveUrlsAction: ResolveProductImageUrlsAction,
     private readonly copyAction: CopyProductImageAction,
@@ -50,6 +55,11 @@ export class ProductImagesService {
 
   get isConfigured(): boolean {
     return this.storage.isConfigured;
+  }
+
+  /** Tope de peso de la portada del catálogo, en bytes. */
+  get coverImageMaxBytes(): number {
+    return this.storage.coverMaxSizeBytes;
   }
 
   /** Límites reales del servidor. El front los muestra y valida con ellos. */
@@ -78,6 +88,38 @@ export class ProductImagesService {
     actor: { id: number; fullName: string };
   }): Promise<{ product_id: number; removed: boolean }> {
     return this.removeAction.execute(params);
+  }
+
+  /**
+   * Sube una imagen suelta (no atada a un producto), p. ej. la portada del
+   * catálogo. Devuelve la ruta a persistir y su URL-proxy firmada. La fila
+   * dueña la guarda quien llama.
+   */
+  uploadStandalone(params: {
+    companyId: number;
+    file: UploadedImageFile | undefined;
+    keyHint: string;
+    previousObject?: string | null;
+    maxSizeBytes?: number;
+    actor: { id: number; fullName: string };
+  }): Promise<UploadedStandaloneImage> {
+    return this.uploadStandaloneAction.execute(params);
+  }
+
+  /**
+   * URL-proxy firmada (relativa) de UNA imagen de la company, o `null` si no
+   * hay ruta o no está configurado el almacenamiento. Azúcar sobre `resolveUrls`
+   * para los casos de una sola imagen (portada del catálogo).
+   */
+  async resolveOne(
+    objectName: string | null | undefined,
+    companyId: number,
+  ): Promise<string | null> {
+    if (!objectName) {
+      return null;
+    }
+    const map = await this.resolveUrls([objectName], companyId);
+    return map.get(objectName) ?? null;
   }
 
   resolveUrls(

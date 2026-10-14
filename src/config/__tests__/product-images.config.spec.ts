@@ -1,4 +1,5 @@
 import productImagesConfig, {
+  resolveMaxCoverImageSizeBytes,
   resolveMaxImageSizeBytes,
   type ProductImagesConfig,
 } from '../product-images.config';
@@ -16,6 +17,7 @@ import productImagesConfig, {
 
 const TOUCHED = [
   'PRODUCT_IMAGE_MAX_MB',
+  'CATALOG_COVER_MAX_MB',
   'GCS_INVENTORY_BUCKET',
   'GCS_BACKUP_BUCKET',
   'GCS_INVENTORY_PREFIX',
@@ -71,6 +73,23 @@ describe('resolveMaxImageSizeBytes', () => {
     expect(resolveMaxImageSizeBytes()).toBe(2 * 1024 * 1024);
     process.env.PRODUCT_IMAGE_MAX_MB = '-3';
     expect(resolveMaxImageSizeBytes()).toBe(2 * 1024 * 1024);
+  });
+
+  it('la portada tiene su propio tope, mayor y configurable', () => {
+    delete process.env.CATALOG_COVER_MAX_MB;
+    expect(resolveMaxCoverImageSizeBytes()).toBe(6 * 1024 * 1024);
+    expect(resolveMaxCoverImageSizeBytes()).toBeGreaterThan(resolveMaxImageSizeBytes());
+
+    process.env.CATALOG_COVER_MAX_MB = '10';
+    expect(resolveMaxCoverImageSizeBytes()).toBe(10 * 1024 * 1024);
+
+    process.env.CATALOG_COVER_MAX_MB = 'muchos';
+    expect(resolveMaxCoverImageSizeBytes()).toBe(6 * 1024 * 1024);
+  });
+
+  it('la config expone coverMaxSizeBytes', () => {
+    delete process.env.CATALOG_COVER_MAX_MB;
+    expect(buildConfig().coverMaxSizeBytes).toBe(6 * 1024 * 1024);
   });
 
   it('el techo de multer del controller se queda pegado al límite de negocio', async () => {

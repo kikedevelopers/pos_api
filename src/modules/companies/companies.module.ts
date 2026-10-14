@@ -1,8 +1,14 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { ProductImagesModule } from '@/modules/product-images/product-images.module';
+
+import { CheckCatalogSlugAction } from './actions/check-catalog-slug.action';
 import { GetCurrentCompanyAction } from './actions/get-current-company.action';
 import { ListAllCompaniesAction } from './actions/list-all-companies.action';
+import { RemoveCatalogCoverAction } from './actions/remove-catalog-cover.action';
+import { UpdateCatalogSettingsAction } from './actions/update-catalog-settings.action';
+import { UploadCatalogCoverAction } from './actions/upload-catalog-cover.action';
 import { UpdateCompanyAction } from './actions/update-company.action';
 import { AdminCompaniesController } from './admin-companies.controller';
 import { CompaniesController } from './companies.controller';
@@ -22,13 +28,17 @@ import { Company } from './entities/company.entity';
  * repo de `Company` durante `POST /auth/register`.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Company, CompanyMember])],
+  imports: [TypeOrmModule.forFeature([Company, CompanyMember]), ProductImagesModule],
   controllers: [CompaniesController, AdminCompaniesController],
   providers: [
     CompaniesService,
     GetCurrentCompanyAction,
     UpdateCompanyAction,
     ListAllCompaniesAction,
+    UpdateCatalogSettingsAction,
+    CheckCatalogSlugAction,
+    UploadCatalogCoverAction,
+    RemoveCatalogCoverAction,
   ],
   // `UpdateCompanyAction` se exporta para que `SuperadminModule` reutilice la
   // edición de la company (paridad con `PUT /companies/:id`) sin duplicar la

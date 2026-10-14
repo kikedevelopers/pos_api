@@ -196,6 +196,34 @@ describe('CreateProductAction', () => {
     expect(createdInput?.show_in_pos).toBe(true);
   });
 
+  it('por default catalog_visible = true y catalog_out_of_stock = false', async () => {
+    await action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 1, {
+      id: 1,
+      fullName: 'Owner',
+    });
+
+    expect(createdInput?.catalog_visible).toBe(true);
+    expect(createdInput?.catalog_out_of_stock).toBe(false);
+  });
+
+  it('respeta catalog_visible = false y catalog_out_of_stock = true del DTO', async () => {
+    await action.execute(
+      {
+        name: 'X',
+        cost: 1,
+        stock: 0,
+        prices: [{ sale_price: 2 }],
+        catalog_visible: false,
+        catalog_out_of_stock: true,
+      },
+      1,
+      { id: 1, fullName: 'Owner' },
+    );
+
+    expect(createdInput?.catalog_visible).toBe(false);
+    expect(createdInput?.catalog_out_of_stock).toBe(true);
+  });
+
   it('default product_type = SIMPLE si no viene en el DTO', async () => {
     await action.execute({ name: 'X', cost: 1, stock: 0, prices: [{ sale_price: 2 }] }, 1, {
       id: 1,

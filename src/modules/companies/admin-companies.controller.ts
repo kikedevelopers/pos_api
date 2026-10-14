@@ -47,7 +47,7 @@ export class AdminCompaniesController {
   async list(@Query() query: ListCompaniesQueryDto): Promise<AdminListCompaniesResponseDto> {
     const result = await this.companiesService.listAll(query);
     return {
-      companies: result.companies.map(toCompanyResponseDto),
+      companies: result.companies.map((company) => toCompanyResponseDto(company)),
       total: result.total,
       limit: result.limit,
       offset: result.offset,

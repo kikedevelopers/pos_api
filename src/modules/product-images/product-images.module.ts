@@ -8,6 +8,7 @@ import { PurgeExpiredProductImagesAction } from './actions/purge-expired-product
 import { RemoveProductImageAction } from './actions/remove-product-image.action';
 import { ResolveProductImageUrlsAction } from './actions/resolve-product-image-urls.action';
 import { UploadProductImageAction } from './actions/upload-product-image.action';
+import { UploadStandaloneImageAction } from './actions/upload-standalone-image.action';
 import { ImageProxySigner } from './image-proxy-signer.service';
 import { ProductImageStorageService } from './product-image-storage.service';
 import { ProductImageUrlCache } from './product-image-url.cache';
@@ -37,6 +38,7 @@ import { ProductImagesService } from './product-images.service';
     ProductImagesService,
     ProductImagesScheduler,
     UploadProductImageAction,
+    UploadStandaloneImageAction,
     RemoveProductImageAction,
     ResolveProductImageUrlsAction,
     CopyProductImageAction,

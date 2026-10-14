@@ -81,6 +81,8 @@ export class FindAllProductsAction {
         p.is_purchasable  AS is_purchasable,
         p.image           AS image,
         p.show_in_pos     AS show_in_pos,
+        p.catalog_visible AS catalog_visible,
+        p.catalog_out_of_stock AS catalog_out_of_stock,
         p.is_archived     AS is_archived,
         p.created_by      AS created_by,
         p.updated_by      AS updated_by,
@@ -164,6 +166,8 @@ interface RawProductRow {
   is_purchasable: boolean;
   image: string | null;
   show_in_pos: boolean;
+  catalog_visible: boolean;
+  catalog_out_of_stock: boolean;
   is_archived: boolean;
   created_by: string | null;
   updated_by: string | null;
@@ -231,6 +235,8 @@ function mapRawToProduct(r: RawProductRow, activeCompanyId: number): Product {
     is_purchasable: r.is_purchasable,
     image: r.image,
     show_in_pos: r.show_in_pos,
+    catalog_visible: r.catalog_visible,
+    catalog_out_of_stock: r.catalog_out_of_stock,
     is_archived: r.is_archived,
     created_by: r.created_by,
     updated_by: r.updated_by,
