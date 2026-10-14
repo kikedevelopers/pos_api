@@ -247,6 +247,12 @@ export class UpdateProductAction {
       if (dto.show_in_pos !== undefined) {
         patch.show_in_pos = dto.show_in_pos;
       }
+      if (dto.catalog_visible !== undefined) {
+        patch.catalog_visible = dto.catalog_visible;
+      }
+      if (dto.catalog_out_of_stock !== undefined) {
+        patch.catalog_out_of_stock = dto.catalog_out_of_stock;
+      }
       if (isCombo) {
         patch.is_purchasable = false;
       } else if (dto.is_purchasable !== undefined) {

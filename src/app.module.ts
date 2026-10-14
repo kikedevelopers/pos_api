@@ -34,6 +34,7 @@ import { CarrierPaymentsModule } from './modules/carrier-payments/carrier-paymen
 import { CarriersModule } from './modules/carriers/carriers.module';
 import { CashRegisterModule } from './modules/cash-register/cash-register.module';
 import { CashSourcesModule } from './modules/cash-sources/cash-sources.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
@@ -192,6 +193,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // porque importa `WalletsModule` para el seed de la wallet "Efectivo"
     // dentro del registro.
     CompaniesModule,
+    CatalogModule,
     UsersModule,
     EmployeesModule,
     // FASE 2 — Roles y permisos (CRUD /roles + resolución de permisos

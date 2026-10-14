@@ -37,6 +37,8 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
     is_purchasable: false,
     image: null,
     show_in_pos: true,
+    catalog_visible: true,
+    catalog_out_of_stock: false,
     is_archived: false,
     created_by: 'Kike',
     updated_by: null,
@@ -100,6 +102,8 @@ describe('FindAllProductsAction (SQL crudo)', () => {
       // Vínculo de imagen presentación→base: false salvo presentaciones vinculadas.
       use_parent_image: false,
       show_in_pos: true,
+      catalog_visible: true,
+      catalog_out_of_stock: false,
       is_purchasable: false,
       is_archived: false,
       archived: false,

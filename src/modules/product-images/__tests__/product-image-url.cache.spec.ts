@@ -13,6 +13,7 @@ const CONFIG: ProductImagesConfig = {
   bucket: 'placepos-bucket-1',
   prefix: 'inventory_items',
   maxSizeBytes: 2 * 1024 * 1024,
+  coverMaxSizeBytes: 6 * 1024 * 1024,
   signedUrlTtlSeconds: 86400,
   cacheTtlSeconds: 21600,
   retentionDaysAfterArchive: 7,

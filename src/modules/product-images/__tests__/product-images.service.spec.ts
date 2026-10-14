@@ -8,6 +8,7 @@ import { PurgeExpiredProductImagesAction } from '../actions/purge-expired-produc
 import { RemoveProductImageAction } from '../actions/remove-product-image.action';
 import { ResolveProductImageUrlsAction } from '../actions/resolve-product-image-urls.action';
 import { UploadProductImageAction } from '../actions/upload-product-image.action';
+import { UploadStandaloneImageAction } from '../actions/upload-standalone-image.action';
 import { ProductImageStorageService } from '../product-image-storage.service';
 import { ProductImageUrlCache } from '../product-image-url.cache';
 import { ProductImagesService } from '../product-images.service';
@@ -55,6 +56,7 @@ async function buildHarness(options: { maxSizeBytes?: number; isConfigured?: boo
         },
       },
       { provide: UploadProductImageAction, useValue: { execute: jest.fn() } },
+      { provide: UploadStandaloneImageAction, useValue: { execute: jest.fn() } },
       { provide: RemoveProductImageAction, useValue: { execute: jest.fn() } },
       { provide: ResolveProductImageUrlsAction, useValue: { execute: jest.fn() } },
       { provide: CopyProductImageAction, useValue: { execute: jest.fn(), executeMany: jest.fn() } },

@@ -76,6 +76,7 @@ describe('Imágenes de items (e2e, pos_db) — archivado y purga', () => {
       null as never,
       null as never,
       null as never,
+      null as never,
     );
     return { action: new BulkArchiveProductsAction(ds as DataSource, images), images };
   }

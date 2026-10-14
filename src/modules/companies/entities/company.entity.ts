@@ -124,6 +124,44 @@ export class Company {
   ai_enabled!: boolean;
 
   /**
+   * Slug público del catálogo web: el "nombre de usuario" que viaja en la URL
+   * `/catalog/<slug>` de la landing (p. ej. `esenciaygrano`). UNA palabra en
+   * minúsculas `[a-z0-9]` (sin espacios, acentos ni símbolos), UNIQUE GLOBAL
+   * (índice parcial, mismo precedente que `employees.username`). `null` = el
+   * negocio aún no definió su catálogo. Lo normaliza/valida el service antes de
+   * escribir; el CHECK en DB es el cinturón de seguridad.
+   */
+  @Column({ type: 'text', nullable: true })
+  catalog_slug!: string | null;
+
+  /**
+   * Gate del catálogo público. `false` por defecto: la ruta `/catalog/<slug>`
+   * responde 404 aunque el slug exista. El negocio decide cuándo publicar desde
+   * Configuraciones → Catálogo. Acceso por NEGOCIO (su tenant).
+   */
+  @Column({ type: 'boolean', default: false })
+  catalog_enabled!: boolean;
+
+  /**
+   * Catálogo público: cómo se presentan los productos. `true` agrupa por
+   * categoría (encabezados + sidebar de navegación en la landing); `false`
+   * (default) los muestra en una sola cuadrícula plana. Es solo presentación:
+   * no cambia qué productos se exponen. Lo configura el dueño desde
+   * Configuraciones → Catálogo.
+   */
+  @Column({ type: 'boolean', default: false })
+  catalog_group_by_category!: boolean;
+
+  /**
+   * Ruta en GCS de la imagen de portada (hero) del catálogo público
+   * (`inventory_items/<company_id>/catalog-cover-...`, misma carpeta que el
+   * inventario para reutilizar el proxy firmado). `null` = sin portada → la
+   * landing muestra el hero por defecto. La URL pública se firma en lectura.
+   */
+  @Column({ type: 'text', nullable: true })
+  catalog_cover_image!: string | null;
+
+  /**
    * Modo del POS del negocio: `retail` (el POS de siempre, default) o
    * `restaurant` (POS dedicado a restaurantes y bares, con mesas/salones). Lo
    * cambia el panel superadmin y viaja en el perfil; el cliente Electron lo usa

@@ -161,6 +161,24 @@ export class CreateProductDto {
   show_in_pos?: boolean;
 
   @ApiPropertyOptional({
+    example: true,
+    default: true,
+    description: 'Catálogo público: si el producto/presentación aparece en el catálogo web.',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'catalog_visible debe ser booleano' })
+  catalog_visible?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    default: false,
+    description: 'Catálogo público: marca el producto como fuera de stock (visible pero no disponible).',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'catalog_out_of_stock debe ser booleano' })
+  catalog_out_of_stock?: boolean;
+
+  @ApiPropertyOptional({
     example: false,
     default: false,
     description: 'Marca productos comprables desde el módulo de compras.',

@@ -130,6 +130,10 @@ export class CreateProductAction {
         // Si nace vinculada, jamás sube imagen propia: se resuelve desde el padre.
         use_parent_image: isChild ? dto.use_parent_image === true : false,
         show_in_pos: dto.show_in_pos !== false,
+        // Catálogo público: visible por defecto (incluidos combos), fuera de
+        // stock apagado por defecto. Aplica igual a presentaciones.
+        catalog_visible: dto.catalog_visible !== false,
+        catalog_out_of_stock: dto.catalog_out_of_stock === true,
         is_purchasable: isCombo ? false : dto.is_purchasable === true,
         is_archived: false,
         // PlacePos genera `hash` localmente. pos_api lo persiste passthrough.

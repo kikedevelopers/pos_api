@@ -165,6 +165,12 @@ export class ProductResponseDto {
   @ApiProperty({ example: true })
   show_in_pos!: boolean;
 
+  @ApiProperty({ example: true })
+  catalog_visible!: boolean;
+
+  @ApiProperty({ example: false })
+  catalog_out_of_stock!: boolean;
+
   @ApiProperty({ example: false })
   is_purchasable!: boolean;
 
@@ -288,6 +294,8 @@ export function toProductResponseDto(
     image_url: null,
     use_parent_image: p.use_parent_image === true,
     show_in_pos: p.show_in_pos,
+    catalog_visible: p.catalog_visible ?? true,
+    catalog_out_of_stock: p.catalog_out_of_stock ?? false,
     is_purchasable: p.is_purchasable,
     is_archived: p.is_archived,
     archived: p.is_archived,

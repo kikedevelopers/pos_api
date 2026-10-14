@@ -20,6 +20,11 @@ export interface ProductImagesConfig {
   /** Tope de peso del archivo. Se valida en el front Y aquí. */
   maxSizeBytes: number;
   /**
+   * Tope de peso de la PORTADA del catálogo (hero). Es mayor que el de una foto
+   * de producto: una portada es un banner ancho, no una miniatura cuadrada.
+   */
+  coverMaxSizeBytes: number;
+  /**
    * Vigencia de la URL firmada que se entrega al cliente.
    *
    * DEBE ser mayor que `cacheTtlSeconds`: una URL sale del caché mucho antes de
@@ -47,6 +52,9 @@ export interface ProductImagesConfig {
 /** 2 MB. Suficiente para una foto de 800×800 px bien comprimida. */
 const DEFAULT_MAX_MB = 2;
 
+/** 6 MB. Una portada (banner ancho, p. ej. 1600×600) pesa más que una miniatura. */
+const DEFAULT_COVER_MAX_MB = 6;
+
 /**
  * Tope de peso en bytes, leído del entorno.
  *
@@ -60,6 +68,17 @@ const DEFAULT_MAX_MB = 2;
 export function resolveMaxImageSizeBytes(): number {
   const maxMb = Number(process.env.PRODUCT_IMAGE_MAX_MB ?? DEFAULT_MAX_MB);
   const safeMb = Number.isFinite(maxMb) && maxMb > 0 ? maxMb : DEFAULT_MAX_MB;
+  return Math.round(safeMb * 1024 * 1024);
+}
+
+/**
+ * Tope de peso de la portada del catálogo. Mismo motivo que el de producto para
+ * ser una función (lo necesita el `FileInterceptor` del controller en tiempo de
+ * definición de la clase).
+ */
+export function resolveMaxCoverImageSizeBytes(): number {
+  const maxMb = Number(process.env.CATALOG_COVER_MAX_MB ?? DEFAULT_COVER_MAX_MB);
+  const safeMb = Number.isFinite(maxMb) && maxMb > 0 ? maxMb : DEFAULT_COVER_MAX_MB;
   return Math.round(safeMb * 1024 * 1024);
 }
 
@@ -93,6 +112,7 @@ export default registerAs<ProductImagesConfig>('productImages', () => {
     bucket: resolveBucket(),
     prefix: (process.env.GCS_INVENTORY_PREFIX || 'inventory_items').replace(/^\/+|\/+$/g, ''),
     maxSizeBytes: resolveMaxImageSizeBytes(),
+    coverMaxSizeBytes: resolveMaxCoverImageSizeBytes(),
     signedUrlTtlSeconds: positiveIntOr(process.env.PRODUCT_IMAGE_SIGNED_URL_TTL_S, 86400),
     cacheTtlSeconds: positiveIntOr(process.env.PRODUCT_IMAGE_CACHE_TTL_S, 21600),
     retentionDaysAfterArchive: positiveIntOr(process.env.PRODUCT_IMAGE_RETENTION_DAYS, 7),
