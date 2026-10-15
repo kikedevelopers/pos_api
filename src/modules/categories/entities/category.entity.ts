@@ -53,6 +53,13 @@ export class Category {
   @Column({ type: 'boolean', default: false })
   is_archived!: boolean;
 
+  /**
+   * Catálogo público: `false` excluye TODOS los productos de la categoría de
+   * `/catalog/<slug>` (no afecta al POS ni al flag por producto).
+   */
+  @Column({ type: 'boolean', default: true })
+  catalog_visible!: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 

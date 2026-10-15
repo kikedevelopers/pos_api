@@ -16,6 +16,9 @@ export class CategoryResponseDto {
   @ApiProperty({ example: false })
   is_archived!: boolean;
 
+  @ApiProperty({ example: true, description: 'Visible en el catálogo público.' })
+  catalog_visible!: boolean;
+
   @ApiProperty({ example: '2026-05-12T14:30:00.000Z' })
   created_at!: string;
 
@@ -32,6 +35,7 @@ export function toCategoryResponseDto(category: Category): CategoryResponseDto {
     id: Number(category.id),
     name: category.name,
     is_archived: category.is_archived,
+    catalog_visible: category.catalog_visible !== false,
     created_at: category.created_at.toISOString(),
     updated_at: category.updated_at.toISOString(),
   };

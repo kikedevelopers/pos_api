@@ -93,6 +93,8 @@ export class GetPublicCatalogAction {
         AND p.is_archived = false
         AND p.show_in_pos = true
         AND p.catalog_visible = true
+        -- Una categoría oculta excluye a TODOS sus productos; sin categoría = visible.
+        AND (cat.id IS NULL OR cat.catalog_visible = true)
       ORDER BY p.name ASC
       `,
       [companyId],
