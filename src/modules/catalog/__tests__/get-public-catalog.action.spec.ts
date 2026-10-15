@@ -82,6 +82,12 @@ describe('GetPublicCatalogAction', () => {
     expect((querySpy.mock.calls[0][1] as unknown[])[0]).toBe(13);
   });
 
+  it('excluye los productos de categorías ocultas del catálogo (sin categoría = visible)', async () => {
+    await action.execute('esenciaygrano');
+    const sql = String(querySpy.mock.calls[0][0]);
+    expect(sql).toContain('(cat.id IS NULL OR cat.catalog_visible = true)');
+  });
+
   it('NO expone costo, ganancia ni margen en el SQL', async () => {
     await action.execute('esenciaygrano');
     const sql = String(querySpy.mock.calls[0][0]);

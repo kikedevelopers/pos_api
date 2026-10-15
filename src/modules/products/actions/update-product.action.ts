@@ -30,6 +30,7 @@ import {
   findProductInCompany,
 } from '../internal/product-lookups';
 import { loadParentTaxRateId, resolveTaxRatePercent } from '../internal/resolve-tax-rate.helper';
+import { propagateCategoryToChildren } from '../internal/propagate-category.helper';
 import { propagateTaxToChildren } from '../internal/propagate-tax.helper';
 import { syncProductPrices } from '../internal/sync-product-prices';
 import { ProductPrice } from '../entities/product-price.entity';
@@ -355,6 +356,21 @@ export class UpdateProductAction {
             parentId: id,
             taxRateId: finalTaxRateId,
             taxRatePercent,
+          });
+        }
+      }
+
+      // Si cambió la CATEGORÍA de un producto BASE, sus presentaciones la
+      // siguen (están amarradas a la del base). Un combo no tiene hijos.
+      if (finalParentId === null && !isCombo && dto.category_id !== undefined) {
+        const prevCategoryId = existing.category_id === null ? null : Number(existing.category_id);
+        const nextCategoryId = dto.category_id ? Number(dto.category_id) : null;
+        if (prevCategoryId !== nextCategoryId) {
+          await propagateCategoryToChildren({
+            manager,
+            companyId,
+            parentId: id,
+            categoryId: nextCategoryId,
           });
         }
       }

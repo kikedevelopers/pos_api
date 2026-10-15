@@ -19,6 +19,7 @@ import { ProductPrice } from '../entities/product-price.entity';
 import { adjustInventory } from '../internal/adjust-inventory.helper';
 import { assertNotUsedInActiveCombos } from '../internal/combo-components.helper';
 import { toMinimalStock } from '../internal/compute-stock-display';
+import { propagateCategoryToChildren } from '../internal/propagate-category.helper';
 import { translateProductConstraintError } from '../internal/constraint-errors';
 
 import type { ProductCreator } from './create-product.action';
@@ -422,6 +423,20 @@ export class BulkProcessProductsAction {
         ProductPrice,
         resolvedPrices.map((p) => buildPriceInsert(p, companyId, existing.id, actor)),
       );
+    }
+
+    // Si cambió la CATEGORÍA de un producto BASE, sus presentaciones la siguen
+    // (están amarradas a la del base, igual que en el form).
+    if (
+      resolvedParentId === null &&
+      existing.category_id !== resolvedCategoryId
+    ) {
+      await propagateCategoryToChildren({
+        manager,
+        companyId,
+        parentId: Number(existing.id),
+        categoryId: resolvedCategoryId === null ? null : Number(resolvedCategoryId),
+      });
     }
 
     // Si cambió el costo de un producto BASE (parent NULL), propagar a sus

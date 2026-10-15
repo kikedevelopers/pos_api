@@ -13,6 +13,8 @@ import { translateCategoryConstraintError } from '../internal/constraint-errors'
  *   - 404 si está archivada (espejo PlacePos — no se renombra archivada).
  *   - 400 si `name` definido pero blank.
  *   - 409 si colisiona con otra categoría activa de la misma company.
+ *   - `catalog_visible` oculta/muestra la categoría completa en el catálogo
+ *     público (solo presentación: no toca productos ni POS).
  */
 @Injectable()
 export class UpdateCategoryAction {
@@ -33,6 +35,9 @@ export class UpdateCategoryAction {
           throw new BadRequestException('El nombre de la categoría es requerido');
         }
         patch.name = trimmed;
+      }
+      if (dto.catalog_visible !== undefined) {
+        patch.catalog_visible = dto.catalog_visible;
       }
 
       if (Object.keys(patch).length === 0) {

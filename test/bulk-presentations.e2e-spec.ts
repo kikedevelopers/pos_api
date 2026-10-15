@@ -329,4 +329,27 @@ describe('Bulk import base/presentación (e2e, pos_db)', () => {
     const after = await bySku('CONV-1');
     expect(after!.parent_id).toBe(before!.parent_id); // preservado
   });
+  it('re-import cambiando SOLO la categoría del BASE → sus presentaciones la siguen', async () => {
+    if (!ds) {
+      return;
+    }
+    // BASE-LIB y sus 3 presentaciones se crearon en 'Granos' (primer test).
+    await action.execute(
+      [
+        {
+          name: 'Linaza x libra',
+          sku_code: 'BASE-LIB',
+          category: 'Semillas',
+          prices: [{ sale_price: 6000 }],
+        },
+      ],
+      companyId,
+      E2E_ACTOR,
+    );
+    const base = await bySku('BASE-LIB');
+    expect(base!.category_id).not.toBeNull();
+    for (const sku of ['PRE-HALF', 'PRE-KILO', 'PRE-QTR']) {
+      expect((await bySku(sku))!.category_id).toBe(base!.category_id);
+    }
+  });
 });
