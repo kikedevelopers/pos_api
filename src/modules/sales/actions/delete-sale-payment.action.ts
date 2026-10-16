@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
+import { runSerializableWithRetry } from '@/common/utils/serializable-retry';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import { restoreCustomerAdvance } from '@/modules/customers/internal/consume-customer-advance';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
@@ -30,6 +31,7 @@ import {
   loadSaleForSettlement,
   recomputeSaleSettlement,
 } from '../internal/recompute-sale-settlement';
+import { SALE_SERIALIZABLE_RETRY } from '../internal/sale-serializable-retry';
 
 /**
  * Actor que ejecuta el reverso. Se persiste en el pago (voided_by/_id), en el
@@ -103,97 +105,104 @@ export class DeleteSalePaymentAction {
     reason?: string | null,
     clientOperationId?: string | null,
   ): Promise<DeleteSalePaymentResult> {
-    return this.dataSource.transaction<DeleteSalePaymentResult>('SERIALIZABLE', async (manager) => {
-      // 1. Lock del pago.
-      const payment = await manager.findOne(SalePayment, {
-        where: {
-          id: String(paymentId),
-          sale_invoice_id: String(saleId),
-          company_id: String(companyId),
-        },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!payment) {
-        throw new NotFoundException('Pago no encontrado');
-      }
+    // Reintento ante 40001 (ver UpdateSaleAction): se re-ejecuta completa.
+    return runSerializableWithRetry<DeleteSalePaymentResult>(
+      this.dataSource,
+      async (manager) => {
+        // 1. Lock del pago.
+        const payment = await manager.findOne(SalePayment, {
+          where: {
+            id: String(paymentId),
+            sale_invoice_id: String(saleId),
+            company_id: String(companyId),
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!payment) {
+          throw new NotFoundException('Pago no encontrado');
+        }
 
-      // 2. Fast-path idempotente: ya reversado.
-      if (payment.is_voided) {
-        return this.buildReplayResult(manager, payment, companyId);
-      }
+        // 2. Fast-path idempotente: ya reversado.
+        if (payment.is_voided) {
+          return this.buildReplayResult(manager, payment, companyId);
+        }
 
-      // 3. Lock de la venta (SALE no anulada).
-      const sale = await loadSaleForSettlement(manager, saleId, companyId);
+        // 3. Lock de la venta (SALE no anulada).
+        const sale = await loadSaleForSettlement(manager, saleId, companyId);
 
-      // 4. Lock del SaleCredit (si existe).
-      const credit = await manager.findOne(SaleCredit, {
-        where: { sale_invoice_id: sale.id, company_id: String(companyId) },
-        lock: { mode: 'pessimistic_write' },
-      });
+        // 4. Lock del SaleCredit (si existe).
+        const credit = await manager.findOne(SaleCredit, {
+          where: { sale_invoice_id: sale.id, company_id: String(companyId) },
+          lock: { mode: 'pessimistic_write' },
+        });
 
-      // 5. Reverso del neto a la cuenta original.
-      const netBig = toBig(payment.amount).minus(toBig(payment.change_amount ?? 0));
-      if (netBig.lte(0)) {
-        // Pago sin dinero neto (todo fue vuelto). Solo soft-delete + recompute.
-        this.logger.warn({
-          event: 'sale_payment.reverse.zero_net',
+        // 5. Reverso del neto a la cuenta original.
+        const netBig = toBig(payment.amount).minus(toBig(payment.change_amount ?? 0));
+        if (netBig.lte(0)) {
+          // Pago sin dinero neto (todo fue vuelto). Solo soft-delete + recompute.
+          this.logger.warn({
+            event: 'sale_payment.reverse.zero_net',
+            companyId,
+            saleId,
+            paymentId,
+          });
+        }
+
+        const voidUuid = this.deriveVoidUuid(clientOperationId);
+        const reversedAmount = preciseNumber(netBig.lte(0) ? toBig(0) : netBig, 2);
+        const folio = sale.sale_number ?? sale.ticket_number;
+
+        if (netBig.gt(0)) {
+          await this.reverseToOriginalAccount(manager, companyId, actor, payment, netBig, {
+            folio,
+            voidUuid,
+            // El reverso de un ABONO queda marcado igual que el abono que anula.
+            isCreditRelated: credit !== null,
+          });
+        }
+
+        // 6. Soft-delete del pago.
+        await manager.update(
+          SalePayment,
+          { id: payment.id, company_id: String(companyId) },
+          {
+            is_voided: true,
+            voided_at: new Date(),
+            voided_by: actor.fullName,
+            voided_by_id: String(actor.id),
+            void_reason: reason?.trim() || null,
+            void_uuid: voidUuid,
+          },
+        );
+
+        // 7. Recompute settlement.
+        const settlement = await recomputeSaleSettlement(manager, sale, companyId, credit);
+
+        this.logger.log({
+          event: 'sale_payment.reversed',
           companyId,
           saleId,
           paymentId,
+          reversedAmount,
+          accountType: payment.account_type,
+          accountId: Number(payment.account_id),
+          salePaid: settlement.paid,
+          saleBalance: settlement.balance,
+          creditStatus: settlement.status,
+          actorId: actor.id,
         });
-      }
 
-      const voidUuid = this.deriveVoidUuid(clientOperationId);
-      const reversedAmount = preciseNumber(netBig.lte(0) ? toBig(0) : netBig, 2);
-      const folio = sale.sale_number ?? sale.ticket_number;
-
-      if (netBig.gt(0)) {
-        await this.reverseToOriginalAccount(manager, companyId, actor, payment, netBig, {
-          folio,
-          voidUuid,
-        });
-      }
-
-      // 6. Soft-delete del pago.
-      await manager.update(
-        SalePayment,
-        { id: payment.id, company_id: String(companyId) },
-        {
-          is_voided: true,
-          voided_at: new Date(),
-          voided_by: actor.fullName,
-          voided_by_id: String(actor.id),
-          void_reason: reason?.trim() || null,
-          void_uuid: voidUuid,
-        },
-      );
-
-      // 7. Recompute settlement.
-      const settlement = await recomputeSaleSettlement(manager, sale, companyId, credit);
-
-      this.logger.log({
-        event: 'sale_payment.reversed',
-        companyId,
-        saleId,
-        paymentId,
-        reversedAmount,
-        accountType: payment.account_type,
-        accountId: Number(payment.account_id),
-        salePaid: settlement.paid,
-        saleBalance: settlement.balance,
-        creditStatus: settlement.status,
-        actorId: actor.id,
-      });
-
-      return {
-        success: true,
-        message: 'Pago reversado exitosamente',
-        payment_id: Number(payment.id),
-        reversed_amount: reversedAmount,
-        sale_balance: settlement.balance,
-        credit_status: this.toStatusLabel(settlement.status),
-      };
-    });
+        return {
+          success: true,
+          message: 'Pago reversado exitosamente',
+          payment_id: Number(payment.id),
+          reversed_amount: reversedAmount,
+          sale_balance: settlement.balance,
+          credit_status: this.toStatusLabel(settlement.status),
+        };
+      },
+      SALE_SERIALIZABLE_RETRY,
+    );
   }
 
   /**
@@ -213,7 +222,7 @@ export class DeleteSalePaymentAction {
     actor: DeleteSalePaymentActor,
     payment: SalePayment,
     netBig: Big,
-    ctx: { folio: string; voidUuid: string },
+    ctx: { folio: string; voidUuid: string; isCreditRelated: boolean },
   ): Promise<void> {
     // customer_advance: devolvemos el neto al `advance_balance` del cliente. NO
     // mueve caja/banco (el anticipo nunca movió una cuenta de dinero real: el
@@ -250,7 +259,7 @@ export class DeleteSalePaymentAction {
     actor: DeleteSalePaymentActor,
     payment: SalePayment,
     netBig: Big,
-    ctx: { folio: string; voidUuid: string },
+    ctx: { folio: string; voidUuid: string; isCreditRelated: boolean },
   ): Promise<void> {
     const register = await manager.findOne(CashRegister, {
       where: { id: String(payment.account_id), company_id: String(companyId) },
@@ -290,7 +299,7 @@ export class DeleteSalePaymentAction {
       invoice_id: payment.sale_invoice_id,
       payment_id: payment.id,
       credit_note_id: null,
-      is_credit_related: false,
+      is_credit_related: ctx.isCreditRelated,
       created_by: actor.fullName,
       created_by_id: String(actor.id),
     });
@@ -311,7 +320,7 @@ export class DeleteSalePaymentAction {
     actor: DeleteSalePaymentActor,
     payment: SalePayment,
     netBig: Big,
-    ctx: { folio: string; voidUuid: string },
+    ctx: { folio: string; voidUuid: string; isCreditRelated: boolean },
   ): Promise<void> {
     const accountId = Number(payment.account_id);
     let balanceBig: Big;

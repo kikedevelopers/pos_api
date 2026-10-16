@@ -33,6 +33,7 @@ import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { AssertCanChargeOrdersAction } from '@/modules/roles/actions/assert-can-charge-orders.action';
+import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
 import { RetailModeGuard } from '@/common/guards/retail-mode.guard';
 import { AssertNotAssignedViewerAction } from './actions/assert-not-assigned-viewer.action';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
@@ -445,7 +446,11 @@ export class SalesController {
     @CurrentCompany() companyId: number,
     @CurrentUser() currentUser: AuthUser,
   ): Promise<AssignOrderActionResult> {
-    const result = await this.salesService.assignOrder(id, companyId, dto.assigned_to_user_id ?? null);
+    const result = await this.salesService.assignOrder(
+      id,
+      companyId,
+      dto.assigned_to_user_id ?? null,
+    );
     // Tiempo real: refresca el feed del nuevo asignado (para que le aparezca),
     // del asignado anterior (para que le desaparezca) y de los admins (:all).
     // emitTicketChanged ya incluye la sala :all; lo llamamos por cada usuario
@@ -530,6 +535,10 @@ export class SalesController {
   @Delete(':saleId/payments/:paymentId')
   @HttpCode(HttpStatus.OK)
   @Roles('owner', 'manager', 'employee')
+  // Reversar un pago/abono saca dinero de una caja o banco: solo NIVEL ADMIN
+  // (owner/superadmin o empleado con el rol Administrador). Un Cajero o un
+  // Vendedor recibe 403 aunque vea el ticket.
+  @UseGuards(AdminLevelGuard)
   @ApiOperation({
     summary:
       'Reversa (soft-delete) un pago individual de una venta y devuelve el dinero a la cuenta ' +
@@ -541,6 +550,10 @@ export class SalesController {
   @ApiParam({ name: 'paymentId', type: 'integer' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Pago reversado.' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Venta o pago no encontrado' })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Solo el administrador (owner o rol Administrador) puede reversar pagos.',
+  })
   @ApiResponse({
     status: HttpStatus.UNPROCESSABLE_ENTITY,
     description: 'Venta anulada, o la cuenta no tiene saldo suficiente para reversar.',

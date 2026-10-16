@@ -10,6 +10,7 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import { runSerializableWithRetry } from '@/common/utils/serializable-retry';
+import { Bank } from '@/modules/banks/entities/bank.entity';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
@@ -36,6 +37,7 @@ import { resolveComboRecipes } from '@/modules/products/internal/resolve-combo-r
 import { resolvePackagingValues } from '@/modules/products/internal/resolve-packaging-value.helper';
 import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/increment-ticket-number.action';
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
+import { Wallet } from '@/modules/wallets/entities/wallet.entity';
 
 import { SaleCorrectionSourceDto, UpdateSaleDto, UpdateSaleLineDto } from '../dto/update-sale.dto';
 import { SaleCredit, SaleCreditStatus } from '../entities/sale-credit.entity';
@@ -1044,6 +1046,18 @@ export class UpdateSaleAction {
         ? MovementConcept.CREDIT_NOTE_REFUND
         : MovementConcept.SALE_PAYMENT;
 
+    // `record()` SOLO inserta el movimiento: el saldo de la cuenta lo mueve el
+    // caller (igual que el abono, el reverso de pago y la anulación). Antes
+    // aquí solo se registraba el movimiento y el saldo del banco/billetera
+    // nunca cambiaba (en producción: 3 negocios con saldo descuadrado).
+    await this.applyAccountBalanceDelta(manager, {
+      companyId: params.companyId,
+      accountType: params.source.type === 'wallet' ? 'wallet' : 'bank',
+      accountId: params.source.id,
+      amount: params.amount,
+      direction: params.direction,
+    });
+
     await this.financialMovementsService.record(manager, {
       companyId: params.companyId,
       amount: params.amount,
@@ -1058,6 +1072,54 @@ export class UpdateSaleAction {
       created_by: params.actor.fullName,
       created_by_id: params.actor.id,
     });
+  }
+
+  /**
+   * Mueve el saldo de un banco/billetera por una corrección: CREDIT (NC) resta
+   * y exige fondos; DEBIT (ND) suma. Lock pesimista; 422 si la cuenta no es
+   * del negocio o no alcanza (todo el edit hace rollback).
+   */
+  private async applyAccountBalanceDelta(
+    manager: EntityManager,
+    params: {
+      companyId: number;
+      accountType: 'bank' | 'wallet';
+      accountId: number;
+      amount: number;
+      direction: 'CREDIT' | 'DEBIT';
+    },
+  ): Promise<void> {
+    const where = { id: String(params.accountId), company_id: String(params.companyId) };
+    const account =
+      params.accountType === 'bank'
+        ? await manager.findOne(Bank, { where, lock: { mode: 'pessimistic_write' } })
+        : await manager.findOne(Wallet, { where, lock: { mode: 'pessimistic_write' } });
+    if (!account) {
+      throw new UnprocessableEntityException({
+        message: 'La cuenta seleccionada no existe en este negocio.',
+        payload: { code: 'ACCOUNT_NOT_FOUND' },
+      });
+    }
+    const current = toBig(account.balance);
+    const next =
+      params.direction === 'CREDIT' ? current.minus(params.amount) : current.plus(params.amount);
+    if (next.lt(0)) {
+      throw new UnprocessableEntityException({
+        message:
+          'El saldo de la cuenta no alcanza para reversar la nota crédito. Selecciona otra cuenta.',
+        payload: {
+          code: 'INSUFFICIENT_BALANCE',
+          required: params.amount,
+          available: preciseNumber(current, 2),
+        },
+      });
+    }
+    const balance = preciseNumber(next, 2);
+    if (params.accountType === 'bank') {
+      await manager.update(Bank, where, { balance });
+    } else {
+      await manager.update(Wallet, where, { balance });
+    }
   }
 
   /**

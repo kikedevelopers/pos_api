@@ -7,6 +7,8 @@ import { SaleCredit, SaleCreditStatus } from '../entities/sale-credit.entity';
 import { SaleInvoice } from '../entities/sale-invoice.entity';
 import { SalePayment } from '../entities/sale-payment.entity';
 
+import { getConsolidatedInvoice } from './consolidate-invoice.helper';
+
 /**
  * Modelo RECOMPUTE del estado de cobro de una venta — espejo placepos de la
  * feature "eliminar/reversar un pago de venta" + "re-cobro de saldo".
@@ -19,7 +21,7 @@ import { SalePayment } from '../entities/sale-payment.entity';
  * de cobro de la venta DESDE CERO sumando los pagos VIVOS (is_voided = false):
  *
  *   paid    = Σ (amount − change_amount)   de pagos vivos de la venta
- *   total   = sale.total
+ *   total   = total CONSOLIDADO (sale.total − Σ NC + Σ ND)
  *   balance = max(0, total − paid)
  *   status  = PENDING        si paid = 0
  *             PARTIALLY_PAID  si 0 < paid < total
@@ -57,7 +59,7 @@ import { SalePayment } from '../entities/sale-payment.entity';
 export interface SaleSettlement {
   /** Σ(amount − change_amount) de pagos vivos. */
   paid: number;
-  /** sale.total. */
+  /** Total consolidado (original ± notas). */
   total: number;
   /** max(0, total − paid). */
   balance: number;
@@ -104,7 +106,11 @@ export async function recomputeSaleSettlement(
     },
   });
 
-  const totalBig = toBig(sale.total);
+  // Total CONSOLIDADO, no `sale.total`: una venta editada (NC/ND) vale otra
+  // cosa que la original. Con `sale.total` reversar o cobrar un abono de un
+  // crédito editado le devolvía al cliente la deuda VIEJA.
+  const consolidated = await getConsolidatedInvoice(manager, companyId, Number(sale.id));
+  const totalBig = toBig(consolidated?.total ?? sale.total);
   const paidBig = livePayments.reduce(
     (acc, p) => acc.plus(toBig(p.amount).minus(toBig(p.change_amount ?? 0))),
     toBig(0),
@@ -130,7 +136,9 @@ export async function recomputeSaleSettlement(
   // 2. Persistir en SaleCredit.
   const creditId: number | null = existingCredit ? Number(existingCredit.id) : null;
 
-  if (existingCredit) {
+  // CHECK `total_amount > 0`: un consolidado en 0 solo ocurre con la venta
+  // anulada (FULL_VOID), que no pasa por aquí; defensivo.
+  if (existingCredit && total > 0) {
     await manager.update(
       SaleCredit,
       { id: existingCredit.id, company_id: String(companyId) },
