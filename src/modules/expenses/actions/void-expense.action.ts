@@ -1,5 +1,5 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
 import { AlertSeverity, AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
@@ -52,96 +52,120 @@ export class VoidExpenseAction {
   ) {}
 
   async execute(id: number, companyId: number, actor: ExpenseActor): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      const expense = await findExpenseInCompany(manager, id, companyId);
-      if (expense.is_archived) {
-        throw new UnprocessableEntityException('El gasto ya fue anulado');
-      }
+    await this.dataSource.transaction((manager) =>
+      this.runInTransaction(manager, id, companyId, actor),
+    );
+    this.notifyVoided(companyId);
+  }
 
-      const amountBig = toBig(expense.amount);
+  /**
+   * Misma anulación que `execute`, dentro de una transacción AJENA (Place, el
+   * asistente IA, la confirma junto con su operación pendiente). NO emite el
+   * aviso en tiempo real: el caller debe llamar `notifyVoided` tras el commit.
+   *
+   * La fila del gasto se lee con `FOR UPDATE`: dos anulaciones simultáneas del
+   * mismo gasto se serializan y la segunda ve `is_archived = true` — sin el
+   * lock, ambas pasaban la validación y el dinero volvía DOS veces a la cuenta.
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    id: number,
+    companyId: number,
+    actor: ExpenseActor,
+  ): Promise<void> {
+    const expense = await findExpenseInCompany(manager, id, companyId, { lock: true });
+    if (expense.is_archived) {
+      throw new UnprocessableEntityException('El gasto ya fue anulado');
+    }
 
-      // 1. Revertir balance de la fuente.
-      await creditExpenseSource(
-        manager,
-        expense.source_type,
-        Number(expense.source_id),
+    const amountBig = toBig(expense.amount);
+
+    // 1. Revertir balance de la fuente.
+    await creditExpenseSource(
+      manager,
+      expense.source_type,
+      Number(expense.source_id),
+      companyId,
+      amountBig,
+      actor,
+    );
+
+    // 2. Marcar archived.
+    await manager.update(
+      Expense,
+      { id: expense.id, company_id: String(companyId) },
+      { is_archived: true },
+    );
+
+    // 3. Financial movement reversal (solo para bank/wallet — cash_register
+    //    ya tiene su CashRegisterLog de VOID_EXPENSE/IN).
+    //
+    //    `concept = REFUND` (paridad PlacePos `expenses.routes.ts`).
+    //    Descripción "Anulación de gasto: ..." replica byte-a-byte el
+    //    texto que graba PlacePos para que cualquier reporte cruzado se
+    //    vea idéntico.
+    if (expense.source_type !== 'cash_register') {
+      await this.financialMovementsService.record(manager, {
         companyId,
-        amountBig,
-        actor,
-      );
-
-      // 2. Marcar archived.
-      await manager.update(
-        Expense,
-        { id: expense.id, company_id: String(companyId) },
-        { is_archived: true },
-      );
-
-      // 3. Financial movement reversal (solo para bank/wallet — cash_register
-      //    ya tiene su CashRegisterLog de VOID_EXPENSE/IN).
-      //
-      //    `concept = REFUND` (paridad PlacePos `expenses.routes.ts`).
-      //    Descripción "Anulación de gasto: ..." replica byte-a-byte el
-      //    texto que graba PlacePos para que cualquier reporte cruzado se
-      //    vea idéntico.
-      if (expense.source_type !== 'cash_register') {
-        await this.financialMovementsService.record(manager, {
-          companyId,
-          amount: Number(expense.amount),
-          movement_type: MovementType.INCOME,
-          concept: MovementConcept.REFUND,
-          description: `Anulación de gasto: ${expense.description}`,
-          // El "ingreso" entra a la misma cuenta de la que salió. PlacePos
-          // pone source=NULL+destination=cuenta. Mismo patrón aquí.
-          destination_type: expense.source_type,
-          destination_id: Number(expense.source_id),
-          reference_code: `EXP-VOID-${String(expense.id)}`,
-          created_by: actor.fullName,
-          created_by_id: actor.id,
-        });
-      }
-
-      // 4. Notificar al admin: queda registrado en el centro de notificaciones
-      //    quién anuló, por qué concepto y por qué monto.
-      const formattedAmount = new Intl.NumberFormat('es-CO', {
-        style: 'currency',
-        currency: 'COP',
-        maximumFractionDigits: 0,
-      }).format(Number(expense.amount));
-
-      await manager.getRepository(AppAlert).save(
-        manager.create(AppAlert, {
-          company_id: String(companyId),
-          type: 'EXPENSE_VOIDED',
-          severity: AlertSeverity.WARNING,
-          title: 'Anulación de gasto',
-          message: `El usuario ${actor.fullName} realizó una anulación de gasto por concepto de "${expense.description}" y monto de ${formattedAmount}.`,
-          is_read: false,
-          metadata: {
-            expense_id: Number(expense.id),
-            description: expense.description,
-            amount: Number(expense.amount),
-            source_type: expense.source_type,
-            source_id: Number(expense.source_id),
-            voided_by: actor.fullName,
-            voided_by_id: actor.id,
-          },
-        }),
-      );
-
-      this.logger.log({
-        event: 'expense.voided',
-        companyId,
-        expenseId: id,
-        sourceType: expense.source_type,
-        sourceId: Number(expense.source_id),
         amount: Number(expense.amount),
-        actorId: actor.id,
+        movement_type: MovementType.INCOME,
+        concept: MovementConcept.REFUND,
+        description: `Anulación de gasto: ${expense.description}`,
+        // El "ingreso" entra a la misma cuenta de la que salió. PlacePos
+        // pone source=NULL+destination=cuenta. Mismo patrón aquí.
+        destination_type: expense.source_type,
+        destination_id: Number(expense.source_id),
+        reference_code: `EXP-VOID-${String(expense.id)}`,
+        created_by: actor.fullName,
+        created_by_id: actor.id,
       });
-    });
+    }
 
-    // Empuja la nueva alerta a la campana del admin en tiempo real (solo tras
-    // commit). Best-effort: un fallo de socket jamás debe romper la anulación.
+    // 4. Notificar al admin: queda registrado en el centro de notificaciones
+    //    quién anuló, por qué concepto y por qué monto.
+    const formattedAmount = new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      maximumFractionDigits: 0,
+    }).format(Number(expense.amount));
+
+    await manager.getRepository(AppAlert).save(
+      manager.create(AppAlert, {
+        company_id: String(companyId),
+        type: 'EXPENSE_VOIDED',
+        severity: AlertSeverity.WARNING,
+        title: 'Anulación de gasto',
+        message: `El usuario ${actor.fullName} realizó una anulación de gasto por concepto de "${expense.description}" y monto de ${formattedAmount}.`,
+        is_read: false,
+        metadata: {
+          expense_id: Number(expense.id),
+          description: expense.description,
+          amount: Number(expense.amount),
+          source_type: expense.source_type,
+          source_id: Number(expense.source_id),
+          voided_by: actor.fullName,
+          voided_by_id: actor.id,
+        },
+      }),
+    );
+
+    this.logger.log({
+      event: 'expense.voided',
+      companyId,
+      expenseId: id,
+      sourceType: expense.source_type,
+      sourceId: Number(expense.source_id),
+      amount: Number(expense.amount),
+      actorId: actor.id,
+    });
+  }
+
+  /**
+   * Empuja la nueva alerta a la campana del admin en tiempo real. Llamar SOLO
+   * tras el commit. Best-effort: un fallo de socket jamás debe romper la
+   * anulación.
+   */
+  notifyVoided(companyId: number): void {
     try {
       this.realtime.emitAlertCreated(companyId, {
         companyId,

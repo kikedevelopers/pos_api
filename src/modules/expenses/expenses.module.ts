@@ -53,6 +53,8 @@ import { ExpensesService } from './expenses.service';
     VoidExpenseAction,
     GetExpensePaymentMethodsAction,
   ],
-  exports: [ExpensesService, TypeOrmModule],
+  // Create/Void se exportan para Place (asistente IA): registra y anula gastos
+  // con la MISMA lógica que la app, dentro de su propia transacción.
+  exports: [ExpensesService, TypeOrmModule, CreateExpenseAction, VoidExpenseAction],
 })
 export class ExpensesModule {}
