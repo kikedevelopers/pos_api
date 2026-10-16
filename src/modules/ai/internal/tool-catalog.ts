@@ -4,8 +4,11 @@ import type { GeminiFunctionDeclaration } from './gemini.types';
 
 /**
  * Catálogo de herramientas que PlacePOS IA puede ejecutar contra la base de
- * datos del negocio. TODAS son de solo lectura y todas se filtran por
- * `company_id` en su implementación (`run-tool.action.ts`).
+ * datos del negocio. Todas se filtran por `company_id` en su implementación
+ * (`run-ai-tool.action.ts`). Son de solo lectura, SALVO las de gastos
+ * (`register_expense`, `void_expense`, `confirm_expense_action`), que exigen
+ * además ser administrador (`requires_administrator`) y nunca escriben sin la
+ * confirmación explícita del usuario en un mensaje posterior.
  *
  * Cada herramienta declara el permiso del catálogo que exige. Si el actor no lo
  * tiene, la herramienta ni siquiera se le ofrece al modelo (no puede llamarla) y
@@ -25,6 +28,9 @@ export const AI_TOOL_NAMES = [
   'search_suppliers',
   'get_expenses_summary',
   'get_treasury_accounts',
+  'register_expense',
+  'void_expense',
+  'confirm_expense_action',
 ] as const;
 
 export type AiToolName = (typeof AI_TOOL_NAMES)[number];
@@ -43,6 +49,13 @@ export interface AiToolDefinition {
   permission: PermissionKey | null;
   /** true si el resultado contiene costos/ganancias/márgenes. */
   exposesProfit: boolean;
+  /**
+   * Herramienta que ESCRIBE: solo el owner/superadmin o un empleado con el rol
+   * de fábrica "Administrador". Se suma al `permission`, no lo reemplaza.
+   */
+  requires_administrator?: boolean;
+  /** false = no se lista en "qué puede hacer Place" (es un paso interno). */
+  is_listed?: boolean;
   declaration: GeminiFunctionDeclaration;
 }
 
@@ -297,6 +310,88 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    name: 'register_expense',
+    label: 'Preparando gasto',
+    summary:
+      'Registra gastos variables (concepto, valor y de dónde sale el dinero), siempre con tu confirmación.',
+    permission: 'canAccessExpenses',
+    exposesProfit: false,
+    requires_administrator: true,
+    declaration: {
+      name: 'register_expense',
+      description:
+        'PREPARA el registro de un GASTO VARIABLE; NO lo registra todavía. Necesita los TRES datos dichos por el usuario: concepto, valor y la cuenta de la que sale el dinero (la caja, un banco o una billetera). NUNCA inventes ni supongas ninguno: si falta alguno, llama igual sin ese dato y la herramienta te dirá qué falta y qué cuentas existen, para que se lo preguntes. Si todo es válido devuelve status "confirmation_required" con el resumen exacto: muéstraselo al usuario y pídele que responda "sí" para registrarlo. No llames confirm_expense_action en esa misma respuesta.',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: {
+            type: 'string',
+            description:
+              'Concepto del gasto, tal cual lo dijo el usuario (ej. "Pago de luz"). Sin inventar ni completar.',
+          },
+          amount: {
+            type: 'number',
+            description:
+              'Valor en pesos como número, sin separadores de miles ni símbolo: "50 mil" → 50000, "$1.200.000" → 1200000. Si la cifra es ambigua, pregúntala.',
+          },
+          source: {
+            type: 'string',
+            description:
+              'De dónde sale el dinero, tal cual lo dijo el usuario: "caja", o el nombre del banco o billetera (ej. "Bancolombia", "Nequi"). Omítelo si el usuario no lo dijo.',
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'void_expense',
+    label: 'Buscando gasto a archivar',
+    summary:
+      'Archiva (anula) un gasto variable y devuelve el dinero a su cuenta, siempre con tu confirmación.',
+    permission: 'canAccessExpenses',
+    exposesProfit: false,
+    requires_administrator: true,
+    declaration: {
+      name: 'void_expense',
+      description:
+        'PREPARA el archivo (anulación) de un GASTO VARIABLE; NO lo archiva todavía. Archivar devuelve el dinero a la cuenta de la que salió. Los gastos no se pueden editar: para corregir uno se archiva y se registra de nuevo. Busca por el concepto ("query") y, para afinar, por valor ("amount") y día ("date"); o recibe directamente "expense_id" si el usuario eligió un gasto de una lista (el número de referencia #). Si hay varios que coinciden devuelve status "multiple_matches": muéstralos SIEMPRE con su referencia "#id", fecha, valor y cuenta, y pregunta cuál. Si hay uno solo devuelve "confirmation_required": muestra el resumen y pide que responda "sí". No llames confirm_expense_action en esa misma respuesta.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Concepto del gasto a archivar, tal cual lo dijo el usuario.',
+          },
+          expense_id: {
+            type: 'integer',
+            description:
+              'Referencia (#) del gasto elegido por el usuario de una lista que ya le mostraste.',
+          },
+          amount: {
+            type: 'number',
+            description: 'Opcional: valor exacto del gasto, como número sin separadores.',
+          },
+          date: dateParam('Opcional: día en que se registró el gasto.'),
+        },
+      },
+    },
+  },
+  {
+    name: 'confirm_expense_action',
+    label: 'Ejecutando operación',
+    summary: 'Ejecuta el registro o archivo de gasto que acabas de confirmar.',
+    permission: 'canAccessExpenses',
+    exposesProfit: false,
+    requires_administrator: true,
+    is_listed: false,
+    declaration: {
+      name: 'confirm_expense_action',
+      description:
+        'EJECUTA el registro o archivo de gasto que preparaste en tu respuesta anterior, SOLO cuando el último mensaje del usuario es un "sí" explícito a ese resumen. Si el usuario cambió algún dato, dijo que no o preguntó algo, NO la llames: vuelve a preparar con los datos correctos. Solo después de que devuelva status "executed" puedes decir que quedó hecho; con cualquier otro status, explícale al usuario lo que dice el campo "message".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
 ] as const;
 
 const TOOLS_BY_NAME = new Map<string, AiToolDefinition>(AI_TOOLS.map((tool) => [tool.name, tool]));
@@ -312,6 +407,13 @@ export interface AiToolActor {
   canViewProfit: boolean;
   /** Id del usuario, para acotar las ventas a las suyas cuando corresponda. */
   userId: number;
+  /**
+   * Owner/superadmin, o empleado con el rol de fábrica "Administrador"
+   * (inmutable). Habilita las herramientas que ESCRIBEN (`requires_administrator`).
+   */
+  is_administrator: boolean;
+  /** Nombre completo: firma de los gastos que registre/archive Place. */
+  full_name?: string;
 }
 
 /**
@@ -323,6 +425,10 @@ export const salesScopeUserId = (actor: AiToolActor): number | null =>
   actor.isAdmin || actor.permissions.has('canViewAllSales') ? null : actor.userId;
 
 export const isToolAllowed = (tool: AiToolDefinition, actor: AiToolActor): boolean => {
+  // Escritura: fail-closed. Ni el permiso del módulo basta sin el rol.
+  if (tool.requires_administrator === true && !actor.isAdmin && actor.is_administrator !== true) {
+    return false;
+  }
   if (tool.permission === null) {
     return true;
   }
@@ -348,11 +454,13 @@ export interface AiToolSummary {
 }
 
 export const toolSummariesFor = (actor: AiToolActor): AiToolSummary[] =>
-  allowedToolsFor(actor).map((tool) => ({
-    name: tool.name,
-    label: tool.label,
-    summary: tool.summary,
-  }));
+  allowedToolsFor(actor)
+    .filter((tool) => tool.is_listed !== false)
+    .map((tool) => ({
+      name: tool.name,
+      label: tool.label,
+      summary: tool.summary,
+    }));
 
 /**
  * Claves de costo/ganancia/margen que se eliminan del resultado cuando el

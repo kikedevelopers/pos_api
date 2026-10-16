@@ -62,6 +62,30 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('NO tiene permiso para ver costos');
   });
 
+  it('sin herramientas de gastos sigue siendo de solo lectura', () => {
+    const prompt = buildSystemPrompt(context());
+    expect(prompt).toContain('solo puedes leer información, nunca modificarla');
+    expect(prompt).not.toContain('GASTOS: REGISTRAR Y ARCHIVAR');
+  });
+
+  it('con herramientas de gastos (administrador) explica el flujo de dos pasos', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'register_expense', description: 'x' },
+          { name: 'void_expense', description: 'x' },
+          { name: 'confirm_expense_action', description: 'x' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('GASTOS: REGISTRAR Y ARCHIVAR');
+    expect(prompt).toContain('NUNCA inventes, supongas ni completes ninguno');
+    expect(prompt).toContain('Nunca prepares y confirmes en la misma respuesta');
+    expect(prompt).toContain('status "executed"');
+    expect(prompt).toContain('Los gastos NO se editan');
+    expect(prompt).not.toContain('solo puedes leer información, nunca modificarla');
+  });
+
   it('recuerda las reglas financieras del negocio', () => {
     const prompt = buildSystemPrompt(context());
     expect(prompt).toContain('Los gastos se restan de la ganancia');

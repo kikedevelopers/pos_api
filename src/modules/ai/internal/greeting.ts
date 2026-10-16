@@ -34,6 +34,8 @@ const TOPIC_BY_TOOL: Partial<Record<AiToolName, string>> = {
   search_suppliers: 'proveedores',
   get_expenses_summary: 'gastos',
   get_treasury_accounts: 'caja',
+  register_expense: 'gastos',
+  void_expense: 'gastos',
 };
 
 /** Orden fijo: así el saludo suena igual de ordenado siempre. */

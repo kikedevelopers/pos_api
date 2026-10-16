@@ -1,6 +1,6 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import Big from 'big.js';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
 import {
@@ -47,6 +47,12 @@ import { debitExpenseSource, type ExpenseActor } from '../internal/debit-expense
  * payload. Las cuentas (bank/wallet/cash_register) se validan dentro del
  * tenant en el helper `debitExpenseSource`.
  */
+function assertPositiveAmount(amountBig: Big): void {
+  if (amountBig.lte(0)) {
+    throw new UnprocessableEntityException('amount debe ser mayor a cero');
+  }
+}
+
 @Injectable()
 export class CreateExpenseAction {
   private readonly logger = new Logger(CreateExpenseAction.name);
@@ -57,84 +63,100 @@ export class CreateExpenseAction {
   ) {}
 
   async execute(dto: CreateExpenseDto, companyId: number, actor: ExpenseActor): Promise<Expense> {
+    // Se valida ANTES de abrir la transacción (no se toma conexión en balde);
+    // `runInTransaction` lo revalida porque también tiene callers propios.
+    assertPositiveAmount(toBig(dto.amount));
+    return this.dataSource.transaction<Expense>((manager) =>
+      this.runInTransaction(manager, dto, companyId, actor),
+    );
+  }
+
+  /**
+   * Mismo registro que `execute`, pero dentro de una transacción AJENA. Lo usa
+   * Place (asistente IA) para que el gasto y la marca "operación confirmada"
+   * hagan commit juntos: o quedan los dos, o ninguno. Es la única vía de
+   * escritura de gastos — no hay una segunda copia de esta lógica.
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    dto: CreateExpenseDto,
+    companyId: number,
+    actor: ExpenseActor,
+  ): Promise<Expense> {
     const amountBig: Big = toBig(dto.amount);
-    if (amountBig.lte(0)) {
-      throw new UnprocessableEntityException('amount debe ser mayor a cero');
-    }
+    assertPositiveAmount(amountBig);
     const amount = preciseNumber(amountBig, 2);
 
-    return this.dataSource.transaction<Expense>(async (manager) => {
-      // 1. Resolver y debitar la fuente con lock + validación de balance.
-      //
-      // DEFENSA CROSS-CASHIER: si `source_type === 'cash_register'`, el
-      // `source_id` del payload se IGNORA dentro de `debitExpenseSource` y
-      // la caja se resuelve server-side (el turno abierto de la company).
-      // Esto evita que un cajero malicioso envíe el id de la caja de otro
-      // tenant/turno; PlacePos hace lo mismo. El helper expone el
-      // `resolvedSourceId` que SÍ se persiste en `Expense.source_id`.
-      const { sourceName, resolvedSourceId } = await debitExpenseSource(
-        manager,
-        dto.source_type,
-        dto.source_id,
-        companyId,
-        amountBig,
-        actor,
-      );
+    // 1. Resolver y debitar la fuente con lock + validación de balance.
+    //
+    // DEFENSA CROSS-CASHIER: si `source_type === 'cash_register'`, el
+    // `source_id` del payload se IGNORA dentro de `debitExpenseSource` y
+    // la caja se resuelve server-side (el turno abierto de la company).
+    // Esto evita que un cajero malicioso envíe el id de la caja de otro
+    // tenant/turno; PlacePos hace lo mismo. El helper expone el
+    // `resolvedSourceId` que SÍ se persiste en `Expense.source_id`.
+    const { sourceName, resolvedSourceId } = await debitExpenseSource(
+      manager,
+      dto.source_type,
+      dto.source_id,
+      companyId,
+      amountBig,
+      actor,
+    );
 
-      // 2. INSERT Expense.
-      const expense = manager.create(Expense, {
-        company_id: String(companyId),
-        description: dto.description.trim(),
-        amount,
-        category: dto.category ?? null,
-        source_type: dto.source_type,
-        source_id: String(resolvedSourceId),
-        source_name: sourceName,
-        expense_date: dto.expense_date ? new Date(dto.expense_date) : new Date(),
-        notes: dto.notes ?? null,
-        is_archived: false,
-        created_by: actor.fullName,
-        created_by_id: String(actor.id),
-      });
-      const saved = await manager.save(Expense, expense);
-
-      // 3. FinancialMovement — solo para bank/wallet (cash_register ya quedó
-      //    registrado en CashRegisterLog dentro del helper).
-      //
-      //    El movimiento solo tiene `source` (la cuenta de la que sale el
-      //    dinero). NO seteamos `destination_*` porque el destino es externo
-      //    al sistema y los CHECKs `chk_financial_movements_*_consistency`
-      //    exigen que (type, id) sean ambos NULL o ambos NOT NULL. El CHECK
-      //    `chk_financial_movements_has_endpoint` se satisface con el source.
-      //
-      //    `concept = EXPENSE_PAYMENT` (paridad PlacePos `expenses.routes.ts`).
-      //    El enum lo añadió la migración 1747010800000.
-      if (dto.source_type !== 'cash_register') {
-        await this.financialMovementsService.record(manager, {
-          companyId,
-          amount,
-          movement_type: MovementType.EXPENSE,
-          concept: MovementConcept.EXPENSE_PAYMENT,
-          description: `Gasto: ${dto.description.trim()}`,
-          source_type: dto.source_type,
-          source_id: resolvedSourceId,
-          reference_code: `EXP-${String(saved.id)}`,
-          created_by: actor.fullName,
-          created_by_id: actor.id,
-        });
-      }
-
-      this.logger.log({
-        event: 'expense.created',
-        companyId,
-        expenseId: Number(saved.id),
-        sourceType: dto.source_type,
-        sourceId: resolvedSourceId,
-        amount,
-        actorId: actor.id,
-      });
-
-      return saved;
+    // 2. INSERT Expense.
+    const expense = manager.create(Expense, {
+      company_id: String(companyId),
+      description: dto.description.trim(),
+      amount,
+      category: dto.category ?? null,
+      source_type: dto.source_type,
+      source_id: String(resolvedSourceId),
+      source_name: sourceName,
+      expense_date: dto.expense_date ? new Date(dto.expense_date) : new Date(),
+      notes: dto.notes ?? null,
+      is_archived: false,
+      created_by: actor.fullName,
+      created_by_id: String(actor.id),
     });
+    const saved = await manager.save(Expense, expense);
+
+    // 3. FinancialMovement — solo para bank/wallet (cash_register ya quedó
+    //    registrado en CashRegisterLog dentro del helper).
+    //
+    //    El movimiento solo tiene `source` (la cuenta de la que sale el
+    //    dinero). NO seteamos `destination_*` porque el destino es externo
+    //    al sistema y los CHECKs `chk_financial_movements_*_consistency`
+    //    exigen que (type, id) sean ambos NULL o ambos NOT NULL. El CHECK
+    //    `chk_financial_movements_has_endpoint` se satisface con el source.
+    //
+    //    `concept = EXPENSE_PAYMENT` (paridad PlacePos `expenses.routes.ts`).
+    //    El enum lo añadió la migración 1747010800000.
+    if (dto.source_type !== 'cash_register') {
+      await this.financialMovementsService.record(manager, {
+        companyId,
+        amount,
+        movement_type: MovementType.EXPENSE,
+        concept: MovementConcept.EXPENSE_PAYMENT,
+        description: `Gasto: ${dto.description.trim()}`,
+        source_type: dto.source_type,
+        source_id: resolvedSourceId,
+        reference_code: `EXP-${String(saved.id)}`,
+        created_by: actor.fullName,
+        created_by_id: actor.id,
+      });
+    }
+
+    this.logger.log({
+      event: 'expense.created',
+      companyId,
+      expenseId: Number(saved.id),
+      sourceType: dto.source_type,
+      sourceId: resolvedSourceId,
+      amount,
+      actorId: actor.id,
+    });
+
+    return saved;
   }
 }

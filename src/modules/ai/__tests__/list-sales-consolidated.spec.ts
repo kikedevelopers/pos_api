@@ -3,6 +3,7 @@ import type { DataSource } from 'typeorm';
 import type { DashboardService } from '@/modules/dashboard/dashboard.service';
 import type { TreasuryService } from '@/modules/treasury/treasury.service';
 
+import type { RunAiExpenseToolAction } from '../actions/run-ai-expense-tool.action';
 import { RunAiToolAction } from '../actions/run-ai-tool.action';
 import type { AiToolActor } from '../internal/tool-catalog';
 
@@ -22,6 +23,7 @@ describe('RunAiToolAction · list_sales consolida como los informes', () => {
     permissions: new Set<string>(),
     canViewProfit: true,
     userId: 7,
+    is_administrator: true,
   };
 
   let action: RunAiToolAction;
@@ -33,6 +35,7 @@ describe('RunAiToolAction · list_sales consolida como los informes', () => {
       { query: querySpy } as unknown as DataSource,
       {} as unknown as DashboardService,
       {} as unknown as TreasuryService,
+      {} as unknown as RunAiExpenseToolAction,
     );
   };
 

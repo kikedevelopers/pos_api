@@ -14,13 +14,14 @@ import { Expense } from '../entities/expense.entity';
  *
  * `includeArchived` controla si gastos anulados se devuelven (default true,
  * porque mutaciones de anulación necesitan leer rows ya archivados para
- * validar idempotencia; el listado público filtra explícitamente).
+ * validar idempotencia; el listado público filtra explícitamente). `lock`
+ * bloquea la fila (`FOR UPDATE`) para mutaciones que dependen de su estado.
  */
 export async function findExpenseInCompany(
   manager: EntityManager,
   id: number,
   companyId: number,
-  options: { includeArchived?: boolean } = {},
+  options: { includeArchived?: boolean; lock?: boolean } = {},
 ): Promise<Expense> {
   const where: { id: string; company_id: string; is_archived?: boolean } = {
     id: String(id),
@@ -30,7 +31,11 @@ export async function findExpenseInCompany(
     where.is_archived = false;
   }
 
-  const expense = await manager.findOne(Expense, { where });
+  // `lock`: FOR UPDATE — exige estar dentro de una transacción.
+  const expense = await manager.findOne(Expense, {
+    where,
+    ...(options.lock ? { lock: { mode: 'pessimistic_write' as const } } : {}),
+  });
   if (!expense) {
     throw new NotFoundException('Gasto no encontrado');
   }
