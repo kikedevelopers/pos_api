@@ -37,7 +37,9 @@ const COMPANY = '__E2E_EDIT_UNPAID_CREDIT__';
 // El id real lo asigna `insertOwnerUser` (FK de cash_registers.user_id).
 const ACTOR: UpdateSaleActor = { id: 0, fullName: 'E2E Owner', type: 'owner' };
 const CASH = { type: 'cash_register' as const, id: 0, name: 'Mi Caja' };
-const BANK = { type: 'bank' as const, id: 77, name: 'BANCOLOMBIA' };
+// El id real lo asigna el seed (la edición mueve el saldo de la cuenta).
+const BANK = { type: 'bank' as const, id: 0, name: 'BANCOLOMBIA' };
+const INITIAL_BANK = 500000;
 const INITIAL_CASH = 100000;
 
 let seq = 0;
@@ -245,6 +247,14 @@ describe('Editar crédito sin abonos — la corrección no mueve dinero (e2e pos
       String(ACTOR.id),
       INITIAL_CASH,
     ]);
+    BANK.id = Number(
+      (
+        await ds.query(
+          `INSERT INTO banks (company_id, name, account_number, balance) VALUES ($1,'BANCOLOMBIA','1',$2) RETURNING id`,
+          [String(cid), INITIAL_BANK],
+        )
+      )[0].id,
+    );
 
     const financialStub = {
       record: (_m: unknown, p: FinancialCall) => {
@@ -284,6 +294,7 @@ describe('Editar crédito sin abonos — la corrección no mueve dinero (e2e pos
       'sale_invoice_lines',
       'sale_invoices',
       'cash_registers',
+      'banks',
       'customers',
       'ticket_settings',
     ]) {
@@ -495,6 +506,13 @@ describe('Editar crédito sin abonos — la corrección no mueve dinero (e2e pos
     expect(financialCalls).toEqual([
       { amount: 1700, movement_type: 'EXPENSE', concept: 'CREDIT_NOTE_REFUND' },
     ]);
+    // El saldo del banco baja de verdad (no solo el movimiento).
+    const bank: Array<{ b: number }> = await ds.query(
+      `SELECT balance::float AS b FROM banks WHERE id = $1`,
+      [BANK.id],
+    );
+    expect(Number(bank[0].b)).toBe(INITIAL_BANK - 1700);
+    await ds.query(`UPDATE banks SET balance = $2 WHERE id = $1`, [BANK.id, INITIAL_BANK]);
   });
 
   it('abono que iguala el nuevo total: no devuelve nada y el crédito queda PAGADO', async () => {
