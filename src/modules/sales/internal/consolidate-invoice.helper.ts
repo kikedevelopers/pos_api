@@ -86,7 +86,7 @@ export function stripConsolidatedInternalFields(invoice: ConsolidatedInvoice): C
 /**
  * Snapshot mínimo de una NC/ND para consolidar líneas.
  */
-interface NoteSnapshot {
+export interface NoteSnapshot {
   id: number;
   note_type: NoteType;
   lines: Array<{
@@ -129,7 +129,7 @@ export interface AdjustmentTotals {
  * ventas con la misma referencia repetida) y las de precio distinto conviven
  * como líneas separadas, que es lo que de verdad pasó en la venta.
  */
-const lineKey = (itemId: number, price: number): string =>
+export const lineKey = (itemId: number, price: number): string =>
   `${itemId}|${preciseNumber(toBig(price), 2)}`;
 
 /**
@@ -230,7 +230,7 @@ function applyDebitAdjustment(
  * Construye las líneas vivas aplicando NC/ND en orden cronológico ASC.
  * Espejo `buildConsolidatedLines` de PlacePos.
  */
-function buildConsolidatedLines(
+export function buildConsolidatedLines(
   originalLines: ConsolidatedLine[],
   notes: NoteSnapshot[],
 ): ConsolidatedLine[] {

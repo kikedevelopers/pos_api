@@ -16,7 +16,7 @@ import type { DataSource, EntityManager } from 'typeorm';
  *   - Hasta `maxRetries` reintentos (default 2). Para un total de 3
  *     ejecuciones máximo.
  *   - Backoff lineal opcional (default 0ms — la mayoría de aplicaciones POS
- *     prefieren reintentar al instante).
+ *     prefieren reintentar al instante), con `jitter` aleatorio opcional.
  *   - Si el último intento falla, se propaga el error tal cual.
  *
  * Uso:
@@ -28,7 +28,7 @@ import type { DataSource, EntityManager } from 'typeorm';
 export async function runSerializableWithRetry<T>(
   dataSource: DataSource,
   callback: (manager: EntityManager) => Promise<T>,
-  options: { maxRetries?: number; backoffMs?: number; logger?: Logger } = {},
+  options: { maxRetries?: number; backoffMs?: number; jitter?: boolean; logger?: Logger } = {},
 ): Promise<T> {
   const maxRetries = options.maxRetries ?? 2;
   const backoffMs = options.backoffMs ?? 0;
@@ -50,7 +50,10 @@ export async function runSerializableWithRetry<T>(
           code,
         });
         if (backoffMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt));
+          // `jitter` desincroniza transacciones que chocaron entre sí: sin él
+          // reintentan al mismo ritmo y vuelven a chocar.
+          const jitterMs = options.jitter ? Math.random() * backoffMs : 0;
+          await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt + jitterMs));
         }
         continue;
       }

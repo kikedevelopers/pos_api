@@ -8,6 +8,7 @@ import Big from 'big.js';
 import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
+import { runSerializableWithRetry } from '@/common/utils/serializable-retry';
 import { Bank } from '@/modules/banks/entities/bank.entity';
 import {
   CashRegisterLog,
@@ -43,6 +44,7 @@ import { freeOrderTable } from '../internal/resolve-order-table.helper';
 import { recomputeSalePoints } from '../internal/customer-points.helper';
 import { recordSaleStatus } from '../internal/record-sale-status.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
+import { SALE_SERIALIZABLE_RETRY } from '../internal/sale-serializable-retry';
 
 /**
  * Resultado del action — shape PlacePos `voidTicket`.
@@ -95,32 +97,38 @@ export class VoidSaleAction {
     reason?: string | null,
     refundSource?: SaleCorrectionSourceDto | null,
   ): Promise<VoidSaleActionResult> {
-    return this.dataSource.transaction<VoidSaleActionResult>('SERIALIZABLE', async (manager) => {
-      const sale = await findSaleInCompany(manager, id, companyId, {
-        requireActive: false,
-        lock: true,
-      });
-
-      if (sale.is_deleted) {
-        throw new UnprocessableEntityException({
-          message:
-            sale.ticket_type === TicketType.ORDER
-              ? 'Este pedido ya fue anulado anteriormente'
-              : 'Esta venta ya fue anulada anteriormente',
-          payload: { code: 'INVALID_TICKET_STATE' },
+    // Reintento ante 40001 (ver UpdateSaleAction): la transacción se re-ejecuta
+    // completa desde cero.
+    return runSerializableWithRetry<VoidSaleActionResult>(
+      this.dataSource,
+      async (manager) => {
+        const sale = await findSaleInCompany(manager, id, companyId, {
+          requireActive: false,
+          lock: true,
         });
-      }
 
-      if (sale.ticket_type === TicketType.ORDER) {
-        return this.voidOrder(manager, sale, companyId, actor);
-      }
+        if (sale.is_deleted) {
+          throw new UnprocessableEntityException({
+            message:
+              sale.ticket_type === TicketType.ORDER
+                ? 'Este pedido ya fue anulado anteriormente'
+                : 'Esta venta ya fue anulada anteriormente',
+            payload: { code: 'INVALID_TICKET_STATE' },
+          });
+        }
 
-      if (sale.ticket_type === TicketType.LOAN) {
-        return this.voidLoan(manager, sale, companyId, actor);
-      }
+        if (sale.ticket_type === TicketType.ORDER) {
+          return this.voidOrder(manager, sale, companyId, actor);
+        }
 
-      return this.voidSale(manager, sale, companyId, actor, reason, refundSource ?? null);
-    });
+        if (sale.ticket_type === TicketType.LOAN) {
+          return this.voidLoan(manager, sale, companyId, actor);
+        }
+
+        return this.voidSale(manager, sale, companyId, actor, reason, refundSource ?? null);
+      },
+      SALE_SERIALIZABLE_RETRY,
+    );
   }
 
   // --------------------------------------------------------------------------

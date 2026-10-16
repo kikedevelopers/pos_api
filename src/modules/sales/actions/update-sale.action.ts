@@ -9,6 +9,7 @@ import Big from 'big.js';
 import { DataSource, type EntityManager } from 'typeorm';
 
 import { preciseNumber, toBig } from '@/common/utils/precision';
+import { runSerializableWithRetry } from '@/common/utils/serializable-retry';
 import { CashRegister } from '@/modules/cash-register/entities/cash-register.entity';
 import {
   CashRegisterLog,
@@ -37,17 +38,20 @@ import { IncrementTicketNumberAction } from '@/modules/ticket-settings/actions/i
 import { TicketSettingType } from '@/modules/ticket-settings/entities/ticket-setting.entity';
 
 import { SaleCorrectionSourceDto, UpdateSaleDto, UpdateSaleLineDto } from '../dto/update-sale.dto';
-import { SaleCredit } from '../entities/sale-credit.entity';
+import { SaleCredit, SaleCreditStatus } from '../entities/sale-credit.entity';
 import { SaleInvoiceLine } from '../entities/sale-invoice-line.entity';
 import { SalePayment, SalePaymentMethod } from '../entities/sale-payment.entity';
 import { SaleInvoice, TicketType } from '../entities/sale-invoice.entity';
 import {
   getConsolidatedInvoice,
+  lineKey,
   type ConsolidatedInvoice,
   type ConsolidatedLine,
 } from '../internal/consolidate-invoice.helper';
 import { translateSaleConstraintError } from '../internal/constraint-errors';
 import { recomputeSalePoints } from '../internal/customer-points.helper';
+import { getSaleCollectionState } from '../internal/sale-collection-state';
+import { SALE_SERIALIZABLE_RETRY } from '../internal/sale-serializable-retry';
 import { assertMarginAboveMinimum } from '../internal/margin-guard.helper';
 import { findSaleInCompany } from '../internal/sale-lookups';
 
@@ -73,7 +77,7 @@ export interface UpdateSaleActor {
   type: string | null;
 }
 
-interface PlacePosLineDifference {
+export interface PlacePosLineDifference {
   type: 'removed' | 'added' | 'reduced' | 'increased';
   item_id: number;
   name: string;
@@ -146,8 +150,13 @@ export class UpdateSaleAction {
     companyId: number,
     actor: UpdateSaleActor,
   ): Promise<UpdateSaleActionResult> {
-    return this.dataSource.transaction<UpdateSaleActionResult>('SERIALIZABLE', async (manager) =>
-      this.run(manager, id, dto, companyId, actor),
+    // SERIALIZABLE puede abortar con 40001 aunque el código sea correcto (otra
+    // transacción concurrente, incluso de otro negocio, comparte predicados):
+    // se reintenta la transacción COMPLETA desde cero (relee el consolidado).
+    return runSerializableWithRetry<UpdateSaleActionResult>(
+      this.dataSource,
+      async (manager) => this.run(manager, id, dto, companyId, actor),
+      SALE_SERIALIZABLE_RETRY,
     );
   }
 
@@ -376,6 +385,35 @@ export class UpdateSaleAction {
       addedOrIncreased.length === 0 &&
       removedOrReduced.every((r) => r.type === 'removed');
 
+    // VENTA A CRÉDITO: la corrección ajusta primero la DEUDA, no la caja.
+    //   - ND: el cliente no paga en el momento; solo sube lo que debe. Nunca
+    //     entra dinero (se ignora `debit_correction_source`).
+    //   - NC: baja lo que debe. Solo se DEVUELVE dinero si lo ya abonado supera
+    //     el nuevo total: `reembolso = max(0, abonado − nuevo total)`. Un crédito
+    //     sin abonos nunca devuelve nada.
+    // Al final el SaleCredit se resincroniza con el consolidado.
+    // Venta de CONTADO: comportamiento de siempre (la NC devuelve su total y la
+    // ND registra el cobro).
+    const saleCredit = await manager.findOne(SaleCredit, {
+      where: { company_id: String(companyId), sale_invoice_id: sale.id },
+      lock: { mode: 'pessimistic_write' },
+    });
+    const collection = await getSaleCollectionState(
+      manager,
+      companyId,
+      Number(sale.id),
+      saleCredit,
+    );
+    const isCreditSale = saleCredit !== null;
+    const creditDiffTotal = sumDiffTotals(removedOrReduced);
+    const debitDiffTotal = sumDiffTotals(addedOrIncreased);
+    const newConsolidatedTotal = toBig(consolidated.total)
+      .minus(creditDiffTotal)
+      .plus(debitDiffTotal);
+    const creditRefund = isCreditSale
+      ? computeCreditSaleRefund(collection.paid_amount, newConsolidatedTotal, creditDiffTotal)
+      : preciseNumber(creditDiffTotal, 2);
+
     let creditNoteId: number | null = null;
     let creditNoteNumber: string | null = null;
     let debitNoteId: number | null = null;
@@ -389,7 +427,8 @@ export class UpdateSaleAction {
         lines: removedOrReduced,
         isFullVoidEdit,
         actor,
-        source: dto.credit_correction_source ?? null,
+        source: creditRefund > 0 ? (dto.credit_correction_source ?? null) : null,
+        refundAmount: creditRefund,
       });
       creditNoteId = credit.id;
       creditNoteNumber = credit.number;
@@ -427,6 +466,7 @@ export class UpdateSaleAction {
         lines: addedOrIncreased,
         actor,
         source: dto.debit_correction_source ?? null,
+        movesMoney: !isCreditSale,
         // override_stock solo lo respeta el ajuste si el actor es owner/superadmin
         // — paridad PlacePos `editSale` (processDebitPart: allowOverride).
         overrideStock:
@@ -438,6 +478,16 @@ export class UpdateSaleAction {
 
     if (customerChanged) {
       await this.applyCustomerChange(manager, sale, dto, companyId);
+    }
+
+    if (saleCredit && !isFullVoidEdit) {
+      await this.syncCreditToConsolidated(
+        manager,
+        saleCredit,
+        companyId,
+        Number(sale.id),
+        collection.paid_amount,
+      );
     }
 
     // PUNTOS: tras emitir NC (PARTIAL_VOID / FULL_VOID) y/o ND (ADDITION) y
@@ -621,6 +671,11 @@ export class UpdateSaleAction {
       isFullVoidEdit: boolean;
       actor: UpdateSaleActor;
       source: SaleCorrectionSourceDto | null;
+      /**
+       * Dinero que SALE por esta NC. Contado = total de la NC; crédito =
+       * solo el excedente abonado sobre el nuevo total (0 si no hay).
+       */
+      refundAmount: number;
     },
   ): Promise<{ id: number; number: string }> {
     const ticket = await this.incrementTicketNumberAction.execute(
@@ -704,11 +759,11 @@ export class UpdateSaleAction {
       );
     }
 
-    const creditTotal = preciseNumber(total, 2);
-    if (creditTotal > 0 && params.source) {
+    const refund = preciseNumber(toBig(params.refundAmount), 2);
+    if (refund > 0 && params.source) {
       await this.applyCorrectionMovement(manager, {
         direction: 'CREDIT',
-        amount: creditTotal,
+        amount: refund,
         companyId: params.companyId,
         invoiceId: Number(params.sale.id),
         creditNoteId: Number(saved.id),
@@ -737,6 +792,11 @@ export class UpdateSaleAction {
       actor: UpdateSaleActor;
       source: SaleCorrectionSourceDto | null;
       overrideStock: boolean;
+      /**
+       * false en una venta A CRÉDITO: la ND solo aumenta la deuda, no entra
+       * dinero (sin movimiento de caja/banco ni SalePayment).
+       */
+      movesMoney: boolean;
     },
   ): Promise<{ id: number; number: string }> {
     const ticket = await this.incrementTicketNumberAction.execute(
@@ -811,7 +871,7 @@ export class UpdateSaleAction {
     );
 
     const debitTotal = preciseNumber(total, 2);
-    if (debitTotal > 0) {
+    if (debitTotal > 0 && params.movesMoney) {
       // El cliente paga la diferencia en el momento, así que el cobro SIEMPRE
       // se registra. Antes esto era `if (... && params.source)`: si el cliente
       // no mandaba cuenta destino, el dinero entraba al cajón y el sistema no
@@ -845,6 +905,49 @@ export class UpdateSaleAction {
     }
 
     return { id: Number(saved.id), number: saved.note_number };
+  }
+
+  /**
+   * Resincroniza el `SaleCredit` con el total consolidado tras la edición. La
+   * diferencia la absorbe la DEUDA:
+   *
+   *   total_amount = consolidado
+   *   paid_amount  = min(abonado, consolidado)   (el excedente se devolvió)
+   *   balance      = total_amount − paid_amount
+   *   status       = PENDING | PARTIALLY_PAID | PAID
+   *
+   * Sin esto el cliente seguiría debiendo el total viejo. La edición que
+   * remueve toda la venta (FULL_VOID) no pasa por aquí: la venta queda anulada
+   * y su crédito sale de la cartera por el JOIN a `sale_invoices.is_deleted`
+   * (además `total_amount > 0` es un CHECK).
+   */
+  private async syncCreditToConsolidated(
+    manager: EntityManager,
+    credit: SaleCredit,
+    companyId: number,
+    saleId: number,
+    paidAmount: number,
+  ): Promise<void> {
+    const consolidated = await getConsolidatedInvoice(manager, companyId, saleId);
+    const totalBig = consolidated ? toBig(consolidated.total) : toBig(0);
+    if (totalBig.lte(0)) {
+      return;
+    }
+    const paidBig = toBig(paidAmount).gt(totalBig) ? totalBig : toBig(paidAmount);
+    const total = preciseNumber(totalBig, 2);
+    const paid = preciseNumber(paidBig, 2);
+    const balance = preciseNumber(totalBig.minus(paidBig), 2);
+    const status =
+      balance <= 0
+        ? SaleCreditStatus.PAID
+        : paid <= 0
+          ? SaleCreditStatus.PENDING
+          : SaleCreditStatus.PARTIALLY_PAID;
+    await manager.update(
+      SaleCredit,
+      { id: credit.id, company_id: String(companyId) },
+      { total_amount: total, paid_amount: paid, balance, status },
+    );
   }
 
   /**
@@ -1015,29 +1118,83 @@ export class UpdateSaleAction {
   }
 }
 
+function sumDiffTotals(lines: PlacePosLineDifference[]): Big {
+  return lines.reduce((acc, l) => acc.plus(toBig(l.total)), toBig(0));
+}
+
 /**
- * Calcula el delta entre las líneas vivas consolidadas (shape PlacePos) y
- * las del payload de edición. Espejo `calculateLineDifferences` de PlacePos.
+ * Reembolso de una NC sobre una venta A CRÉDITO: la NC baja primero la deuda
+ * y solo devuelve lo abonado que exceda el nuevo total, sin pasar del valor de
+ * la propia NC.
  *
- * Comparación por `item_id`. El `total` de cada diferencia se calcula como
- * `price * qty_diff` (sin IVA — paridad PlacePos: las CN/DN de edición no
- * llevan IVA en local).
+ *   reembolso = min(total NC, max(0, abonado − nuevo total))
  */
-function calculatePlacePosLineDifferences(
+export function computeCreditSaleRefund(
+  paidAmount: number,
+  newConsolidatedTotal: Big,
+  creditNoteTotal: Big,
+): number {
+  const newTotal = newConsolidatedTotal.lt(0) ? toBig(0) : newConsolidatedTotal;
+  const excess = toBig(paidAmount).minus(newTotal);
+  if (excess.lte(0)) {
+    return 0;
+  }
+  return preciseNumber(excess.gt(creditNoteTotal) ? creditNoteTotal : excess, 2);
+}
+
+/**
+ * Calcula el delta entre las líneas vivas consolidadas y las del payload de
+ * edición.
+ *
+ * --------------------------------------------------------------------------
+ * Identidad de línea = (producto, precio unitario)
+ * --------------------------------------------------------------------------
+ *
+ * Es la MISMA clave con la que `buildConsolidatedLines` arma el consolidado
+ * (`lineKey`). Antes el delta comparaba solo por `item_id` con un `Map.set`:
+ * cuando un producto tenía DOS líneas vivas a precios distintos (p. ej. 10 a
+ * 15.700 y 10 a 16.600), la segunda pisaba a la primera, el backend "veía"
+ * 10 unidades contra 20 en el carrito y emitía una ND por 10 que YA estaban
+ * facturadas. Cada guardado repetía la duplicación (VTA-1054, PLASTICOS
+ * RICHARD: tres ND fantasma por 2.532.300). Con la clave compartida:
+ *
+ *   - Cada línea viva se compara contra la línea del carrito con su mismo
+ *     producto y precio; nada se pierde ni se cuenta dos veces.
+ *   - Cambiar el PRECIO de una línea = NC por la línea vieja + ND por la
+ *     nueva, que es exactamente lo que el usuario ve en el carrito (antes el
+ *     cambio de precio de las unidades existentes se ignoraba en silencio).
+ *
+ * INVARIANTE: tras aplicar las notas, el consolidado (agrupado por producto y
+ * precio) queda IGUAL al carrito enviado.
+ *
+ * El `total` de una reducción/incremento es `price * qty_diff`; el de una
+ * línea eliminada es el `total` vivo exacto (sin IVA — paridad PlacePos).
+ */
+export function calculatePlacePosLineDifferences(
   consolidated: ConsolidatedLine[],
   payload: UpdateSaleLineDto[],
 ): { removedOrReduced: PlacePosLineDifference[]; addedOrIncreased: PlacePosLineDifference[] } {
-  const currentMap = new Map<number, ConsolidatedLine>();
+  // El consolidado ya llega único por clave; si por algún motivo trajera dos
+  // líneas con la misma clave se ACUMULAN (nunca se pisan).
+  const currentMap = new Map<string, ConsolidatedLine>();
   for (const line of consolidated) {
-    currentMap.set(Number(line.item_id), line);
+    const key = lineKey(Number(line.item_id), Number(line.price));
+    const existing = currentMap.get(key);
+    if (existing) {
+      currentMap.set(key, {
+        ...existing,
+        quantity: preciseNumber(toBig(existing.quantity).plus(toBig(line.quantity)), 4),
+        total: preciseNumber(toBig(existing.total).plus(toBig(line.total)), 2),
+      });
+    } else {
+      currentMap.set(key, line);
+    }
   }
 
-  // Si el cliente envía dos líneas para el MISMO producto, las consolidamos
-  // antes de calcular delta (PlacePos no lo contempla pero el contrato del
-  // DTO no lo impide).
-  const newMap = new Map<number, { line: UpdateSaleLineDto; quantity: Big; total: Big }>();
+  // Dos líneas del carrito con el mismo producto Y precio son la misma línea.
+  const newMap = new Map<string, { line: UpdateSaleLineDto; quantity: Big; total: Big }>();
   for (const line of payload) {
-    const key = Number(line.item_id);
+    const key = lineKey(Number(line.item_id), Number(line.price));
     const existing = newMap.get(key);
     if (existing) {
       existing.quantity = existing.quantity.plus(toBig(line.quantity));
@@ -1054,8 +1211,8 @@ function calculatePlacePosLineDifferences(
   const removedOrReduced: PlacePosLineDifference[] = [];
   const addedOrIncreased: PlacePosLineDifference[] = [];
 
-  for (const [itemId, currentLine] of currentMap) {
-    const newEntry = newMap.get(itemId);
+  for (const [key, currentLine] of currentMap) {
+    const newEntry = newMap.get(key);
     if (!newEntry) {
       removedOrReduced.push({
         type: 'removed',
@@ -1091,8 +1248,9 @@ function calculatePlacePosLineDifferences(
     }
   }
 
-  for (const [itemId, newEntry] of newMap) {
-    const currentLine = currentMap.get(itemId);
+  for (const [key, newEntry] of newMap) {
+    const itemId = Number(newEntry.line.item_id);
+    const currentLine = currentMap.get(key);
     if (!currentLine) {
       addedOrIncreased.push({
         type: 'added',
