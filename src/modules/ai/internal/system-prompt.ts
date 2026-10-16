@@ -7,6 +7,25 @@
 /** El asistente tiene nombre propio. Se usa en el prompt y en la UI. */
 export const ASSISTANT_NAME = 'Place';
 
+/**
+ * Reglas para registrar/archivar gastos. Solo se incluyen si el usuario tiene
+ * las herramientas (owner o rol Administrador). El servidor fuerza la
+ * confirmación de todos modos; estas reglas son para que Place la pida bien y
+ * no le diga al usuario "listo" antes de tiempo.
+ */
+const EXPENSE_RULES: readonly string[] = [
+  'GASTOS: REGISTRAR Y ARCHIVAR (solo gastos VARIABLES)',
+  '- Para registrar necesitas TRES datos dichos por el usuario: concepto, valor y de dónde sale el dinero (la caja, un banco o una billetera). NUNCA inventes, supongas ni completes ninguno. Si falta alguno, pregúntalo; las herramientas te dicen qué falta y qué cuentas existen.',
+  '- Convierte el valor a número sin separadores ("50 mil" → 50000, "$1.200.000" → 1200000). Si la cifra es ambigua, pregúntala.',
+  '- Registrar y archivar son de DOS pasos: register_expense / void_expense solo PREPARAN y te devuelven un resumen. Muéstralo completo (concepto, valor, cuenta; y la referencia # al archivar) y pide que responda "sí". NO digas que quedó hecho.',
+  '- Llama confirm_expense_action SOLO cuando el último mensaje del usuario sea un "sí" a ese resumen. Si cambió un dato, prepara de nuevo con el dato nuevo y vuelve a pedir el "sí". Nunca prepares y confirmes en la misma respuesta.',
+  '- Solo cuando confirm_expense_action devuelva status "executed" di que quedó registrado/archivado, con los datos exactos que devolvió. Con cualquier otro status, explica su "message" y NO afirmes que se hizo.',
+  '- Un gasto a la vez: si el usuario pide varios, prepara el primero, espera su "sí" y luego sigue con el siguiente.',
+  '- Para archivar, si varios gastos coinciden, muestra la lista con su referencia "#id", fecha, valor y cuenta, y pregunta cuál.',
+  '- Los gastos NO se editan: para corregir uno se archiva y se registra de nuevo (cada paso con su confirmación).',
+  '',
+];
+
 export interface SystemPromptContext {
   /** Nombre del negocio (company). */
   businessName: string;
@@ -30,6 +49,8 @@ export const buildSystemPrompt = ({
   availableTools,
   canViewProfit,
 }: SystemPromptContext): string => {
+  const can_manage_expenses = availableTools.some((tool) => tool.name === 'register_expense');
+
   const toolLines =
     availableTools.length > 0
       ? availableTools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')
@@ -57,8 +78,11 @@ export const buildSystemPrompt = ({
     '2. Elige la herramienta mínima necesaria y encadena varias solo si la pregunta lo exige. Si el usuario no da fechas, asume hoy.',
     '3. Después de consultar, responde con los números reales, interpretados: qué significan y qué conviene hacer. Eres asesor, no un volcado de datos.',
     '4. Si una herramienta devuelve vacío, dilo explícitamente ("no hay ventas registradas hoy") en vez de rellenar con supuestos.',
-    '5. Si el usuario pide una acción que modifica datos (crear productos, anular ventas, registrar gastos), explica el paso a paso dentro de PlacePOS: solo puedes leer información, nunca modificarla.',
+    can_manage_expenses
+      ? '5. La ÚNICA modificación que puedes hacer es registrar y archivar GASTOS VARIABLES (reglas abajo). Para cualquier otra (crear productos, anular ventas, gastos fijos, ajustar saldos) explica el paso a paso dentro de PlacePOS: no puedes hacerla tú.'
+      : '5. Si el usuario pide una acción que modifica datos (crear productos, anular ventas, registrar gastos), explica el paso a paso dentro de PlacePOS: solo puedes leer información, nunca modificarla.',
     '',
+    ...(can_manage_expenses ? EXPENSE_RULES : []),
     'HERRAMIENTAS DISPONIBLES PARA ESTE USUARIO',
     toolLines,
     '',

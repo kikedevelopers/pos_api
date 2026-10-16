@@ -11,6 +11,8 @@ export interface AiActorContext extends AiToolActor {
   companyId: number;
   /** Nombre de pila, para saludar y personalizar. */
   userName: string;
+  /** Nombre completo: firma (`created_by`) de los gastos que registre Place. */
+  full_name: string;
   /** Rol legible en español. */
   userRole: string;
   businessName: string;
@@ -40,7 +42,7 @@ export class ResolveAiActorAction {
   async execute(user: AuthUser, companyId: number): Promise<AiActorContext> {
     const isAdmin = user.type === 'owner' || user.type === 'superadmin';
 
-    const [permissions, businessName, canViewProfit] = await Promise.all([
+    const [permissions, businessName, employee_flags] = await Promise.all([
       this.resolvePermissions.execute({
         type: user.type,
         account: user.account,
@@ -48,7 +50,7 @@ export class ResolveAiActorAction {
         company_id: companyId,
       }),
       this.fetchBusinessName(companyId),
-      this.fetchCanViewProfit(user, companyId, isAdmin),
+      this.fetchEmployeeFlags(user, companyId, isAdmin),
     ]);
 
     return {
@@ -56,8 +58,10 @@ export class ResolveAiActorAction {
       userId: user.user_id,
       isAdmin,
       permissions: new Set<string>(permissions),
-      canViewProfit,
+      canViewProfit: employee_flags.can_view_profit,
+      is_administrator: employee_flags.is_administrator,
       userName: user.name?.trim() || 'Usuario',
+      full_name: `${user.name ?? ''} ${user.lastname ?? ''}`.trim() || 'Usuario',
       userRole: ROLE_LABELS[user.type] ?? 'usuario',
       businessName,
     };
@@ -71,26 +75,45 @@ export class ResolveAiActorAction {
     return rows[0]?.name?.trim() || 'Mi Negocio';
   }
 
-  private async fetchCanViewProfit(
+  /**
+   * Flags del empleado en UNA consulta:
+   *   - `can_view_profit`: visibilidad de ganancias.
+   *   - `is_administrator`: tiene el rol de fábrica "Administrador" — el único
+   *     de sistema NO editable (`is_system AND NOT is_editable`), con acceso
+   *     total inamovible. Un rol personalizado con todos los permisos NO
+   *     cuenta: escribir desde Place es del owner o del Administrador.
+   *
+   * Owner/superadmin: ambos true sin tocar la BD.
+   */
+  private async fetchEmployeeFlags(
     user: AuthUser,
     companyId: number,
     isAdmin: boolean,
-  ): Promise<boolean> {
+  ): Promise<{ can_view_profit: boolean; is_administrator: boolean }> {
     if (isAdmin) {
-      return true;
+      return { can_view_profit: true, is_administrator: true };
     }
     if (user.account !== 'employee') {
-      return false;
+      return { can_view_profit: false, is_administrator: false };
     }
 
     // El JWT del empleado lleva su `user_id` (la cuenta de acceso), no el id de
     // la fila `employees` — mismo lookup que `ResolveEffectivePermissionsAction`.
-    const rows = await this.dataSource.query<Array<{ can_view_profit: boolean }>>(
-      `SELECT can_view_profit FROM employees
-       WHERE user_id = $1 AND company_id = $2 AND is_archived = false
-       LIMIT 1`,
+    const rows = await this.dataSource.query<
+      Array<{ can_view_profit: boolean; is_administrator: boolean }>
+    >(
+      `SELECT e.can_view_profit,
+              COALESCE(r.is_system AND NOT r.is_editable
+                       AND lower(btrim(r.name)) = 'administrador', false) AS is_administrator
+         FROM employees e
+         LEFT JOIN roles r ON r.id = e.role_id AND r.company_id = e.company_id
+        WHERE e.user_id = $1 AND e.company_id = $2 AND e.is_archived = false
+        LIMIT 1`,
       [String(user.user_id), String(companyId)],
     );
-    return rows[0]?.can_view_profit === true;
+    return {
+      can_view_profit: rows[0]?.can_view_profit === true,
+      is_administrator: rows[0]?.is_administrator === true,
+    };
   }
 }

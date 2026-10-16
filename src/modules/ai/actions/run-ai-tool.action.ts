@@ -8,6 +8,7 @@ import { accessibleProductsPredicate } from '@/modules/products/internal/accessi
 import { parseUtcRange, todayUtcDate } from '@/modules/reports/internal/range';
 import { TreasuryService } from '@/modules/treasury/treasury.service';
 
+import type { AiToolRequestContext } from '../internal/expense-tool-helpers';
 import { readDate, readDateRange, readInt, readNumber, readString } from '../internal/tool-args';
 import {
   accentInsensitiveLike,
@@ -24,6 +25,8 @@ import {
   stripProfitFields,
   type AiToolActor,
 } from '../internal/tool-catalog';
+
+import { RunAiExpenseToolAction } from './run-ai-expense-tool.action';
 
 /** Resultado de ejecutar una herramienta pedida por el modelo. */
 export interface AiToolExecution {
@@ -50,7 +53,10 @@ const PURCHASE_PAYMENT_LABEL: Record<string, string> = {
  * Ejecuta las herramientas de PlacePOS IA contra la base de datos del tenant.
  *
  * Invariantes:
- *   - SOLO lectura. Ninguna herramienta muta datos.
+ *   - SOLO lectura, salvo las herramientas de gastos (`register_expense`,
+ *     `void_expense`, `confirm_expense_action`), que delegan en
+ *     `RunAiExpenseToolAction`: exigen rol administrador y nunca escriben sin
+ *     la confirmación explícita del usuario en un mensaje posterior.
  *   - TODA query filtra por `company_id` (multi-tenant estricto).
  *   - Se revalida el permiso antes de ejecutar: que el modelo "invente" una
  *     llamada a una herramienta que no le declaramos no basta para ejecutarla.
@@ -65,13 +71,19 @@ export class RunAiToolAction {
     private readonly dataSource: DataSource,
     private readonly dashboardService: DashboardService,
     private readonly treasuryService: TreasuryService,
+    private readonly expenseTools: RunAiExpenseToolAction,
   ) {}
 
+  /**
+   * @param context Datos de la petición de chat (id y mensajes del usuario). Sin
+   *                él, las herramientas de escritura se niegan (fail-closed).
+   */
   async execute(
     companyId: number,
     actor: AiToolActor,
     name: string,
     args: Record<string, unknown>,
+    context?: AiToolRequestContext,
   ): Promise<AiToolExecution> {
     const startedAt = Date.now();
     const tool = findTool(name);
@@ -100,7 +112,7 @@ export class RunAiToolAction {
     }
 
     try {
-      const raw = await this.dispatch(companyId, actor, tool.name, args ?? {});
+      const raw = await this.dispatch(companyId, actor, tool.name, args ?? {}, context);
       const response = stripProfitFields(raw, actor.canViewProfit);
       return {
         name: tool.name,
@@ -132,6 +144,7 @@ export class RunAiToolAction {
     actor: AiToolActor,
     name: string,
     args: Record<string, unknown>,
+    context: AiToolRequestContext | undefined,
   ): Promise<Record<string, unknown>> {
     switch (name) {
       case 'get_daily_summary':
@@ -156,6 +169,12 @@ export class RunAiToolAction {
         return this.expensesSummary(companyId, args);
       case 'get_treasury_accounts':
         return this.treasuryAccounts(companyId);
+      case 'register_expense':
+        return this.expenseTools.prepareRegistration(companyId, actor, args, context);
+      case 'void_expense':
+        return this.expenseTools.prepareVoid(companyId, actor, args, context);
+      case 'confirm_expense_action':
+        return this.expenseTools.confirm(companyId, actor, context);
       default:
         return Promise.resolve({ error: `La herramienta "${name}" no está implementada.` });
     }

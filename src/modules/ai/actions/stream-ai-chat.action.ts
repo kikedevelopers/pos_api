@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -5,6 +7,7 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import type { AiConfig } from '@/config/ai.config';
 import { todayUtcDate } from '@/modules/reports/internal/range';
 
+import { extractRequestContext } from '../internal/expense-tool-helpers';
 import { GeminiClient } from '../internal/gemini-client';
 import { buildGeminiRequest, hasSendableContent } from '../internal/gemini-request';
 import { describeBlockReason, describeFinishReason } from '../internal/gemini-sse';
@@ -37,7 +40,8 @@ export interface StreamAiChatParams {
  * Orquesta una respuesta completa de PlacePOS IA.
  *
  * Ciclo: el modelo genera texto y/o pide herramientas; si pidió herramientas se
- * ejecutan (solo lectura, filtradas por permisos y por company), se le devuelven
+ * ejecutan (filtradas por permisos y por company; solo lectura salvo las de
+ * gastos, que exigen confirmación en un turno posterior), se le devuelven
  * los resultados y se le vuelve a preguntar. Se corta a `maxToolRounds` rondas
  * para que ninguna conversación pueda quedarse en bucle.
  *
@@ -102,6 +106,11 @@ export class StreamAiChatAction {
       emit({ type: 'error', message: 'No hay ningún mensaje que enviar.' });
       return;
     }
+
+    // Identidad de ESTA petición + los mensajes del usuario: con esto las
+    // herramientas de gastos exigen que la confirmación llegue en un turno
+    // posterior y responda exactamente al resumen preparado.
+    const requestContext = extractRequestContext(turns, randomUUID());
 
     let emittedText = 0;
 
@@ -171,7 +180,13 @@ export class StreamAiChatAction {
         const label = definition?.label ?? call.name;
         emit({ type: 'tool', name: call.name, label, status: 'running' });
 
-        const execution = await this.runTool.execute(companyId, actor, call.name, call.args ?? {});
+        const execution = await this.runTool.execute(
+          companyId,
+          actor,
+          call.name,
+          call.args ?? {},
+          requestContext,
+        );
 
         emit({
           type: 'tool',

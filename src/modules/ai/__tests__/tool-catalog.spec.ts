@@ -5,6 +5,7 @@ import {
   isToolAllowed,
   salesScopeUserId,
   stripProfitFields,
+  toolSummariesFor,
   type AiToolActor,
 } from '../internal/tool-catalog';
 
@@ -13,6 +14,7 @@ const actor = (overrides: Partial<AiToolActor> = {}): AiToolActor => ({
   permissions: new Set<string>(),
   canViewProfit: true,
   userId: 42,
+  is_administrator: false,
   ...overrides,
 });
 
@@ -60,6 +62,73 @@ describe('isToolAllowed', () => {
 
   it('un empleado sin permisos no recibe ninguna herramienta', () => {
     expect(declarationsFor(actor())).toEqual([]);
+  });
+});
+
+describe('herramientas que ESCRIBEN gastos (solo administrador)', () => {
+  const WRITE_TOOLS = ['register_expense', 'void_expense', 'confirm_expense_action'];
+  const toolNamed = (name: string): NonNullable<ReturnType<typeof findTool>> => {
+    const tool = findTool(name);
+    if (!tool) {
+      throw new Error(`Herramienta inexistente: ${name}`);
+    }
+    return tool;
+  };
+  const allowedFor = (who: AiToolActor): string[] =>
+    WRITE_TOOLS.filter((name) => isToolAllowed(toolNamed(name), who));
+
+  it('las 3 existen, exigen rol administrador y el permiso de Gastos', () => {
+    for (const name of WRITE_TOOLS) {
+      const tool = findTool(name);
+      expect(tool?.requires_administrator).toBe(true);
+      expect(tool?.permission).toBe('canAccessExpenses');
+    }
+  });
+
+  it('el owner/superadmin las tiene todas', () => {
+    expect(allowedFor(actor({ isAdmin: true }))).toEqual(WRITE_TOOLS);
+  });
+
+  it('el empleado con rol Administrador las tiene', () => {
+    expect(
+      allowedFor(actor({ is_administrator: true, permissions: new Set(['canAccessExpenses']) })),
+    ).toEqual(WRITE_TOOLS);
+  });
+
+  it('un Cajero con permiso de Gastos NO puede escribir (el permiso no basta sin el rol)', () => {
+    const cajero = actor({ permissions: new Set(['canAccessExpenses', 'canViewAllSales']) });
+    expect(allowedFor(cajero)).toEqual([]);
+    // …pero sí sigue consultando el resumen de gastos.
+    expect(isToolAllowed(toolNamed('get_expenses_summary'), cajero)).toBe(true);
+  });
+
+  it('fail-closed: si el flag de administrador no viene, no se habilitan', () => {
+    const legacy = {
+      isAdmin: false,
+      permissions: new Set(['canAccessExpenses']),
+      canViewProfit: true,
+      userId: 1,
+    } as unknown as AiToolActor;
+    expect(allowedFor(legacy)).toEqual([]);
+  });
+
+  it('el rol Administrador sin el permiso de Gastos tampoco (ambas condiciones)', () => {
+    expect(allowedFor(actor({ is_administrator: true }))).toEqual([]);
+  });
+
+  it('el paso interno de confirmación no se lista en "qué puede hacer Place"', () => {
+    const names = toolSummariesFor(actor({ isAdmin: true })).map((tool) => tool.name);
+    expect(names).toContain('register_expense');
+    expect(names).toContain('void_expense');
+    expect(names).not.toContain('confirm_expense_action');
+    // …aunque el modelo sí la tiene declarada.
+    expect(declarationsFor(actor({ isAdmin: true })).map((d) => d.name)).toContain(
+      'confirm_expense_action',
+    );
+  });
+
+  it('confirm_expense_action no recibe argumentos: ejecuta solo lo preparado', () => {
+    expect(findTool('confirm_expense_action')?.declaration.parameters?.properties).toEqual({});
   });
 });
 

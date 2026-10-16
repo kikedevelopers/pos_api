@@ -22,6 +22,12 @@ describe('describeTopics', () => {
     ]);
   });
 
+  it('registrar/archivar gastos cuentan como el área "gastos"; confirmar no suma área', () => {
+    expect(describeTopics(['register_expense', 'void_expense', 'confirm_expense_action'])).toEqual([
+      'gastos',
+    ]);
+  });
+
   it('ignora nombres desconocidos y listas vacías', () => {
     expect(describeTopics(['inventada', ''])).toEqual([]);
     expect(describeTopics([])).toEqual([]);
