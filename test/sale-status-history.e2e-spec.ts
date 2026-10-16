@@ -135,6 +135,8 @@ describe('Historial de estados de venta (e2e, pos_db)', () => {
       'INSTALLMENT',
       'PAID',
       'VOIDED',
+      // Préstamo de mercancía a tercero (ticket_type LOAN).
+      'LOANED',
     ]);
   });
 

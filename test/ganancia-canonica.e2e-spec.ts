@@ -153,35 +153,44 @@ describe('Ganancia del día canónica: misma en today, cierre y extended (e2e po
     await ds.destroy();
   });
 
-  it('today.profit === cierre.profit === extended.ventas.ganancia === 60 (40 contado + 20 abono cobrado)', async () => {
+  it('headline de CAJA: today.profit === cierre.profit === 60 (40 contado + 20 abono cobrado)', async () => {
     if (!ds) {
       return;
     }
-    const [t, c, e] = await Promise.all([
+    const [t, c] = await Promise.all([
       today.execute(companyId, DAY),
+      closure.execute(companyId, DAY),
+    ]);
+
+    // Cobrado (base caja): contado 40 (pagado 100%) + abono 50·120/300 = 20 = 60.
+    // La utilidad restante de la venta a crédito (100) NO se cuenta en caja.
+    expect(t.profit).toBe(60);
+    expect(c.profit).toBe(60);
+    expect(t.profit).toBe(c.profit);
+  });
+
+  it('VENTAS (devengado, f3d39fc): extended.ventas.ganancia === cierre.salesProfit === 160 (40 contado + 120 crédito)', async () => {
+    if (!ds) {
+      return;
+    }
+    const [c, e] = await Promise.all([
       closure.execute(companyId, DAY),
       extended.execute(companyId, DAY, DAY),
     ]);
 
-    // Cobrado (base caja): contado 40 (pagado 100%) + abono 50·120/300 = 20 = 60.
-    // La utilidad restante de la venta a crédito (100) NO se cuenta: no está
-    // cobrada.
-    expect(t.profit).toBe(60);
-    expect(c.profit).toBe(60);
-    expect(e.ventas.ganancia).toBe(60);
-    // Invariante explícita.
-    expect(t.profit).toBe(c.profit);
-    expect(c.profit).toBe(e.ventas.ganancia);
+    // Desde "Finanzas cuenta los créditos del día como venta" la venta a
+    // crédito suma su utilidad COMPLETA el día en que se hace (devengado). El
+    // abono (20) va aparte en "Recaudo de cartera" — no se doble-cuenta.
+    expect(c.salesProfit).toBe(160);
+    expect(e.ventas.ganancia).toBe(160);
+    expect(e.ventas.ganancia).toBe(c.salesProfit);
   });
 
-  it('los sub-bloques del cierre siguen siendo contado vs cartera (distintos del headline)', async () => {
+  it('"Recaudo de cartera" del cierre = abono proporcional (50 · 120/300 = 20)', async () => {
     if (!ds) {
       return;
     }
     const c = await closure.execute(companyId, DAY);
-    // "Ventas del día" (contado) = utilidad de la venta de contado = 40.
-    expect(c.salesProfit).toBe(40);
-    // "Recaudo de cartera" (abono proporcional) = 50 · 120/300 = 20.
     expect(c.creditsProfit).toBe(20);
   });
 });

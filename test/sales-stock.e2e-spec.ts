@@ -1,3 +1,4 @@
+import { UnprocessableEntityException } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 
 import { adjustInventory } from '@/modules/products/internal/adjust-inventory.helper';
@@ -169,7 +170,7 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
     expect(movsChild).toHaveLength(0);
   });
 
-  it('cross-tenant: ajustar stock de un producto de A desde la company B lanza "no existe en la company"', async () => {
+  it('cross-tenant: ajustar stock de un producto de A desde la company B lanza 422 "no está disponible en este negocio"', async () => {
     if (!ds) {
       return;
     }
@@ -191,7 +192,18 @@ describe('Stock discount via adjustInventory (e2e, pos_db) — FASE 0 caracteriz
           { reason: 'SALE', referenceType: 'sale_invoice' },
         );
       }),
-    ).rejects.toThrow(/no existe en la company/i);
+    ).rejects.toThrow(UnprocessableEntityException);
+    await expect(
+      ds.transaction(async (manager) => {
+        await adjustInventory(
+          manager,
+          companyB,
+          [{ item_id: Number(idA), quantity: 1, packaging_value: 1 }],
+          'DEDUCT',
+          { reason: 'SALE', referenceType: 'sale_invoice' },
+        );
+      }),
+    ).rejects.toThrow(/no está disponible en este negocio/i);
 
     // El stock de A queda intacto (la transacción de B hizo rollback).
     expect(await stockOf(ds, companyA, idA)).toBe(50);
