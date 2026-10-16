@@ -27,7 +27,10 @@ import {
 import { AssignOrderAction, type AssignOrderActionResult } from './actions/assign-order.action';
 import { FindAllSalesAction } from './actions/find-all-sales.action';
 import { FindSaleAction, type SaleAggregate } from './actions/find-sale.action';
-import { GetConsolidatedInvoiceAction } from './actions/get-consolidated-invoice.action';
+import {
+  type ConsolidatedInvoiceWithCollection,
+  GetConsolidatedInvoiceAction,
+} from './actions/get-consolidated-invoice.action';
 import { GetConsolidatedInvoiceUpToAction } from './actions/get-consolidated-invoice-upto.action';
 import { GetLastSaleAction, type LastSaleResult } from './actions/get-last-sale.action';
 import { GetSaleCreditNoteAction } from './actions/get-sale-credit-note.action';
@@ -104,7 +107,10 @@ export class SalesService {
     return this.getLastSaleAction.execute(companyId);
   }
 
-  getConsolidated(id: number, companyId: number): Promise<ConsolidatedInvoice | null> {
+  getConsolidated(
+    id: number,
+    companyId: number,
+  ): Promise<ConsolidatedInvoiceWithCollection | null> {
     return this.getConsolidatedInvoiceAction.execute(id, companyId);
   }
 

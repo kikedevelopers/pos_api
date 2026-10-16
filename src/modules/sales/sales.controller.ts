@@ -39,6 +39,7 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 
 import type { CollectSaleBalanceResult } from './actions/collect-sale-balance.action';
+import type { ConsolidatedInvoiceWithCollection } from './actions/get-consolidated-invoice.action';
 import type { ProcessLoanResult } from './actions/convert-order-to-loan.action';
 import type { ProcessPaymentResult } from '@/modules/payments/actions/process-payment.action';
 import { ProcessPaymentDto } from '@/modules/payments/dto/process-payment.dto';
@@ -163,7 +164,7 @@ export class SalesController {
   async findConsolidated(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
-  ): Promise<ConsolidatedInvoice> {
+  ): Promise<ConsolidatedInvoiceWithCollection> {
     const consolidated = await this.salesService.getConsolidated(id, companyId);
     if (!consolidated) {
       throw new NotFoundException('Ticket no encontrado');
