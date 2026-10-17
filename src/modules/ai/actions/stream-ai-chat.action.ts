@@ -19,6 +19,13 @@ import type { AiToolCard } from '../internal/tool-cards';
 import { ResolveAiActorAction } from './resolve-ai-actor.action';
 import { RunAiToolAction } from './run-ai-tool.action';
 
+/**
+ * Instrucción de la última ronda (ya sin herramientas). Va solo en esa ronda,
+ * no queda en el historial del cliente.
+ */
+export const FINAL_ROUND_PROMPT =
+  '(Mensaje del sistema, no del usuario) Ya no puedes consultar más herramientas en esta respuesta. Responde AHORA al usuario, en español, con lo que ya sabes: qué encontraste y qué necesitas que te aclare. No dejes la respuesta vacía.';
+
 /** Eventos que viajan al cliente por SSE. */
 export type AiStreamEvent =
   | { type: 'delta'; text: string }
@@ -124,7 +131,18 @@ export class StreamAiChatAction {
       // En la última ronda se le quitan las herramientas: obligamos a que
       // responda con texto en vez de pedir otra consulta que ya no correremos.
       const isLastRound = round === config.maxToolRounds;
-      const roundBody = isLastRound ? { ...body, tools: undefined } : body;
+      // Sin herramientas el modelo a veces responde VACÍO (quería otra
+      // consulta). Se le dice explícitamente que conteste con lo que tiene.
+      const roundBody = isLastRound
+        ? {
+            ...body,
+            tools: undefined,
+            contents: [
+              ...body.contents,
+              { role: 'user' as const, parts: [{ text: FINAL_ROUND_PROMPT }] },
+            ],
+          }
+        : body;
 
       const result = await this.geminiClient.streamRound(roundBody, {
         model: resolvedModel,

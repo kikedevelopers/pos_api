@@ -687,3 +687,34 @@ export const buildCandidatePatterns = (queries: readonly string[]): string[] => 
   }
   return [...patterns];
 };
+
+/** Palabras de un nombre de persona/negocio, sin tildes ni conectores. */
+const nameWords = (value: string): string[] =>
+  tokenize(value).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+
+/**
+ * Nombres PARECIDOS a lo pedido: todas las palabras dichas deben aparecer en el
+ * nombre, aunque sea con un error de tipeo o abreviadas ("Jhoanna Mogollon" →
+ * "JHOANA MOGOLLON"). Los mejores primero. Sirve para sugerir ("¿quisiste
+ * decir…?"), nunca para elegir solo.
+ */
+export const rankSimilarNames = <T>(
+  query: string,
+  rows: readonly T[],
+  nameOf: (row: T) => string,
+): T[] => {
+  const wanted = nameWords(query);
+  if (wanted.length === 0) {
+    return [];
+  }
+  return rows
+    .map((row) => ({ row, match: matchCore(wanted, nameWords(nameOf(row))) }))
+    .filter(({ match }) => match.coverage === 1)
+    .sort(
+      (a, b) =>
+        b.match.quality - a.match.quality ||
+        a.match.extra - b.match.extra ||
+        nameOf(a.row).localeCompare(nameOf(b.row)),
+    )
+    .map(({ row }) => row);
+};

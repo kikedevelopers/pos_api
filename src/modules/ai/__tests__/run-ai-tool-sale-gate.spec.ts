@@ -5,7 +5,7 @@ import type { TreasuryService } from '@/modules/treasury/treasury.service';
 
 import type { RunAiExpenseToolAction } from '../actions/run-ai-expense-tool.action';
 import type { RunAiSaleToolAction } from '../actions/run-ai-sale-tool.action';
-import { RunAiToolAction } from '../actions/run-ai-tool.action';
+import { RunAiToolAction, type AiToolExecution } from '../actions/run-ai-tool.action';
 import type { AiToolRequestContext } from '../internal/expense-tool-helpers';
 import type { AiToolActor } from '../internal/tool-catalog';
 
@@ -127,5 +127,47 @@ describe('RunAiToolAction · gate de las herramientas de pedidos', () => {
     );
     expect(execution.ok).toBe(false);
     expect(execution.response.error).toMatch(/intente de nuevo/);
+  });
+
+  describe('ganancia y margen en la vista previa', () => {
+    const SUMMARY = {
+      customer: 'MARÍA',
+      lines: [{ product: 'FECULA', quantity: 2, total: 9000, profit: 4600, margin: 51.11 }],
+      total: 9000,
+      profit: 4600,
+      margin: 51.11,
+    };
+    const prepare = async (over: Partial<AiToolActor>): Promise<AiToolExecution> => {
+      const { action, saleTools } = build();
+      saleTools.prepareSale.mockResolvedValueOnce({
+        status: 'confirmation_required',
+        summary: SUMMARY,
+      });
+      return action.execute(
+        13,
+        actor({ is_administrator: true, ...over }),
+        'prepare_sale',
+        {},
+        CONTEXT,
+      );
+    };
+
+    it('quien puede ver ganancias las recibe en la respuesta y en la tarjeta', async () => {
+      const execution = await prepare({ canViewProfit: true });
+      expect(execution.card).toEqual({ kind: 'sale_preview', data: SUMMARY });
+    });
+
+    it('sin permiso de ganancias NO salen del servidor (ni al modelo ni a la tarjeta)', async () => {
+      const execution = await prepare({ canViewProfit: false });
+      expect(JSON.stringify([execution.response, execution.card])).not.toMatch(/profit|margin/);
+      expect(execution.card).toEqual({
+        kind: 'sale_preview',
+        data: {
+          customer: 'MARÍA',
+          lines: [{ product: 'FECULA', quantity: 2, total: 9000 }],
+          total: 9000,
+        },
+      });
+    });
   });
 });

@@ -21,10 +21,12 @@ import {
   UPSERT_PENDING_ACTION_SQL,
 } from '../internal/expense-tool-sql';
 import { checkPendingConfirmation, type PendingActionType } from '../internal/pending-confirmation';
+import { OfferedReferences } from '../internal/offered-references';
 import {
   buildCandidatePatterns,
   isFractionCountedTwice,
   matchLine,
+  rankSimilarNames,
   parseProduct,
   type LineMatch,
   type MatchableProduct,
@@ -45,7 +47,9 @@ import {
 } from '../internal/sale-tool-helpers';
 import {
   buildCandidatePoolSql,
+  buildCustomerFuzzySql,
   CANDIDATE_POOL_LIMIT,
+  CUSTOMER_CANDIDATES_LIMIT,
   buildCustomerSearchSql,
   buildSellableDetailsSql,
   FIND_ACTIVE_CUSTOMER_SQL,
@@ -114,13 +118,19 @@ interface ItemPool {
   truncated: boolean;
 }
 
-type ItemMatch = LineMatch<PoolProduct> | { status: 'too_broad' };
+type ItemMatch =
+  | LineMatch<PoolProduct>
+  | { status: 'too_broad' }
+  /** Un product_id que la herramienta no ofreció en esta petición. */
+  | { status: 'stale_reference' };
 
 type CustomerResolution =
   | { status: 'walk_in' }
   | { status: 'ok'; customer: CustomerRow }
   | { status: 'not_found'; query: string }
-  | { status: 'ambiguous'; options: CustomerRow[]; total: number };
+  | { status: 'ambiguous'; options: CustomerRow[]; total: number; fuzzy?: boolean }
+  /** Un customer_id que la herramienta no ofreció en esta petición. */
+  | { status: 'stale_reference' };
 
 /** Consultas simultáneas máximas del plan B (pool por línea). */
 const FALLBACK_POOL_CONCURRENCY = 4;
@@ -129,6 +139,24 @@ const FALLBACK_POOL_CONCURRENCY = 4;
 const MAX_DETAIL_IDS = 80;
 
 const WALK_IN_LABEL = 'Mostrador (sin cliente)';
+
+/** Cómo debe mostrarle el modelo las opciones de cliente al usuario. */
+const CUSTOMER_OPTIONS_RULE =
+  'Lista las opciones usando EXACTAMENTE el campo "display" de cada una. NUNCA inventes documentos ni teléfonos, y NUNCA muestres el customer_id: si un cliente no tiene documento, no le pongas uno.';
+
+/** "JHOANA MOGOLLON · Doc. 1110 · Tel. 300…"; solo los datos que existen. */
+export const describeCustomerOption = (row: {
+  name: string;
+  doc_number: string | null;
+  phone: string | null;
+}): string =>
+  [
+    row.name,
+    row.doc_number?.trim() ? `Doc. ${row.doc_number.trim()}` : null,
+    row.phone?.trim() ? `Tel. ${row.phone.trim()}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
 /** "3 litro" + "caja" → "3 litro caja"; sin nada → null. */
 const describeSize = (size: string | null, pack: string | null): string | null =>
@@ -203,6 +231,9 @@ const httpErrorMessage = (error: HttpException): string => {
 export class RunAiSaleToolAction {
   private readonly logger = new Logger(RunAiSaleToolAction.name);
 
+  /** Ids ofrecidos por petición: solo esos se aceptan como referencia. */
+  private readonly offered = new OfferedReferences();
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly createSale: CreateSaleAction,
@@ -251,27 +282,56 @@ export class RunAiSaleToolAction {
     const customer_query = readString(args, 'customer') ?? null;
     const needs_margin = items.items.some((item) => item.unit_price.status === 'ok');
 
+    // Un id solo vale si ESTA petición lo ofreció: entre turnos el modelo no
+    // conserva los ids (el historial es texto) y los inventa. Si además mandó
+    // el nombre, se ignora el id y se busca por nombre; si no, se le pide.
+    const request_id = context.request_id;
+    const stale_lines = new Set<number>();
+    const requested_items = items.items.map((item) => {
+      if (
+        item.product_id === null ||
+        this.offered.wasOffered(request_id, 'product', item.product_id)
+      ) {
+        return item;
+      }
+      if (item.query === null) {
+        stale_lines.add(item.position);
+        return item;
+      }
+      return { ...item, product_id: null };
+    });
+    const customer_is_stale =
+      customer_id !== null && !this.offered.wasOffered(request_id, 'customer', customer_id);
+    const effective_customer_id = customer_is_stale ? null : customer_id;
+
     // Viajes independientes en paralelo: pool de productos, cliente y márgenes.
     const [pools, customer, minimum_margin] = await Promise.all([
-      this.fetchPools(company_id, items.items),
-      this.resolveCustomer(company_id, customer_id, customer_query),
+      this.fetchPools(company_id, requested_items),
+      customer_is_stale && customer_query === null
+        ? Promise.resolve<CustomerResolution>({ status: 'stale_reference' })
+        : this.resolveCustomer(company_id, effective_customer_id, customer_query),
       needs_margin
         ? this.minimumMargin(this.dataSource.manager, company_id)
         : Promise.resolve(null),
     ]);
 
-    const matches = items.items.map((item, index) => this.matchItem(item, pools[index]));
-    const details = await this.fetchDetails(
-      this.dataSource.manager,
-      company_id,
-      this.idsToDetail(matches),
+    const matches: ItemMatch[] = requested_items.map((item, index) =>
+      stale_lines.has(item.position)
+        ? { status: 'stale_reference' }
+        : this.matchItem(item, pools[index]),
     );
+    const offered_products = this.idsToDetail(matches);
+    const details = await this.fetchDetails(this.dataSource.manager, company_id, offered_products);
+    // Lo que se le muestra al modelo en esta respuesta queda como referencia
+    // válida para que reintente con ids en ESTA misma petición.
+    this.offered.remember(request_id, 'product', offered_products);
+    this.offered.remember(request_id, 'customer', this.customerIdsOf(customer));
 
     const priced: PricedLine[] = [];
     const lines: Array<Record<string, unknown>> = [];
     let has_issues = false;
 
-    for (const [index, item] of items.items.entries()) {
+    for (const [index, item] of requested_items.entries()) {
       const match = matches[index];
       const described = this.describeLine(item, match, details, minimum_margin);
       lines.push(described.view);
@@ -283,7 +343,11 @@ export class RunAiSaleToolAction {
     }
 
     const customer_view = this.describeCustomer(customer);
-    if (customer.status === 'not_found' || customer.status === 'ambiguous') {
+    if (
+      customer.status === 'not_found' ||
+      customer.status === 'ambiguous' ||
+      customer.status === 'stale_reference'
+    ) {
       has_issues = true;
     }
 
@@ -293,7 +357,7 @@ export class RunAiSaleToolAction {
         customer: customer_view,
         lines,
         message:
-          'NO se preparó el pedido: hay datos por resolver. Muéstrale al usuario SOLO lo que falta (líneas con status distinto de "ok" y el cliente si no quedó claro), con sus opciones, y pregúntale. Si un tamaño no existe, sugiérele los disponibles (los menores primero) con la cantidad equivalente. Cuando responda, vuelve a llamar prepare_sale con TODAS las líneas, usando el product_id / customer_id de lo que eligió.',
+          'NO se preparó el pedido: hay datos por resolver. Muéstrale al usuario SOLO lo que falta (líneas con status distinto de "ok" y el cliente si no quedó claro), con sus opciones, y pregúntale. Si un tamaño no existe, sugiérele los disponibles (los menores primero) con la cantidad equivalente. Cuando responda (en su próximo mensaje), vuelve a llamar prepare_sale con TODAS las líneas usando el NOMBRE EXACTO de la opción que eligió en "query" / "customer" (los product_id / customer_id solo sirven dentro de esta misma respuesta).',
       };
     }
 
@@ -440,6 +504,8 @@ export class RunAiSaleToolAction {
         return {
           status: 'executed',
           order: {
+            // Id interno: el chat lo usa para abrir el visor del pedido.
+            sale_id: Number(sale.id),
             ticket_number: sale.ticket_number,
             customer: payload.customer_name ?? WALK_IN_LABEL,
             lines: refreshed.lines.length,
@@ -567,6 +633,7 @@ export class RunAiSaleToolAction {
       } else if (match.status === 'not_found') {
         match.similar.forEach((product) => options.add(product.id));
       }
+      // too_broad / stale_reference: no ofrecen productos.
     }
     const extra = [...options].filter((id) => !resolved.has(id));
     return [...resolved, ...extra.slice(0, Math.max(0, MAX_DETAIL_IDS - resolved.size))];
@@ -639,6 +706,17 @@ export class RunAiSaleToolAction {
       };
     }
 
+    if (match.status === 'stale_reference') {
+      return {
+        view: {
+          ...base,
+          status: 'stale_reference',
+          message:
+            'Ese product_id no salió de esta respuesta (los ids no se conservan entre mensajes). Vuelve a llamar con el NOMBRE EXACTO del producto en "query".',
+        },
+        line: null,
+      };
+    }
     if (match.status === 'too_broad') {
       return {
         view: {
@@ -796,7 +874,7 @@ export class RunAiSaleToolAction {
     const { sql, params } = buildCustomerSearchSql(company_id, query);
     const rows = await this.dataSource.query<CustomerRow[]>(sql, params);
     if (rows.length === 0) {
-      return { status: 'not_found', query };
+      return this.resolveCustomerFuzzy(company_id, query);
     }
     const exact = rows.filter((row) => row.is_exact === true);
     if (exact.length === 1) {
@@ -804,17 +882,65 @@ export class RunAiSaleToolAction {
     }
     const total = Number(rows[0].total_matches ?? rows.length);
     if (total === 1) {
+      // Único que contiene las palabras, pero no es exacto: si hay otros con
+      // nombre PARECIDO ("Jhoanna" → JHOANNA GARCIA, pero también JHOANA
+      // MOGOLLON), se pregunta en vez de elegir.
+      const similar = await this.resolveCustomerFuzzy(company_id, query);
+      if (similar.status === 'ambiguous') {
+        const others = similar.options.filter((row) => row.id !== rows[0].id);
+        if (others.length > 0) {
+          const options = [rows[0], ...others].slice(0, CUSTOMER_CANDIDATES_LIMIT);
+          return { status: 'ambiguous', options, total: options.length, fuzzy: true };
+        }
+      }
       return { status: 'ok', customer: rows[0] };
     }
     return { status: 'ambiguous', options: exact.length > 1 ? exact : rows, total };
+  }
+
+  /**
+   * Sin coincidencia por palabras completas: busca nombres PARECIDOS
+   * ("Jhoanna" → "JHOANA MOGOLLON"). Nunca resuelve solo: devuelve las
+   * opciones para que el usuario confirme cuál ("¿quisiste decir…?").
+   */
+  private async resolveCustomerFuzzy(
+    company_id: number,
+    query: string,
+  ): Promise<CustomerResolution> {
+    const fuzzy = buildCustomerFuzzySql(company_id, query);
+    if (fuzzy === null) {
+      return { status: 'not_found', query };
+    }
+    const rows = await this.dataSource.query<CustomerRow[]>(fuzzy.sql, fuzzy.params);
+    const options = rankSimilarNames(query, rows, (row) => row.name).slice(
+      0,
+      CUSTOMER_CANDIDATES_LIMIT,
+    );
+    return options.length > 0
+      ? { status: 'ambiguous', options, total: options.length, fuzzy: true }
+      : { status: 'not_found', query };
+  }
+
+  /** Clientes que esta respuesta le muestra al modelo (referencias válidas). */
+  private customerIdsOf(resolution: CustomerResolution): number[] {
+    if (resolution.status === 'ok') {
+      return [Number(resolution.customer.id)];
+    }
+    if (resolution.status === 'ambiguous') {
+      return resolution.options.map((row) => Number(row.id));
+    }
+    return [];
   }
 
   private describeCustomer(resolution: CustomerResolution): Record<string, unknown> {
     const view = (row: CustomerRow): Record<string, unknown> => ({
       customer_id: Number(row.id),
       name: row.name,
-      document: row.doc_number,
-      phone: row.phone,
+      document: row.doc_number?.trim() || null,
+      phone: row.phone?.trim() || null,
+      // Lo que se le muestra al usuario, armado aquí: el modelo inventaba
+      // documentos (disfrazaba el id de cédula) cuando el cliente no tenía.
+      display: describeCustomerOption(row),
     });
     switch (resolution.status) {
       case 'walk_in':
@@ -837,7 +963,15 @@ export class RunAiSaleToolAction {
           status: 'ambiguous',
           total_matches: resolution.total,
           options: resolution.options.map(view),
-          message: 'Varios clientes coinciden: muéstralos con su documento y pregúntale cuál.',
+          message: resolution.fuzzy
+            ? `No hay un cliente con ese nombre exacto, pero estos se parecen (puede ser un error de escritura). Pregúntale cuál es ("¿quisiste decir…?"). ${CUSTOMER_OPTIONS_RULE}`
+            : `Varios clientes coinciden: pregúntale cuál es. ${CUSTOMER_OPTIONS_RULE}`,
+        };
+      case 'stale_reference':
+        return {
+          status: 'stale_reference',
+          message:
+            'Ese customer_id no salió de esta respuesta (los ids no se conservan entre mensajes). Vuelve a llamar con el NOMBRE o documento del cliente en "customer".',
         };
     }
   }
@@ -893,10 +1027,17 @@ export class RunAiSaleToolAction {
         unit_price: money(line.unit_price),
         price_label: line.price_label,
         total: money(line.total),
+        // Ganancia y margen: `stripProfitFields` los quita antes de salir del
+        // servidor si el usuario no puede ver ganancias (misma regla del visor
+        // de tickets: owner siempre; el empleado según `can_view_profit`).
+        profit: money(line.profit),
+        margin: preciseNumber(new Big(line.margin), 2),
         note: line.note,
       })),
       items_count: payload.lines.length,
       total: money(payload.totals.total),
+      profit: money(payload.totals.profit),
+      margin: preciseNumber(new Big(payload.totals.margin), 2),
       warnings,
       after_confirm:
         'Queda como pedido en Tickets del POS para cobrarlo desde allí. No descuenta inventario ni mueve dinero hasta que se cobre.',

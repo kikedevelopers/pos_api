@@ -442,6 +442,9 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
               unit_price: 4500,
               price_label: 'Base',
               total: 9000,
+              // (4500 − 2200) × 2 y 2300 / 4500.
+              profit: 4600,
+              margin: 51.11,
               note: null,
             },
             {
@@ -452,11 +455,16 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
               unit_price: 6500,
               price_label: 'Base',
               total: 6500,
+              profit: 3100,
+              margin: 47.69,
               note: null,
             },
           ],
           items_count: 2,
           total: 15500,
+          // 7700 / 15500 = 49,677 %.
+          profit: 7700,
+          margin: 49.68,
           warnings: [],
           after_confirm: expect.stringContaining('Tickets del POS') as unknown,
         });
@@ -487,6 +495,7 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
           created_by: 'E2E Owner',
         });
         expect(confirmed.order).toEqual({
+          sale_id: Number(sale.id),
           ticket_number: sale.ticket_number,
           customer: 'MARÍA MUÑOZ',
           lines: 2,
@@ -576,6 +585,15 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
     });
 
     itDb('el mismo producto dicho dos veces se une en UNA línea', async () => {
+      // El id sale de una llamada anterior de ESTA misma respuesta.
+      const context = ctx('una libra de fécula y otras dos');
+      await tools.prepareSale(
+        cid,
+        owner,
+        { items: [{ query: 'fecula de maiz por libra', quantity: 1 }] },
+        context,
+      );
+      await q(`DELETE FROM ai_pending_actions WHERE company_id = $1`, [String(cid)]);
       const prepared = await tools.prepareSale(
         cid,
         owner,
@@ -585,7 +603,7 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
             { product_id: ids.maiz_libra, quantity: 2 },
           ],
         },
-        ctx('una libra de fécula y otras dos'),
+        { ...context, request_id: context.request_id },
       );
       const summary = prepared.summary as { lines: Array<{ quantity: number }>; total: number };
       expect(summary.lines).toHaveLength(1);
@@ -660,10 +678,14 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
       ]);
       expect(await pendingRows()).toEqual([]);
 
+      // Turno siguiente: el usuario eligió y el modelo manda los NOMBRES exactos.
       const second = await tools.prepareSale(
         cid,
         owner,
-        { customer_id: ids.juan_pablo, items: [{ product_id: ids.yuca_libra, quantity: 1 }] },
+        {
+          customer: 'JUAN PABLO PEREZ',
+          items: [{ query: 'FECULA DE YUCA X LIBRA', quantity: 1 }],
+        },
         ctx('juan pablo, la de yuca'),
       );
       expect(second.status).toBe('confirmation_required');
@@ -683,6 +705,15 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
     itDb(
       '"media libra" con cantidad 0.5 (fracción contada dos veces) → no se interpreta',
       async () => {
+        const context = ctx('media libra de fécula de maíz');
+        // Primera llamada de la respuesta: ofrece el id de la media libra.
+        await tools.prepareSale(
+          cid,
+          owner,
+          { items: [{ query: 'fécula de maíz por media libra', quantity: 1 }] },
+          context,
+        );
+        await q(`DELETE FROM ai_pending_actions WHERE company_id = $1`, [String(cid)]);
         const prepared = await tools.prepareSale(
           cid,
           owner,
@@ -692,7 +723,7 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
               { product_id: ids.maiz_media, quantity: 0.5 },
             ],
           },
-          ctx('media libra de fécula de maíz'),
+          context,
         );
         expect(prepared.status).toBe('needs_input');
         expect((prepared.lines as Array<{ status: string }>).map((line) => line.status)).toEqual([
@@ -1024,6 +1055,149 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
     );
   });
 
+  describe('referencias: solo ids ofrecidos en ESTA respuesta (anti-alucinación)', () => {
+    itDb(
+      'un product_id inventado (de un turno anterior) con nombre → se busca por el nombre',
+      async () => {
+        // El modelo "recuerda" el id de la yuca pero el usuario pidió maíz.
+        const prepared = await tools.prepareSale(
+          cid,
+          owner,
+          {
+            items: [{ product_id: ids.yuca_libra, query: 'fecula de maiz por libra', quantity: 1 }],
+          },
+          ctx('una libra de maicena'),
+        );
+        expect(prepared.status).toBe('confirmation_required');
+        expect((prepared.summary as { lines: Array<{ product: string }> }).lines[0].product).toBe(
+          'FECULA DE MAIZ X LIBRA',
+        );
+      },
+    );
+
+    itDb(
+      'un product_id inventado sin nombre → pide el nombre exacto (no factura otro)',
+      async () => {
+        const prepared = await tools.prepareSale(
+          cid,
+          owner,
+          { items: [{ product_id: ids.yuca_libra, quantity: 1 }] },
+          ctx('la de siempre'),
+        );
+        expect((prepared.lines as Array<{ status: string }>)[0].status).toBe('stale_reference');
+        expect(await pendingRows()).toEqual([]);
+      },
+    );
+
+    itDb('un id ofrecido en la respuesta ANTERIOR ya no vale en la siguiente', async () => {
+      const first = ctx('una libra de fécula de maíz');
+      await tools.prepareSale(
+        cid,
+        owner,
+        { items: [{ query: 'fecula de maiz por libra', quantity: 1 }] },
+        first,
+      );
+      const next = await tools.prepareSale(
+        cid,
+        owner,
+        { items: [{ product_id: ids.maiz_libra, quantity: 1 }] },
+        ctx('sí, esa', 'una libra de fécula de maíz'),
+      );
+      expect((next.lines as Array<{ status: string }>)[0].status).toBe('stale_reference');
+    });
+
+    itDb('customer_id inventado con nombre → se busca por el nombre', async () => {
+      const prepared = await tools.prepareSale(
+        cid,
+        owner,
+        {
+          customer_id: ids.juan_carlos,
+          customer: 'maría muñoz',
+          items: [{ query: 'aceite girasol', quantity: 1 }],
+        },
+        ctx('a maría un aceite'),
+      );
+      expect((prepared.summary as { customer: string }).customer).toBe('MARÍA MUÑOZ');
+    });
+  });
+
+  describe('cliente con error de tipeo', () => {
+    itDb('"Jhoanna"/"Maria Munos" no adivina: ofrece "¿quisiste decir…?"', async () => {
+      const prepared = await tools.prepareSale(
+        cid,
+        owner,
+        { customer: 'Maria Munos', items: [{ query: 'aceite girasol', quantity: 1 }] },
+        ctx('a maria munos un aceite'),
+      );
+      expect(prepared.status).toBe('needs_input');
+      const customer = prepared.customer as {
+        status: string;
+        options: Array<{ name: string }>;
+        message: string;
+      };
+      expect(customer.status).toBe('ambiguous');
+      expect(customer.options.map((o) => o.name)).toEqual(['MARÍA MUÑOZ']);
+      expect(customer.message).toMatch(/quisiste decir/);
+    });
+
+    itDb('varias "Jhoanna" parecidas → muestra la lista y el usuario escoge', async () => {
+      const garcia = await addCustomer(cid, 'tmp_garcia', 'JHOANNA GARCIA');
+      const mogollon = await addCustomer(cid, 'tmp_mogollon', 'JHOANA MOGOLLON');
+      try {
+        // "Jhoanna" solo está escrita así en GARCIA, pero MOGOLLON se parece:
+        // no se elige sola, se listan ambas.
+        const prepared = await tools.prepareSale(
+          cid,
+          owner,
+          { customer: 'Jhoanna', items: [{ query: 'aceite girasol', quantity: 1 }] },
+          ctx('a jhoanna un aceite'),
+        );
+        const customer = prepared.customer as {
+          status: string;
+          options: Array<{ name: string }>;
+        };
+        expect(customer.status).toBe('ambiguous');
+        expect(customer.options.map((o) => o.name)).toEqual(['JHOANNA GARCIA', 'JHOANA MOGOLLON']);
+        // Sin documento registrado: no aparece ninguno en lo que se muestra.
+        expect(
+          (customer.options as unknown as Array<{ display: string }>).map((o) => o.display),
+        ).toEqual(['JHOANNA GARCIA', 'JHOANA MOGOLLON']);
+        expect(await pendingRows()).toEqual([]);
+
+        // El usuario escoge: con el nombre completo se resuelve directo.
+        const chosen = await tools.prepareSale(
+          cid,
+          owner,
+          { customer: 'Jhoana Mogollón', items: [{ query: 'aceite girasol', quantity: 1 }] },
+          ctx('es jhoana mogollón'),
+        );
+        expect((chosen.summary as { customer: string }).customer).toBe('JHOANA MOGOLLON');
+      } finally {
+        await q(`DELETE FROM customers WHERE id = ANY($1::bigint[])`, [[garcia, mogollon]]);
+      }
+    });
+
+    itDb('único y sin parecidos → se resuelve directo', async () => {
+      const prepared = await tools.prepareSale(
+        cid,
+        owner,
+        { customer: 'muñoz', items: [{ query: 'aceite girasol', quantity: 1 }] },
+        ctx('a muñoz un aceite'),
+      );
+      expect((prepared.summary as { customer: string }).customer).toBe('MARÍA MUÑOZ');
+    });
+
+    itDb('nada parecido → no encontrado', async () => {
+      const prepared = await tools.prepareSale(
+        cid,
+        owner,
+        { customer: 'Zacarías Quintero', items: [{ query: 'aceite girasol', quantity: 1 }] },
+        ctx('a zacarías un aceite'),
+      );
+      expect((prepared.customer as { status: string }).status).toBe('not_found');
+    });
+  });
+
   describe('mismas reglas del DTO que POST /sales', () => {
     itDb('un nombre de producto que excede el DTO falla claro y sin crear nada', async () => {
       const long_name = `CHOCOLATINA ${'X'.repeat(210)}`;
@@ -1037,7 +1211,7 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
         const prepared = await tools.prepareSale(
           cid,
           owner,
-          { items: [{ product_id: id, quantity: 1 }] },
+          { items: [{ query: 'chocolatina', quantity: 1 }] },
           ctx(trigger),
         );
         expect(prepared.status).toBe('confirmation_required');
@@ -1069,7 +1243,7 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
       ).toBe(4500);
     });
 
-    itDb('por id: producto de otro negocio → no disponible', async () => {
+    itDb('por id: producto de otro negocio → ni siquiera se acepta el id', async () => {
       const prepared = await tools.prepareSale(
         cid,
         owner,
@@ -1077,18 +1251,18 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
         ctx('el producto ajeno'),
       );
       expect(prepared.status).toBe('needs_input');
-      expect((prepared.lines as Array<{ status: string }>)[0].status).toBe('not_found');
+      expect((prepared.lines as Array<{ status: string }>)[0].status).toBe('stale_reference');
       expect(await pendingRows()).toEqual([]);
     });
 
-    itDb('por id: cliente de otro negocio → no existe', async () => {
+    itDb('por id: cliente de otro negocio → ni siquiera se acepta el id', async () => {
       const prepared = await tools.prepareSale(
         cid,
         owner,
         { customer_id: ids.cliente_ajeno, items: [{ query: 'aceite girasol', quantity: 1 }] },
         ctx('al cliente ajeno'),
       );
-      expect((prepared.customer as { status: string }).status).toBe('not_found');
+      expect((prepared.customer as { status: string }).status).toBe('stale_reference');
     });
 
     itDb('por nombre: cliente de otro negocio → no existe', async () => {
@@ -1106,17 +1280,15 @@ describe('Place · herramienta de pedidos (e2e pos_db)', () => {
         cid,
         owner,
         {
-          customer_id: ids.archivado_cli,
+          customer: 'PEDRO ARCHIVADO',
           items: [
-            { product_id: ids.archivado, quantity: 1 },
-            { product_id: ids.oculto, quantity: 1 },
             { query: 'azucar vieja por libra', quantity: 1 },
+            { query: 'bolsa plastica', quantity: 1 },
           ],
         },
         ctx('vende lo archivado'),
       );
       expect((prepared.lines as Array<{ status: string }>).map((l) => l.status)).toEqual([
-        'not_found',
         'not_found',
         'not_found',
       ]);

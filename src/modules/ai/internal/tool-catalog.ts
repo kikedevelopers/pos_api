@@ -418,7 +418,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
           customer_id: {
             type: 'integer',
             description:
-              'Id del cliente elegido por el usuario de una lista que ya le mostraste (customer_id).',
+              'Solo un customer_id que la herramienta te devolvió en ESTA misma respuesta. Los ids NO se conservan entre mensajes: si el usuario eligió un cliente en su último mensaje, manda su NOMBRE EXACTO en "customer".',
           },
           items: {
             type: 'array',
@@ -440,7 +440,7 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
                 product_id: {
                   type: 'integer',
                   description:
-                    'Id del producto elegido por el usuario de una lista que ya le mostraste. Si lo mandas, query es opcional.',
+                    'Solo un product_id que la herramienta te devolvió en ESTA misma respuesta (nunca uno de memoria). Los ids NO se conservan entre mensajes: si el usuario eligió una opción en su último mensaje, manda el NOMBRE EXACTO de esa opción en "query".',
                 },
                 quantity: {
                   type: 'number',

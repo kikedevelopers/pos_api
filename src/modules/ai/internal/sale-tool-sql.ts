@@ -188,6 +188,45 @@ export const buildCustomerSearchSql = (
   return { sql, params };
 };
 
+/** Tope de candidatos aproximados que se puntúan en memoria. */
+export const CUSTOMER_FUZZY_POOL_LIMIT = 300;
+
+/**
+ * Candidatos APROXIMADOS cuando ningún cliente contiene las palabras exactas
+ * (error de tipeo: "Jhoanna" por "JHOANA"): clientes activos cuyo nombre
+ * contiene el inicio (3 letras) de alguna palabra. El puntaje fino lo hace
+ * `rankSimilarNames`. `null` si no hay palabras con qué buscar.
+ */
+export const buildCustomerFuzzySql = (
+  company_id: number,
+  query: string,
+): { sql: string; params: unknown[] } | null => {
+  const stems = [
+    ...new Set(
+      query
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((word) => word.length >= 3)
+        .map((word) => `%${word.slice(0, 3)}%`),
+    ),
+  ].slice(0, 6);
+  if (stems.length === 0) {
+    return null;
+  }
+  const sql = `
+    SELECT c.id, c.name, c.doc_number, c.phone
+      FROM customers c
+     WHERE c.company_id = $1
+       AND c.is_archived = false
+       AND ${normalizeSearchSql('c.name')} LIKE ANY($2::text[])
+     ORDER BY c.name ASC, c.id ASC
+     LIMIT ${CUSTOMER_FUZZY_POOL_LIMIT}
+  `;
+  return { sql, params: [String(company_id), stems] };
+};
+
 /** Un cliente activo por id, solo de esta company. $1 id, $2 company_id. */
 export const FIND_ACTIVE_CUSTOMER_SQL = `
   SELECT c.id, c.name, c.doc_number, c.phone

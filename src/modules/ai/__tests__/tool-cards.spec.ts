@@ -4,7 +4,11 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 
 import type { ResolveAiActorAction } from '../actions/resolve-ai-actor.action';
 import type { AiToolExecution, RunAiToolAction } from '../actions/run-ai-tool.action';
-import { StreamAiChatAction, type AiStreamEvent } from '../actions/stream-ai-chat.action';
+import {
+  FINAL_ROUND_PROMPT,
+  StreamAiChatAction,
+  type AiStreamEvent,
+} from '../actions/stream-ai-chat.action';
 import type { GeminiClient, GeminiRoundResult } from '../internal/gemini-client';
 import { cardForToolResult } from '../internal/tool-cards';
 
@@ -118,5 +122,64 @@ describe('StreamAiChatAction · evento card', () => {
   it('sin tarjeta no emite el evento', async () => {
     const events = await run({});
     expect(events.some((event) => event.type === 'card')).toBe(false);
+  });
+
+  it('última ronda: sin herramientas y con la orden de responder (no queda vacía)', async () => {
+    const bodies: Array<{ tools?: unknown; contents: Array<{ parts: Array<{ text?: string }> }> }> =
+      [];
+    const gemini = {
+      isEnabled: () => true,
+      resolveModel: () => 'modelo',
+      streamRound: jest.fn((body: (typeof bodies)[number]) => {
+        bodies.push(structuredClone(body));
+        // Siempre pide otra herramienta: agota las rondas.
+        return Promise.resolve({
+          text: '',
+          parts: [{ text: '' }],
+          functionCalls: bodies.length <= 1 ? [{ name: 'prepare_sale', args: {} }] : [],
+          finishReason: 'STOP',
+        });
+      }),
+    } as unknown as GeminiClient;
+    const config = {
+      getOrThrow: () => ({ temperature: 0, maxOutputTokens: 100, maxToolRounds: 1 }),
+    } as unknown as ConfigService;
+    const resolver = {
+      execute: () =>
+        Promise.resolve({
+          isAdmin: true,
+          is_administrator: true,
+          permissions: new Set<string>(),
+          canViewProfit: true,
+          userId: 1,
+          businessName: 'Tienda',
+          userName: 'K',
+          userRole: 'dueño',
+        }),
+    } as unknown as ResolveAiActorAction;
+    const runTool = {
+      execute: () =>
+        Promise.resolve({
+          name: 'prepare_sale',
+          label: 'x',
+          ok: true,
+          response: {},
+          durationMs: 1,
+        }),
+    } as unknown as RunAiToolAction;
+
+    await new StreamAiChatAction(config, gemini, resolver, runTool).execute({
+      user: { user_id: 1 } as AuthUser,
+      companyId: 1,
+      turns: [{ role: 'user', content: 'véndele' }],
+      emit: () => undefined,
+      signal: new AbortController().signal,
+    });
+
+    const last = bodies[bodies.length - 1];
+    expect(last.tools).toBeUndefined();
+    expect(last.contents[last.contents.length - 1].parts[0].text).toBe(FINAL_ROUND_PROMPT);
+    // La primera ronda NO lleva esa instrucción.
+    expect(JSON.stringify(bodies[0].contents)).not.toContain(FINAL_ROUND_PROMPT);
   });
 });
