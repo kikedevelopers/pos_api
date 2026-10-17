@@ -123,235 +123,9 @@ export class CreateSaleAction {
     }
 
     try {
-      return await this.dataSource.transaction<SaleAggregate>(async (manager) => {
-        // 1. Customer (opcional). Si viene, validar + lock.
-        let customer: Customer | null = null;
-        if (typeof dto.customer_id === 'number' && dto.customer_id > 0) {
-          customer = await manager.findOne(Customer, {
-            where: {
-              id: String(dto.customer_id),
-              company_id: String(companyId),
-              is_archived: false,
-            },
-            lock: { mode: 'pessimistic_write' },
-          });
-          if (!customer) {
-            throw new UnprocessableEntityException('Cliente no encontrado o archivado');
-          }
-        }
-
-        // 1b. Mesa (opcional, modo restaurante — botón "Enviar a"). Valida la
-        // mesa y la OCUPA dentro de esta misma transacción, con lock para que
-        // dos pedidos concurrentes no tomen la misma mesa.
-        let orderTable: OrderTableResult | null = null;
-        if (typeof dto.table_id === 'number' && dto.table_id > 0) {
-          orderTable = await resolveAndOccupyOrderTable(
-            manager,
-            companyId,
-            dto.table_id,
-            typeof dto.salon_id === 'number' && dto.salon_id > 0 ? dto.salon_id : null,
-          );
-        }
-
-        // 2. Productos: validar que cada item_id sea ACCESIBLE para la company
-        // activa (propio O compartido por el principal — FASE 2) y sea vendible
-        // (SIMPLE o COMBO) y no archivado. Cross-tenant guard crítico: un producto
-        // NO accesible (de otra company sin share) NO aparece en el set → se
-        // rechaza igual que antes.
-        const productIdNums = Array.from(new Set(dto.items.map((l) => Number(l.item_id))));
-        const accessible = await resolveAccessibleProducts(manager, companyId, productIdNums);
-        if (accessible.size !== productIdNums.length) {
-          throw new BadRequestException('Uno o más productos no existen');
-        }
-        // Validar product_type/is_archived consultando por id (sin filtro de
-        // company: los ids ya pasaron el gate de accesibilidad).
-        const products = await manager.find(Product, {
-          where: { id: In(productIdNums.map(String)) },
-        });
-        assertSellableProducts(products);
-
-        // 3. Folio ORDER per-company (atómico).
-        const ticket = await this.incrementTicketNumberAction.execute(
-          manager,
-          companyId,
-          TicketSettingType.ORDER,
-        );
-
-        // 3b. TURNO de pedido (modo restaurante). `null` si la feature está
-        // apagada. Atómico y cíclico (reinicia en 1 al superar `turnos_max`);
-        // participa de esta transacción → si el pedido falla, el turno no se
-        // quema. Se imprime en un 2º ticket y queda fijo en el pedido.
-        const turnNumber = await this.assignTurnNumberAction.execute(manager, companyId);
-
-        // 4. INSERT SaleInvoice con los totales del payload. El cliente PlacePos
-        // los pre-calcula con Big.js; el service los persiste tal cual (paridad
-        // con `saleOperations.createOrder`). `subtotal = total` y `tax_total = 0`
-        // porque el modo servidor/cliente no maneja IVA en ventas.
-        // Contabilidad de caja: `sold_at` marca el instante en que la factura se
-        // realizó/cobró (cuándo entra el dinero). Aquí SIEMPRE se crea ORDER
-        // (paridad PlacePos: la conversión a SALE ocurre al cobrar vía
-        // `POST /payments`, donde `ProcessPaymentAction` fija `sold_at = now()`).
-        // Si este action creara una venta DIRECTA (ticket_type SALE), `sold_at`
-        // nacería = `created_at`; para un ORDER queda NULL (no entra a los
-        // reportes de ventas, que filtran ticket_type = 'SALE').
-        const ticketType = TicketType.ORDER as TicketType;
-        const saleEntity = manager.create(SaleInvoice, {
-          company_id: String(companyId),
-          ticket_type: ticketType,
-          sold_at: ticketType === TicketType.SALE ? new Date() : null,
-          ticket_number: ticket.formatted,
-          sale_number: null,
-          customer_id: customer ? customer.id : null,
-          // Snapshot del nombre tal como llegó del cliente (paridad con
-          // `saleOperations.createOrder`: persiste payload.customer_name ?? null
-          // sin tocar el customer.name del BD).
-          customer_name: dto.customer_name ?? null,
-          table_id: orderTable?.tableId ?? null,
-          salon_id: orderTable?.salonId ?? null,
-          table_name: orderTable?.tableName ?? null,
-          salon_name: orderTable?.salonName ?? null,
-          turn_number: turnNumber,
-          subtotal: dto.total,
-          tax_total: 0,
-          total: dto.total,
-          cost: dto.cost,
-          profit: dto.profit,
-          margin: dto.margin,
-          notes: dto.notes?.trim() || null,
-          client_operation_id: operationId,
-          created_by: createdBy.fullName,
-          created_by_id: String(createdBy.id),
-          is_deleted: false,
-        });
-
-        let savedSale: SaleInvoice;
-        try {
-          savedSale = await manager.save(SaleInvoice, saleEntity);
-        } catch (error) {
-          translateSaleConstraintError(error);
-          throw error;
-        }
-
-        // HISTORIAL: primer evento de la línea de tiempo — pedido/venta creado.
-        await recordSaleStatus(manager, {
-          companyId,
-          saleInvoiceId: Number(savedSale.id),
-          eventType: SaleStatusEventType.CREATED,
-          createdBy: createdBy.fullName,
-        });
-
-        // 5. Mapear y persistir las líneas. Los campos cloud-only sin equivalente
-        // en el payload local quedan en su default neutro: `subtotal = total`,
-        // `iva_percentage = 0`, `iva_amount = 0`, `packaging_id = null`,
-        // `product_price_id = null`. La columna `description` recibe el `name`
-        // (snapshot del producto).
-        // FIX #2: snapshot del factor de empaque por línea. `packaging_value`
-        // congela `packagings.value` vigente (resuelto dentro de la TX). Modo
-        // cross-company (set accesible = propios + compartidos por el principal)
-        // porque el DEDUCT al cobrar también lo usa → el catálogo compartido
-        // también queda con su factor congelado. `packaging_id` se puebla desde
-        // el producto para traza.
-        const packagingValueByItem = await resolvePackagingValues(
-          manager,
-          companyId,
-          productIdNums,
-          true,
-        );
-        const packagingIdByItem = new Map<number, string | null>(
-          products.map((p) => [
-            Number(p.id),
-            p.packaging_id !== null ? String(p.packaging_id) : null,
-          ]),
-        );
-        // FIX #3: snapshot de la receta por línea, en el mismo momento y con el
-        // mismo criterio cross-company que el empaque. Solo los COMBO entran al
-        // mapa; el resto persiste `combo_recipe = null`.
-        // Reusa el set accesible del paso 2 en vez de recalcularlo: el
-        // predicado de accesibilidad es caro y esta es la ruta más caliente.
-        const comboRecipeByItem = await resolveComboRecipes(
-          manager,
-          companyId,
-          productIdNums,
-          true,
-          accessible,
-        );
-        const lineRows = dto.items.map((item) =>
-          mapItemToLineRow(item, savedSale.id, companyId, {
-            packagingId: packagingIdByItem.get(Number(item.item_id)) ?? null,
-            packagingValue: packagingValueByItem.get(Number(item.item_id)) ?? null,
-            comboRecipe: comboRecipeByItem.get(Number(item.item_id)) ?? null,
-          }),
-        );
-        await manager.insert(SaleInvoiceLine, lineRows);
-
-        // 6. Pagos inline (opcional — PlacePos no los envía al crear ORDER).
-        const paymentsInput: CreateSalePaymentInlineDto[] = dto.payments ?? [];
-        let paidSum: Big = toBig(0);
-        const ticketReference = ticket.formatted;
-        const actor: SalePaymentActor = { id: createdBy.id, fullName: createdBy.fullName };
-        for (const p of paymentsInput) {
-          const result = await applySalePayment(manager, this.financialMovementsService, {
-            saleId: Number(savedSale.id),
-            companyId,
-            ticketReference,
-            customerId: dto.customer_id ?? null,
-            account_type: p.account_type,
-            account_id: p.account_id,
-            amount: p.amount,
-            change_amount: p.change_amount,
-            uuid: p.uuid ?? null,
-            actor,
-          });
-          if (!result.idempotent) {
-            paidSum = paidSum.plus(toBig(p.amount));
-          } else {
-            paidSum = paidSum.plus(toBig(result.payment.amount));
-          }
-        }
-
-        const totalBig = toBig(dto.total);
-        if (paidSum.gt(totalBig)) {
-          throw new UnprocessableEntityException(
-            `La suma de pagos excede el total de la venta (${totalBig.toFixed(2)})`,
-          );
-        }
-
-        const balanceBig = totalBig.minus(paidSum);
-        if (balanceBig.gt(0) && paymentsInput.length > 0) {
-          // Solo creamos SaleCredit si se aplicaron pagos parciales. Si no
-          // vinieron pagos (caso PlacePos al crear ORDER), la venta queda sin
-          // crédito — el saldo se gestiona al cobrar vía POST /payments.
-          if (!customer) {
-            throw new UnprocessableEntityException(
-              'No se puede dejar saldo pendiente en una venta sin cliente identificado',
-            );
-          }
-          await this.createSaleCredit(
-            manager,
-            savedSale,
-            customer,
-            dto.total,
-            Number(paidSum.toFixed(2)),
-            Number(balanceBig.toFixed(2)),
-            dto.due_date,
-            companyId,
-          );
-        }
-
-        this.logger.log({
-          event: 'sale.created',
-          companyId,
-          saleId: Number(savedSale.id),
-          ticketNumber: ticket.formatted,
-          customerId: customer ? Number(customer.id) : null,
-          total: dto.total,
-          paid: Number(paidSum.toFixed(2)),
-          balance: Number(balanceBig.toFixed(2)),
-          actorId: createdBy.id,
-        });
-
-        return this.loadAggregate(manager, Number(savedSale.id), companyId);
-      });
+      return await this.dataSource.transaction<SaleAggregate>((manager) =>
+        this.runInTransaction(manager, dto, companyId, createdBy),
+      );
     } catch (error) {
       // Carrera real: dos requests con la MISMA llave llegaron casi a la vez; el
       // índice único parcial dejó pasar solo una. El perdedor recupera la venta
@@ -364,6 +138,250 @@ export class CreateSaleAction {
       }
       throw error;
     }
+  }
+
+  /**
+   * Mismo registro que `execute`, pero dentro de una transacción AJENA. Lo usa
+   * Place (asistente IA) para que el pedido y la marca "operación confirmada"
+   * hagan commit juntos: o quedan los dos, o ninguno. Es la única vía de
+   * creación de ventas — no hay una segunda copia de esta lógica.
+   *
+   * No aplica el fast-path idempotente ni recupera la carrera por
+   * `client_operation_id`: eso es del caller (`execute` lo hace; Place lo
+   * garantiza con su pendiente bloqueada).
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    dto: CreateSaleDto,
+    companyId: number,
+    createdBy: SaleCreator,
+  ): Promise<SaleAggregate> {
+    const operationId = dto.client_operation_id?.trim() || null;
+
+    // 1. Customer (opcional). Si viene, validar + lock.
+    let customer: Customer | null = null;
+    if (typeof dto.customer_id === 'number' && dto.customer_id > 0) {
+      customer = await manager.findOne(Customer, {
+        where: {
+          id: String(dto.customer_id),
+          company_id: String(companyId),
+          is_archived: false,
+        },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!customer) {
+        throw new UnprocessableEntityException('Cliente no encontrado o archivado');
+      }
+    }
+
+    // 1b. Mesa (opcional, modo restaurante — botón "Enviar a"). Valida la
+    // mesa y la OCUPA dentro de esta misma transacción, con lock para que
+    // dos pedidos concurrentes no tomen la misma mesa.
+    let orderTable: OrderTableResult | null = null;
+    if (typeof dto.table_id === 'number' && dto.table_id > 0) {
+      orderTable = await resolveAndOccupyOrderTable(
+        manager,
+        companyId,
+        dto.table_id,
+        typeof dto.salon_id === 'number' && dto.salon_id > 0 ? dto.salon_id : null,
+      );
+    }
+
+    // 2. Productos: validar que cada item_id sea ACCESIBLE para la company
+    // activa (propio O compartido por el principal — FASE 2) y sea vendible
+    // (SIMPLE o COMBO) y no archivado. Cross-tenant guard crítico: un producto
+    // NO accesible (de otra company sin share) NO aparece en el set → se
+    // rechaza igual que antes.
+    const productIdNums = Array.from(new Set(dto.items.map((l) => Number(l.item_id))));
+    const accessible = await resolveAccessibleProducts(manager, companyId, productIdNums);
+    if (accessible.size !== productIdNums.length) {
+      throw new BadRequestException('Uno o más productos no existen');
+    }
+    // Validar product_type/is_archived consultando por id (sin filtro de
+    // company: los ids ya pasaron el gate de accesibilidad).
+    const products = await manager.find(Product, {
+      where: { id: In(productIdNums.map(String)) },
+    });
+    assertSellableProducts(products);
+
+    // 3. Folio ORDER per-company (atómico).
+    const ticket = await this.incrementTicketNumberAction.execute(
+      manager,
+      companyId,
+      TicketSettingType.ORDER,
+    );
+
+    // 3b. TURNO de pedido (modo restaurante). `null` si la feature está
+    // apagada. Atómico y cíclico (reinicia en 1 al superar `turnos_max`);
+    // participa de esta transacción → si el pedido falla, el turno no se
+    // quema. Se imprime en un 2º ticket y queda fijo en el pedido.
+    const turnNumber = await this.assignTurnNumberAction.execute(manager, companyId);
+
+    // 4. INSERT SaleInvoice con los totales del payload. El cliente PlacePos
+    // los pre-calcula con Big.js; el service los persiste tal cual (paridad
+    // con `saleOperations.createOrder`). `subtotal = total` y `tax_total = 0`
+    // porque el modo servidor/cliente no maneja IVA en ventas.
+    // Contabilidad de caja: `sold_at` marca el instante en que la factura se
+    // realizó/cobró (cuándo entra el dinero). Aquí SIEMPRE se crea ORDER
+    // (paridad PlacePos: la conversión a SALE ocurre al cobrar vía
+    // `POST /payments`, donde `ProcessPaymentAction` fija `sold_at = now()`).
+    // Si este action creara una venta DIRECTA (ticket_type SALE), `sold_at`
+    // nacería = `created_at`; para un ORDER queda NULL (no entra a los
+    // reportes de ventas, que filtran ticket_type = 'SALE').
+    const ticketType = TicketType.ORDER as TicketType;
+    const saleEntity = manager.create(SaleInvoice, {
+      company_id: String(companyId),
+      ticket_type: ticketType,
+      sold_at: ticketType === TicketType.SALE ? new Date() : null,
+      ticket_number: ticket.formatted,
+      sale_number: null,
+      customer_id: customer ? customer.id : null,
+      // Snapshot del nombre tal como llegó del cliente (paridad con
+      // `saleOperations.createOrder`: persiste payload.customer_name ?? null
+      // sin tocar el customer.name del BD).
+      customer_name: dto.customer_name ?? null,
+      table_id: orderTable?.tableId ?? null,
+      salon_id: orderTable?.salonId ?? null,
+      table_name: orderTable?.tableName ?? null,
+      salon_name: orderTable?.salonName ?? null,
+      turn_number: turnNumber,
+      subtotal: dto.total,
+      tax_total: 0,
+      total: dto.total,
+      cost: dto.cost,
+      profit: dto.profit,
+      margin: dto.margin,
+      notes: dto.notes?.trim() || null,
+      client_operation_id: operationId,
+      created_by: createdBy.fullName,
+      created_by_id: String(createdBy.id),
+      is_deleted: false,
+    });
+
+    let savedSale: SaleInvoice;
+    try {
+      savedSale = await manager.save(SaleInvoice, saleEntity);
+    } catch (error) {
+      translateSaleConstraintError(error);
+      throw error;
+    }
+
+    // HISTORIAL: primer evento de la línea de tiempo — pedido/venta creado.
+    await recordSaleStatus(manager, {
+      companyId,
+      saleInvoiceId: Number(savedSale.id),
+      eventType: SaleStatusEventType.CREATED,
+      createdBy: createdBy.fullName,
+    });
+
+    // 5. Mapear y persistir las líneas. Los campos cloud-only sin equivalente
+    // en el payload local quedan en su default neutro: `subtotal = total`,
+    // `iva_percentage = 0`, `iva_amount = 0`, `packaging_id = null`,
+    // `product_price_id = null`. La columna `description` recibe el `name`
+    // (snapshot del producto).
+    // FIX #2: snapshot del factor de empaque por línea. `packaging_value`
+    // congela `packagings.value` vigente (resuelto dentro de la TX). Modo
+    // cross-company (set accesible = propios + compartidos por el principal)
+    // porque el DEDUCT al cobrar también lo usa → el catálogo compartido
+    // también queda con su factor congelado. `packaging_id` se puebla desde
+    // el producto para traza.
+    const packagingValueByItem = await resolvePackagingValues(
+      manager,
+      companyId,
+      productIdNums,
+      true,
+    );
+    const packagingIdByItem = new Map<number, string | null>(
+      products.map((p) => [Number(p.id), p.packaging_id !== null ? String(p.packaging_id) : null]),
+    );
+    // FIX #3: snapshot de la receta por línea, en el mismo momento y con el
+    // mismo criterio cross-company que el empaque. Solo los COMBO entran al
+    // mapa; el resto persiste `combo_recipe = null`.
+    // Reusa el set accesible del paso 2 en vez de recalcularlo: el
+    // predicado de accesibilidad es caro y esta es la ruta más caliente.
+    const comboRecipeByItem = await resolveComboRecipes(
+      manager,
+      companyId,
+      productIdNums,
+      true,
+      accessible,
+    );
+    const lineRows = dto.items.map((item) =>
+      mapItemToLineRow(item, savedSale.id, companyId, {
+        packagingId: packagingIdByItem.get(Number(item.item_id)) ?? null,
+        packagingValue: packagingValueByItem.get(Number(item.item_id)) ?? null,
+        comboRecipe: comboRecipeByItem.get(Number(item.item_id)) ?? null,
+      }),
+    );
+    await manager.insert(SaleInvoiceLine, lineRows);
+
+    // 6. Pagos inline (opcional — PlacePos no los envía al crear ORDER).
+    const paymentsInput: CreateSalePaymentInlineDto[] = dto.payments ?? [];
+    let paidSum: Big = toBig(0);
+    const ticketReference = ticket.formatted;
+    const actor: SalePaymentActor = { id: createdBy.id, fullName: createdBy.fullName };
+    for (const p of paymentsInput) {
+      const result = await applySalePayment(manager, this.financialMovementsService, {
+        saleId: Number(savedSale.id),
+        companyId,
+        ticketReference,
+        customerId: dto.customer_id ?? null,
+        account_type: p.account_type,
+        account_id: p.account_id,
+        amount: p.amount,
+        change_amount: p.change_amount,
+        uuid: p.uuid ?? null,
+        actor,
+      });
+      if (!result.idempotent) {
+        paidSum = paidSum.plus(toBig(p.amount));
+      } else {
+        paidSum = paidSum.plus(toBig(result.payment.amount));
+      }
+    }
+
+    const totalBig = toBig(dto.total);
+    if (paidSum.gt(totalBig)) {
+      throw new UnprocessableEntityException(
+        `La suma de pagos excede el total de la venta (${totalBig.toFixed(2)})`,
+      );
+    }
+
+    const balanceBig = totalBig.minus(paidSum);
+    if (balanceBig.gt(0) && paymentsInput.length > 0) {
+      // Solo creamos SaleCredit si se aplicaron pagos parciales. Si no
+      // vinieron pagos (caso PlacePos al crear ORDER), la venta queda sin
+      // crédito — el saldo se gestiona al cobrar vía POST /payments.
+      if (!customer) {
+        throw new UnprocessableEntityException(
+          'No se puede dejar saldo pendiente en una venta sin cliente identificado',
+        );
+      }
+      await this.createSaleCredit(
+        manager,
+        savedSale,
+        customer,
+        dto.total,
+        Number(paidSum.toFixed(2)),
+        Number(balanceBig.toFixed(2)),
+        dto.due_date,
+        companyId,
+      );
+    }
+
+    this.logger.log({
+      event: 'sale.created',
+      companyId,
+      saleId: Number(savedSale.id),
+      ticketNumber: ticket.formatted,
+      customerId: customer ? Number(customer.id) : null,
+      total: dto.total,
+      paid: Number(paidSum.toFixed(2)),
+      balance: Number(balanceBig.toFixed(2)),
+      actorId: createdBy.id,
+    });
+
+    return this.loadAggregate(manager, Number(savedSale.id), companyId);
   }
 
   /**
