@@ -134,6 +134,38 @@ export function accessibleProductsPredicate(
 }
 
 /**
+ * Companies cuyos productos PUEDEN pasar `accessibleProductsPredicate` (sin la
+ * regla 5 de combos): un SUPERCONJUNTO EXACTO de las reglas 1-4.
+ *
+ *   1. propio                        → la company activa;
+ *   2. share company-level A → B     → A (`source_company_id`);
+ *   3. share product-level           → la company DUEÑA del producto compartido
+ *                                      (no se asume que sea el `source`);
+ *   4. hijo de un padre compartido   → el hijo vive en la company del padre
+ *                                      (el predicado exige `parent.company_id =
+ *                                      p.company_id`), que ya cubren 2 y 3.
+ *
+ * Sirve para anteponer `p.company_id IN (...)` al predicado: Postgres usa el
+ * índice por company en vez de evaluar el `OR` del predicado sobre el catálogo
+ * de TODOS los tenants. El gate de acceso real sigue siendo el predicado.
+ *
+ * @param companyParam placeholder de la company activa (p. ej. `$1`).
+ */
+export function accessibleCompanyIdsSql(companyParam: string): string {
+  return `
+    SELECT ${companyParam}::bigint
+    UNION
+    SELECT s.source_company_id
+      FROM inventory_shares s
+     WHERE s.target_company_id = ${companyParam}::bigint AND s.product_id IS NULL
+    UNION
+    SELECT sp.company_id
+      FROM inventory_shares s
+      JOIN products sp ON sp.id = s.product_id
+     WHERE s.target_company_id = ${companyParam}::bigint AND s.product_id IS NOT NULL`;
+}
+
+/**
  * Resultado de resolver un producto accesible: su id y la company DUEÑA REAL
  * (donde vive su fila y su stock). Para un producto propio, `ownerCompanyId`
  * == la company activa; para uno compartido, la company del principal.

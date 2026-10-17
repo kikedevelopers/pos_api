@@ -71,7 +71,8 @@ Si el cliente cierra la conexión, la generación se aborta (deja de gastar toke
 ## Herramientas (function calling)
 
 **Todas** filtran por `company_id` y son **de solo lectura**, salvo las tres de
-gastos (ver "Registrar y archivar gastos"). Antes de ejecutarse se revalida el
+gastos (ver "Registrar y archivar gastos") y las dos de pedidos (ver "Registrar
+ventas como pedido por cobrar"). Antes de ejecutarse se revalida el
 permiso: que el modelo invente una llamada no basta.
 
 Cada herramienta lleva además un `summary` en el idioma del comerciante — es lo
@@ -94,6 +95,8 @@ declaración es para el modelo; el `summary`, para la persona.
 | `register_expense` ✍️ | `canAccessExpenses` + administrador | Prepara un gasto variable (SQL de fuentes + `ai_pending_actions`) |
 | `void_expense` ✍️ | `canAccessExpenses` + administrador | Prepara el archivo de un gasto variable (SQL sobre `expenses`) |
 | `confirm_expense_action` ✍️ | `canAccessExpenses` + administrador | Ejecuta lo preparado con `CreateExpenseAction` / `VoidExpenseAction` |
+| `prepare_sale` ✍️ | `canAccessPOS` + administrador | Interpreta cliente + productos (pool SQL + motor en memoria), arma la factura y la deja en `ai_pending_actions` |
+| `confirm_sale` ✍️ | `canAccessPOS` + administrador | Revalida y crea el pedido con `CreateSaleAction.runInTransaction` |
 
 `search_suppliers` entrega la información completa de uno o varios proveedores y
 sus compras: datos de contacto y cuentas para consignar, cuánto se le debe hoy
@@ -189,6 +192,91 @@ Tabla `ai_pending_actions` (migración `1747012900000`): una sola `PENDING` por
 `__tests__/run-ai-tool-expense-gate.spec.ts` y `test/ai-expense-tools.e2e-spec.ts`
 (BD real: saldos, carreras, aislamiento entre usuarios y companies).
 
+## Registrar ventas como pedido por cobrar (escritura, 17 oct 2026)
+
+"Registra una venta a María Muñoz con 2 libras de maizena y una de fécula de
+yuca" → Place interpreta los productos, muestra la **vista previa de la factura**
+(cliente, tabla producto/cantidad/precio/total y TOTAL) y, con el "sí", crea un
+**PEDIDO (ORDER)** que queda en Tickets del POS **para cobrarlo allí**. El pedido
+no mueve dinero ni descuenta inventario: eso pasa al cobrarlo, con sus reglas de
+siempre (margen, inventario estricto, `can_charge_orders`). Decisión de producto:
+pedido por cobrar (no venta cobrada); precio de la lista (el primero por
+defecto, otro nivel por nombre) **o manual**.
+
+**Quién:** igual que los gastos — owner/superadmin o rol de fábrica
+**Administrador**, y además el permiso `canAccessPOS`. Cajero/Vendedor no.
+
+**Interpretación** (`internal/sale-product-matching.ts`, puro y probado caso por
+caso):
+
+- Cada texto se parte en **núcleo** (qué es: "fecula", "maiz") y **tamaño**
+  (libra = 500 g, media = 250, cuarto = 125, kilo, arroba, gramos, ml/litros,
+  y empaques caja/paca/unidad…). Sin tildes, mayúsculas ni conectores; tolera
+  plurales, abreviaturas (≥4 letras) y un error de tipeo (≥5 letras).
+- El modelo manda `query` (como lo dijo el usuario, con tamaño y sin cantidad) y
+  `alternatives` (sinónimos/genéricos: "maizena" → "fécula de maíz"). Sin
+  alternativa, "maizena" **no se adivina**.
+- Resuelve solo si hay **un único mejor** candidato del tamaño pedido. Empates →
+  `ambiguous` con opciones (precio y existencias). Tamaño inexistente →
+  `size_unavailable` con los tamaños de la familia, **primero los menores**, y la
+  cantidad equivalente + total ("2 libras" = 4 × media libra = 1000 × gramo).
+- Guard de **fracción contada dos veces**: "media libra" con cantidad 0.5 (= un
+  cuarto) se rechaza para que el modelo la corrija (lo hacía en pruebas reales).
+- SKU / código de barras exacto resuelve directo; `product_id` / `customer_id`
+  elegidos de una lista anterior se revalidan contra la company.
+- Cliente por nombre (todas las palabras, sin tildes, "ñ" = "n"), documento o
+  teléfono; ambiguo → opciones; sin cliente → mostrador. Place **no crea
+  clientes**.
+
+**Precio** (`internal/sale-tool-helpers.ts`): matemática exacta del POS
+(`posLineMath` + `saleSchema`) con Big.js. Precio manual: nunca bajo el costo
+(regla del POS) ni bajo el margen mínimo `pos_margins` (el de catálogo no se
+valida: es el configurado). Mismo producto al mismo precio → una línea (como el
+carrito). Existencias insuficientes → advertencia, no bloqueo (se valida al
+cobrar).
+
+**Confirmación:** mismo guard que los gastos (`internal/pending-confirmation.ts`,
+compartido): petición posterior, responde a ESE resumen, "sí" explícito, 15 min.
+`confirm_sale` re-pone precio a cada línea **dentro de la transacción** y exige
+que lo visible no haya cambiado (producto vendible/accesible, nombre, cantidad,
+precio, total) — si cambió → `changed` y vence. El costo sí se refresca (el
+usuario no lo vio). Crea con `CreateSaleAction.runInTransaction` (folio, turno,
+snapshot de empaque/receta, historial) + `EXECUTED` en la misma transacción;
+`client_operation_id` = uuid de la pendiente. Tras el commit emite
+`ticket:changed` como `POST /sales`. `confirm_expense_action` y `confirm_sale`
+no ejecutan la pendiente del otro (`wrong_operation`).
+
+**Vista previa estructurada (evento SSE `card`):** la factura que ve el usuario
+NO la escribe el modelo. Cuando `prepare_sale` devuelve `confirmation_required`,
+`RunAiToolAction` adjunta una tarjeta (`internal/tool-cards.ts`) con el `summary`
+exacto del snapshot guardado y `StreamAiChatAction` la emite como
+`event: card` (`{kind: 'sale_preview'}`; al crear, `{kind: 'sale_created'}`). El
+chat (placepos `components/SaleCard.tsx`, PWA `components/SaleCard.svelte`) la
+dibuja tal cual, valida el payload de forma estricta (`lib/cards.ts`: uno
+dudoso no se muestra) y la persiste. Una vista previa nueva marca las
+anteriores como "Reemplazada" y el pedido creado la marca "Pedido creado". Al
+modelo se le instruye NO repetir la tabla: acompaña con una o dos frases. Un
+turno de Place que solo trajo la tarjeta viaja como `(Se mostró la vista
+previa del pedido.)` para que el "sí" siguiente conserve la secuencia
+usuario → Place → usuario.
+
+**Velocidad:** la preparación hace ≤ 4 viajes cortos (pool liviano de candidatos
+para todas las líneas en UNA consulta, detalle de precios solo de los elegidos,
+cliente y márgenes; los independientes en paralelo). El pool prefiltra por las
+companies visibles (propia + las que comparten) para usar
+`idx_products_company_pos` — superconjunto exacto del predicado de acceso,
+verificado con `EXCEPT` en 62 companies. Medido: pool 0,7–6 ms (tenant de 2.400
+productos), detalle 0,3 ms, cliente 1 ms; la herramienta completa 17–40 ms y la
+creación ~80 ms. El resto del turno (~2–3 s) es el modelo.
+
+Migración `1747012910000`: `ai_pending_actions.action_type` acepta
+`CREATE_SALE`. Pruebas: `__tests__/sale-product-matching.spec.ts`,
+`sale-tool-helpers.spec.ts`, `pending-confirmation.spec.ts`,
+`run-ai-tool-sale-gate.spec.ts` y `test/ai-sale-tools.e2e-spec.ts` (BD real:
+interpretación, tamaños, precio manual/margen, confirmación, exactly-once con
+carreras, cambios entre vista previa y "sí", aislamiento por tenant y sucursal
+con catálogo compartido).
+
 ## Configuración
 
 | Variable | Por defecto | Notas |
@@ -217,6 +305,7 @@ modules/ai/
 │   ├── stream-ai-chat.action.ts  # ciclo generar → herramientas → generar
 │   ├── run-ai-tool.action.ts     # ejecuta las herramientas contra la BD
 │   ├── run-ai-expense-tool.action.ts # registrar/archivar gastos (preparar + confirmar)
+│   ├── run-ai-sale-tool.action.ts # pedidos por cobrar (preparar + confirmar)
 │   ├── generate-ai-greeting.action.ts # saludo de bienvenida (+ caché 30 min)
 │   └── resolve-ai-actor.action.ts# permisos efectivos + contexto del negocio
 └── internal/
@@ -230,9 +319,13 @@ modules/ai/
     ├── tool-args.ts              # lectura defensiva de argumentos (puro)
     ├── expense-tool-helpers.ts   # monto, concepto, fuente, "sí" explícito (puro)
     ├── expense-tool-sql.ts       # SQL de las herramientas de gastos
+    ├── pending-confirmation.ts   # guard del "sí" (gastos y pedidos) (puro)
+    ├── sale-product-matching.ts  # interpretar productos y tamaños (puro)
+    ├── sale-tool-helpers.ts      # cantidades, precio, totales del POS (puro)
+    ├── sale-tool-sql.ts          # SQL de la herramienta de pedidos
     └── sse-writer.ts             # escritura SSE + heartbeat
 ```
 
-Sin entidades. La única tabla propia es `ai_pending_actions` (operaciones de
-gasto esperando el "sí"), manejada con SQL plano; el historial del chat sigue
+Sin entidades. La única tabla propia es `ai_pending_actions` (gastos y pedidos
+esperando el "sí"), manejada con SQL plano; el historial del chat sigue
 viviendo en el cliente.

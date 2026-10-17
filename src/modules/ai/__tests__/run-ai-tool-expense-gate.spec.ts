@@ -4,6 +4,7 @@ import type { DashboardService } from '@/modules/dashboard/dashboard.service';
 import type { TreasuryService } from '@/modules/treasury/treasury.service';
 
 import type { RunAiExpenseToolAction } from '../actions/run-ai-expense-tool.action';
+import type { RunAiSaleToolAction } from '../actions/run-ai-sale-tool.action';
 import { RunAiToolAction } from '../actions/run-ai-tool.action';
 import type { AiToolRequestContext } from '../internal/expense-tool-helpers';
 import type { AiToolActor } from '../internal/tool-catalog';
@@ -36,6 +37,7 @@ describe('RunAiToolAction · gate de las herramientas de gastos', () => {
       {} as unknown as DashboardService,
       {} as unknown as TreasuryService,
       expenseTools as unknown as RunAiExpenseToolAction,
+      {} as unknown as RunAiSaleToolAction,
     );
     return { action, expenseTools, query };
   };

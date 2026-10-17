@@ -86,6 +86,46 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toContain('solo puedes leer información, nunca modificarla');
   });
 
+  it('sin la herramienta de pedidos no menciona las reglas de ventas', () => {
+    const prompt = buildSystemPrompt(context());
+    expect(prompt).not.toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
+  });
+
+  it('con la herramienta de pedidos explica interpretar, sugerir tamaños y confirmar', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'prepare_sale', description: 'x' },
+          { name: 'confirm_sale', description: 'x' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
+    expect(prompt).toContain('"alternatives"');
+    expect(prompt).toContain('primero los menores');
+    expect(prompt).toContain('Llama confirm_sale SOLO cuando');
+    expect(prompt).toContain('Nunca prepares y confirmes en la misma respuesta');
+    expect(prompt).toContain('registrar ventas como PEDIDO POR COBRAR');
+    expect(prompt).not.toContain('solo puedes leer información, nunca modificarla');
+    expect(prompt).not.toContain('GASTOS: REGISTRAR Y ARCHIVAR');
+  });
+
+  it('con gastos y pedidos lista ambas modificaciones permitidas', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'register_expense', description: 'x' },
+          { name: 'prepare_sale', description: 'x' },
+        ],
+      }),
+    );
+    expect(prompt).toContain(
+      'registrar y archivar GASTOS VARIABLES y registrar ventas como PEDIDO POR COBRAR',
+    );
+    expect(prompt).toContain('GASTOS: REGISTRAR Y ARCHIVAR');
+    expect(prompt).toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
+  });
+
   it('recuerda las reglas financieras del negocio', () => {
     const prompt = buildSystemPrompt(context());
     expect(prompt).toContain('Los gastos se restan de la ganancia');

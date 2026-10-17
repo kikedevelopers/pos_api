@@ -14,6 +14,7 @@ import { describeBlockReason, describeFinishReason } from '../internal/gemini-ss
 import type { ChatTurn, GeminiContent, GeminiPart } from '../internal/gemini.types';
 import { buildSystemPrompt } from '../internal/system-prompt';
 import { AI_TOOLS, declarationsFor, isToolAllowed } from '../internal/tool-catalog';
+import type { AiToolCard } from '../internal/tool-cards';
 
 import { ResolveAiActorAction } from './resolve-ai-actor.action';
 import { RunAiToolAction } from './run-ai-tool.action';
@@ -22,6 +23,7 @@ import { RunAiToolAction } from './run-ai-tool.action';
 export type AiStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; name: string; label: string; status: 'running' | 'done' | 'error' }
+  | { type: 'card'; card: AiToolCard }
   | { type: 'done'; notice?: string }
   | { type: 'error'; message: string };
 
@@ -194,6 +196,12 @@ export class StreamAiChatAction {
           label: execution.label,
           status: execution.ok ? 'done' : 'error',
         });
+
+        // La vista previa (o el pedido creado) se dibuja con los datos del
+        // servidor, nunca con lo que el modelo escriba de ella.
+        if (execution.card) {
+          emit({ type: 'card', card: execution.card });
+        }
 
         this.logger.log(
           {

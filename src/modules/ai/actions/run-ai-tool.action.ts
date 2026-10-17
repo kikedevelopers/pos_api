@@ -9,6 +9,7 @@ import { parseUtcRange, todayUtcDate } from '@/modules/reports/internal/range';
 import { TreasuryService } from '@/modules/treasury/treasury.service';
 
 import type { AiToolRequestContext } from '../internal/expense-tool-helpers';
+import { cardForToolResult, type AiToolCard } from '../internal/tool-cards';
 import { readDate, readDateRange, readInt, readNumber, readString } from '../internal/tool-args';
 import {
   accentInsensitiveLike,
@@ -27,6 +28,7 @@ import {
 } from '../internal/tool-catalog';
 
 import { RunAiExpenseToolAction } from './run-ai-expense-tool.action';
+import { RunAiSaleToolAction } from './run-ai-sale-tool.action';
 
 /** Resultado de ejecutar una herramienta pedida por el modelo. */
 export interface AiToolExecution {
@@ -37,6 +39,8 @@ export interface AiToolExecution {
   response: Record<string, unknown>;
   /** Milisegundos que tardó — solo para el log. */
   durationMs: number;
+  /** Tarjeta que el chat dibuja con los datos exactos del servidor (vista previa de un pedido). */
+  card?: AiToolCard;
 }
 
 const num = (value: unknown): number => preciseNumber(value ?? 0, 2);
@@ -54,9 +58,10 @@ const PURCHASE_PAYMENT_LABEL: Record<string, string> = {
  *
  * Invariantes:
  *   - SOLO lectura, salvo las herramientas de gastos (`register_expense`,
- *     `void_expense`, `confirm_expense_action`), que delegan en
- *     `RunAiExpenseToolAction`: exigen rol administrador y nunca escriben sin
- *     la confirmación explícita del usuario en un mensaje posterior.
+ *     `void_expense`, `confirm_expense_action`) y de pedidos (`prepare_sale`,
+ *     `confirm_sale`), que delegan en `RunAiExpenseToolAction` /
+ *     `RunAiSaleToolAction`: exigen rol administrador y nunca escriben sin la
+ *     confirmación explícita del usuario en un mensaje posterior.
  *   - TODA query filtra por `company_id` (multi-tenant estricto).
  *   - Se revalida el permiso antes de ejecutar: que el modelo "invente" una
  *     llamada a una herramienta que no le declaramos no basta para ejecutarla.
@@ -72,6 +77,7 @@ export class RunAiToolAction {
     private readonly dashboardService: DashboardService,
     private readonly treasuryService: TreasuryService,
     private readonly expenseTools: RunAiExpenseToolAction,
+    private readonly saleTools: RunAiSaleToolAction,
   ) {}
 
   /**
@@ -114,11 +120,13 @@ export class RunAiToolAction {
     try {
       const raw = await this.dispatch(companyId, actor, tool.name, args ?? {}, context);
       const response = stripProfitFields(raw, actor.canViewProfit);
+      const card = cardForToolResult(tool.name, response);
       return {
         name: tool.name,
         label: tool.label,
         ok: true,
         response,
+        ...(card ? { card } : {}),
         durationMs: Date.now() - startedAt,
       };
     } catch (error) {
@@ -175,6 +183,10 @@ export class RunAiToolAction {
         return this.expenseTools.prepareVoid(companyId, actor, args, context);
       case 'confirm_expense_action':
         return this.expenseTools.confirm(companyId, actor, context);
+      case 'prepare_sale':
+        return this.saleTools.prepareSale(companyId, actor, args, context);
+      case 'confirm_sale':
+        return this.saleTools.confirmSale(companyId, actor, context);
       default:
         return Promise.resolve({ error: `La herramienta "${name}" no está implementada.` });
     }
