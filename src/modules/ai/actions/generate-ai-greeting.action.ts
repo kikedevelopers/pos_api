@@ -9,8 +9,10 @@ import {
   describeTopics,
   sanitizeGreeting,
 } from '../internal/greeting';
+import { EMPTY_USAGE } from '../internal/ai-usage';
 import { buildGeminiRequest } from '../internal/gemini-request';
 import { allowedToolsFor } from '../internal/tool-catalog';
+import { AiCreditsAction } from './ai-credits.action';
 import { ResolveAiActorAction } from './resolve-ai-actor.action';
 
 export interface AiGreeting {
@@ -55,9 +57,19 @@ export class GenerateAiGreetingAction {
   constructor(
     private readonly resolveActor: ResolveAiActorAction,
     private readonly geminiClient: GeminiClient,
+    private readonly credits: AiCreditsAction,
   ) {}
 
-  async execute(user: AuthUser, companyId: number, now: number = Date.now()): Promise<AiGreeting> {
+  /**
+   * @param allowAi `false` cuando la cuenta ya no tiene créditos del día: se
+   *                usa el saludo fijo y no se gasta ni un token en saludar.
+   */
+  async execute(
+    user: AuthUser,
+    companyId: number,
+    now: number = Date.now(),
+    allowAi = true,
+  ): Promise<AiGreeting> {
     const key = `${companyId}:${user.user_id}`;
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > now) {
@@ -71,11 +83,11 @@ export class GenerateAiGreetingAction {
     };
     const fallback: AiGreeting = { text: buildFallbackGreeting(context), source: 'fallback' };
 
-    if (!this.geminiClient.isEnabled()) {
+    if (!this.geminiClient.isEnabled() || !allowAi) {
       return fallback;
     }
 
-    const greeting = await this.generate(context, fallback);
+    const greeting = await this.generate(context, fallback, { companyId, userId: user.user_id });
     this.remember(key, greeting, now);
     return greeting;
   }
@@ -83,6 +95,7 @@ export class GenerateAiGreetingAction {
   private async generate(
     context: { businessName: string; topics: string[] },
     fallback: AiGreeting,
+    who: { companyId: number; userId: number },
   ): Promise<AiGreeting> {
     try {
       const body = buildGeminiRequest({
@@ -91,10 +104,20 @@ export class GenerateAiGreetingAction {
         maxOutputTokens: GREETING_MAX_OUTPUT_TOKENS,
       });
 
+      const model = this.geminiClient.resolveModel();
       const result = await this.geminiClient.streamRound(body, {
-        model: this.geminiClient.resolveModel(),
+        model,
         // El saludo no se transmite token a token: se entrega entero.
         onText: () => undefined,
+      });
+      // El saludo también consume tokens: va al registro de consumo.
+      await this.credits.recordUsage({
+        company_id: who.companyId,
+        user_id: who.userId ?? null,
+        kind: 'greeting',
+        model,
+        usage: result.usage ?? EMPTY_USAGE,
+        rounds: 1,
       });
 
       if (result.error) {

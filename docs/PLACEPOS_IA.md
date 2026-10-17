@@ -277,6 +277,48 @@ interpretación, tamaños, precio manual/margen, confirmación, exactly-once con
 carreras, cambios entre vista previa y "sí", aislamiento por tenant y sucursal
 con catálogo compartido).
 
+## Créditos diarios y consumo de tokens (17 oct 2026)
+
+**Créditos** (`companies.ai_daily_credits`, migración `1747012920000`): preguntas
+diarias por **negocio** (compartidas por todos sus usuarios), día calendario de
+Colombia. **0 por defecto = bloqueado** (decisión de producto: toda cuenta
+necesita créditos asignados desde kdevs-admin). Cada mensaje a `/ai/chat`
+gasta 1, incluidos los "sí" de confirmación.
+
+- `POST /ai/chat` reserva el crédito **antes** de abrir el stream con un único
+  UPSERT condicionado sobre `ai_daily_credit_usage (company_id, day)` → N
+  mensajes simultáneos nunca pasan el límite (e2e con 10 en paralelo). Sin
+  créditos: **429 `AI_CREDITS_EXHAUSTED`** (`payload.details.credits`). La
+  primera trama SSE es `credits` (lo que queda tras reservar). Si la respuesta
+  falla sin decir nada (error de Gemini/servidor), el crédito se devuelve.
+- `/ai/status` publica `credits {daily_limit, used_today, remaining}`; el saludo
+  sin créditos es el fijo (no gasta tokens).
+- placepos/PWA: con `remaining = 0` la caja de texto se deshabilita y aparece el
+  aviso; el pie muestra "Te quedan N consultas hoy".
+
+**Consumo** (`ai_usage_events`): Gemini manda `usageMetadata` en cada trama;
+`parseUsage` lo lee y cada pregunta registra la SUMA de sus rondas (entrada,
+salida, razonamiento, caché, total, rondas, modelo). El saludo se registra como
+`greeting`. "Entrada" no es solo la pregunta: incluye prompt de sistema,
+declaraciones de herramientas, historial y resultados de consultas (~6.700
+tokens una pregunta corta). Gemini **no** expone saldo ni cuota restante.
+
+Optimización del prompt (17 oct 2026, medido con `countTokens`): la lista de
+herramientas del prompt de sistema lleva solo NOMBRES (sus descripciones ya van
+en las declaraciones; repetirlas costaba ~1.450 tokens por ronda) y el bloque
+variable (negocio, usuario, fecha) va AL FINAL para que el prefijo sea idéntico
+entre negocios y días (caché de Gemini). Resultado: ~13,6 mil → ~10,9 mil tokens
+de entrada por pregunta, con las mismas herramientas, argumentos y cifras en 11
+preguntas reales comparadas antes/después.
+
+Superadmin (`SuperadminAiController`, firma Ed25519): `GET /superadmin/ai/usage`
+(totales, por día de Colombia, por modelo, por negocio), `GET
+/superadmin/tenants/:id/ai` (acceso, créditos de hoy y consumo) y `PATCH
+/superadmin/tenants/:id/ai-credits {daily_credits}`. En kdevs-admin: página
+"Place IA" y tab "Place IA" del negocio (el interruptor de acceso se mudó ahí).
+Pruebas: `test/ai-credits-usage.e2e-spec.ts`, `ai-usage.spec.ts`,
+`ai-controller-credits.spec.ts`, `ai-service-gate.spec.ts`.
+
 ## Configuración
 
 | Variable | Por defecto | Notas |

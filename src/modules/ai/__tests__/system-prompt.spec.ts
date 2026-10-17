@@ -47,9 +47,40 @@ describe('buildSystemPrompt', () => {
     expect(buildSystemPrompt(context())).toContain('Nunca inventes');
   });
 
-  it('lista las herramientas disponibles del actor', () => {
-    const prompt = buildSystemPrompt(context());
-    expect(prompt).toContain('- get_daily_summary: Resumen del día');
+  it('lista las herramientas disponibles del actor (solo nombres)', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'get_daily_summary', description: 'Resumen financiero de un día: ventas…' },
+          { name: 'list_sales', description: 'Lista las ventas de un día una por una…' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('- get_daily_summary, list_sales.');
+  });
+
+  it('NO repite las descripciones de las herramientas (ya van en sus declaraciones)', () => {
+    const description = 'Resumen financiero de un día: ventas en efectivo, consignaciones…';
+    const prompt = buildSystemPrompt(
+      context({ availableTools: [{ name: 'get_daily_summary', description }] }),
+    );
+    expect(prompt).not.toContain(description);
+  });
+
+  it('lo que cambia (negocio, usuario, fecha) va AL FINAL: el inicio es idéntico entre negocios y días', () => {
+    const a = buildSystemPrompt(context());
+    const b = buildSystemPrompt(
+      context({
+        businessName: 'Otra Tienda',
+        userName: 'Ana',
+        userRole: 'empleado',
+        today: '2026-12-01',
+      }),
+    );
+    const marker = 'CONTEXTO DE ESTA CONVERSACIÓN';
+    expect(a.slice(0, a.indexOf(marker))).toBe(b.slice(0, b.indexOf(marker)));
+    expect(a.trimEnd().endsWith('(zona horaria America/Bogota)')).toBe(true);
+    expect(a.indexOf(marker)).toBeGreaterThan(a.indexOf('ESTILO'));
   });
 
   it('avisa cuando el usuario no tiene ninguna herramienta', () => {

@@ -9,6 +9,7 @@ import { RolesModule } from '@/modules/roles/roles.module';
 import { SalesModule } from '@/modules/sales/sales.module';
 import { TreasuryModule } from '@/modules/treasury/treasury.module';
 
+import { AiCreditsAction } from './actions/ai-credits.action';
 import { GenerateAiGreetingAction } from './actions/generate-ai-greeting.action';
 import { ResolveAiActorAction } from './actions/resolve-ai-actor.action';
 import { RunAiExpenseToolAction } from './actions/run-ai-expense-tool.action';
@@ -57,8 +58,10 @@ import { GeminiClient } from './internal/gemini-client';
     RunAiExpenseToolAction,
     RunAiSaleToolAction,
     ResolveAiActorAction,
+    AiCreditsAction,
     GeminiClient,
   ],
-  exports: [AiService],
+  // AiCreditsAction: el panel superadmin asigna créditos y lee el consumo.
+  exports: [AiService, AiCreditsAction],
 })
 export class AiModule {}

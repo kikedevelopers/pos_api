@@ -47,6 +47,8 @@ describe('cardForToolResult', () => {
   });
 });
 
+const usageCredits = { recordUsage: jest.fn().mockResolvedValue(undefined) };
+
 describe('StreamAiChatAction · evento card', () => {
   const round = (over: Partial<GeminiRoundResult>): GeminiRoundResult => ({
     text: '',
@@ -102,7 +104,7 @@ describe('StreamAiChatAction · evento card', () => {
     } as unknown as RunAiToolAction;
 
     const events: AiStreamEvent[] = [];
-    await new StreamAiChatAction(config, gemini, resolver, runTool).execute({
+    await new StreamAiChatAction(config, gemini, resolver, runTool, usageCredits as never).execute({
       user: { user_id: 1 } as AuthUser,
       companyId: 1,
       turns: [{ role: 'user', content: 'véndele a María' }],
@@ -168,7 +170,7 @@ describe('StreamAiChatAction · evento card', () => {
         }),
     } as unknown as RunAiToolAction;
 
-    await new StreamAiChatAction(config, gemini, resolver, runTool).execute({
+    await new StreamAiChatAction(config, gemini, resolver, runTool, usageCredits as never).execute({
       user: { user_id: 1 } as AuthUser,
       companyId: 1,
       turns: [{ role: 'user', content: 'véndele' }],

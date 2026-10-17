@@ -7,15 +7,17 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import type { AiConfig } from '@/config/ai.config';
 import { todayUtcDate } from '@/modules/reports/internal/range';
 
+import { addUsage, EMPTY_USAGE } from '../internal/ai-usage';
 import { extractRequestContext } from '../internal/expense-tool-helpers';
 import { GeminiClient } from '../internal/gemini-client';
 import { buildGeminiRequest, hasSendableContent } from '../internal/gemini-request';
 import { describeBlockReason, describeFinishReason } from '../internal/gemini-sse';
-import type { ChatTurn, GeminiContent, GeminiPart } from '../internal/gemini.types';
+import type { ChatTurn, GeminiContent, GeminiPart, GeminiUsage } from '../internal/gemini.types';
 import { buildSystemPrompt } from '../internal/system-prompt';
 import { AI_TOOLS, declarationsFor, isToolAllowed } from '../internal/tool-catalog';
 import type { AiToolCard } from '../internal/tool-cards';
 
+import { AiCreditsAction } from './ai-credits.action';
 import { ResolveAiActorAction } from './resolve-ai-actor.action';
 import { RunAiToolAction } from './run-ai-tool.action';
 
@@ -33,6 +35,13 @@ export type AiStreamEvent =
   | { type: 'card'; card: AiToolCard }
   | { type: 'done'; notice?: string }
   | { type: 'error'; message: string };
+
+/** Consumo acumulado de una pregunta mientras se responde. */
+interface UsageTracker {
+  usage: GeminiUsage;
+  rounds: number;
+  model: string;
+}
 
 export interface StreamAiChatParams {
   user: AuthUser;
@@ -66,16 +75,37 @@ export class StreamAiChatAction {
     private readonly geminiClient: GeminiClient,
     private readonly resolveActor: ResolveAiActorAction,
     private readonly runTool: RunAiToolAction,
+    private readonly credits: AiCreditsAction,
   ) {}
 
-  async execute({
-    user,
-    companyId,
-    turns,
-    model,
-    emit,
-    signal,
-  }: StreamAiChatParams): Promise<void> {
+  async execute(params: StreamAiChatParams): Promise<void> {
+    // Consumo de TODAS las rondas de esta pregunta; se registra pase lo que pase
+    // (respuesta completa, error, abortada).
+    const tracker: UsageTracker = {
+      usage: EMPTY_USAGE,
+      rounds: 0,
+      model: this.geminiClient.resolveModel(params.model),
+    };
+    try {
+      await this.run(params, tracker);
+    } finally {
+      if (tracker.rounds > 0) {
+        await this.credits.recordUsage({
+          company_id: params.companyId,
+          user_id: params.user.user_id ?? null,
+          kind: 'chat',
+          model: tracker.model,
+          usage: tracker.usage,
+          rounds: tracker.rounds,
+        });
+      }
+    }
+  }
+
+  private async run(
+    { user, companyId, turns, model, emit, signal }: StreamAiChatParams,
+    tracker: UsageTracker,
+  ): Promise<void> {
     const config = this.configService.getOrThrow<AiConfig>('ai');
 
     if (!this.geminiClient.isEnabled()) {
@@ -152,6 +182,9 @@ export class StreamAiChatAction {
           emit({ type: 'delta', text });
         },
       });
+
+      tracker.rounds += 1;
+      tracker.usage = addUsage(tracker.usage, result.usage);
 
       if (signal.aborted) {
         return;

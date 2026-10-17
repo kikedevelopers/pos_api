@@ -77,9 +77,12 @@ export const buildSystemPrompt = ({
     ...(can_create_sales ? ['registrar ventas como PEDIDO POR COBRAR'] : []),
   ];
 
-  const toolLines =
+  // Solo los NOMBRES: la descripción completa de cada herramienta ya le llega a
+  // Gemini en su declaración (function calling). Repetirla aquí costaba ~1.450
+  // tokens por ronda sin aportar nada (medido con countTokens).
+  const toolLine =
     availableTools.length > 0
-      ? availableTools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')
+      ? `- ${availableTools.map((tool) => tool.name).join(', ')}. Cómo y cuándo usar cada una está en su propia descripción.`
       : '- (ninguna: este usuario no tiene permisos para consultar datos del negocio)';
 
   return [
@@ -93,10 +96,6 @@ export const buildSystemPrompt = ({
     '- Recuerdas lo hablado en esta conversación, pero no las anteriores. Si te preguntan por algo de "ayer", consúltalo con las herramientas en vez de recordarlo.',
     '- Si te preguntan algo ajeno al negocio, respóndelo corto si es inofensivo y reencauza hacia lo que sí puedes hacer por el comercio.',
     '',
-    'CONTEXTO',
-    `- Negocio: ${businessName}`,
-    `- Usuario: ${userName} (${userRole})`,
-    `- Fecha de hoy: ${today} (zona horaria America/Bogota)`,
     '- Moneda: peso colombiano (COP). Formatea los montos como $ 1.250.000 (punto para miles, sin decimales salvo que sean relevantes).',
     '',
     'CÓMO TRABAJAS',
@@ -111,7 +110,7 @@ export const buildSystemPrompt = ({
     ...(can_manage_expenses ? EXPENSE_RULES : []),
     ...(can_create_sales ? SALE_RULES : []),
     'HERRAMIENTAS DISPONIBLES PARA ESTE USUARIO',
-    toolLines,
+    toolLine,
     '',
     'REGLAS FINANCIERAS DEL NEGOCIO (respétalas al interpretar los datos)',
     '- Venta neta = venta bruta − notas crédito + notas débito.',
@@ -129,5 +128,13 @@ export const buildSystemPrompt = ({
     canViewProfit
       ? '- Puedes hablar de costos, ganancias y márgenes con este usuario.'
       : '- Este usuario NO tiene permiso para ver costos, ganancias ni márgenes: no los menciones ni los estimes, aunque te los pregunte. Explica que su rol no los tiene habilitados.',
+    '',
+    // Lo que cambia por negocio, usuario y día va AL FINAL: Gemini reutiliza de
+    // su caché solo un prefijo idéntico, así todo lo de arriba se comparte entre
+    // negocios y días.
+    'CONTEXTO DE ESTA CONVERSACIÓN',
+    `- Negocio: ${businessName}`,
+    `- Usuario: ${userName} (${userRole})`,
+    `- Fecha de hoy: ${today} (zona horaria America/Bogota)`,
   ].join('\n');
 };

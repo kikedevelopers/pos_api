@@ -1,9 +1,6 @@
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
-import {
-  GenerateAiGreetingAction,
-  GREETING_TTL_MS,
-} from '../actions/generate-ai-greeting.action';
+import { GenerateAiGreetingAction, GREETING_TTL_MS } from '../actions/generate-ai-greeting.action';
 import type { ResolveAiActorAction } from '../actions/resolve-ai-actor.action';
 import type { GeminiClient } from '../internal/gemini-client';
 import type { GeminiRoundResult } from '../internal/gemini-client';
@@ -28,23 +25,30 @@ const round = (overrides: Partial<GeminiRoundResult> = {}): GeminiRoundResult =>
   ...overrides,
 });
 
+const credits = { recordUsage: jest.fn().mockResolvedValue(undefined) };
+
+beforeEach(() => credits.recordUsage.mockClear());
+
 const build = (
   streamRound: jest.Mock,
   { enabled = true }: { enabled?: boolean } = {},
 ): GenerateAiGreetingAction => {
-  const resolveActor = { execute: jest.fn().mockResolvedValue(actor) } as unknown as ResolveAiActorAction;
+  const resolveActor = {
+    execute: jest.fn().mockResolvedValue(actor),
+  } as unknown as ResolveAiActorAction;
   const geminiClient = {
     isEnabled: () => enabled,
     resolveModel: () => 'gemini-flash-lite-latest',
     streamRound,
   } as unknown as GeminiClient;
 
-  return new GenerateAiGreetingAction(resolveActor, geminiClient);
+  return new GenerateAiGreetingAction(resolveActor, geminiClient, credits as never);
 };
 
 describe('GenerateAiGreetingAction', () => {
   it('entrega el saludo que escribió la IA', async () => {
-    const text = 'Soy Place, el asistente de Esencia & Grano: llevo tus ventas, caja e inventario al día.';
+    const text =
+      'Soy Place, el asistente de Esencia & Grano: llevo tus ventas, caja e inventario al día.';
     const streamRound = jest.fn().mockResolvedValue(round({ text }));
 
     const greeting = await build(streamRound).execute(user, 3);
@@ -53,9 +57,11 @@ describe('GenerateAiGreetingAction', () => {
   });
 
   it('no manda herramientas ni pide streaming de texto', async () => {
-    const streamRound = jest.fn().mockResolvedValue(
-      round({ text: 'Soy Place, el asistente de Esencia & Grano: pregúntame lo que necesites.' }),
-    );
+    const streamRound = jest
+      .fn()
+      .mockResolvedValue(
+        round({ text: 'Soy Place, el asistente de Esencia & Grano: pregúntame lo que necesites.' }),
+      );
 
     await build(streamRound).execute(user, 3);
 
@@ -73,9 +79,11 @@ describe('GenerateAiGreetingAction', () => {
   });
 
   it('cae al saludo fijo si la respuesta no nombra al negocio', async () => {
-    const streamRound = jest.fn().mockResolvedValue(
-      round({ text: 'Soy Place, tu asistente. Pregúntame lo que quieras del negocio.' }),
-    );
+    const streamRound = jest
+      .fn()
+      .mockResolvedValue(
+        round({ text: 'Soy Place, tu asistente. Pregúntame lo que quieras del negocio.' }),
+      );
 
     const greeting = await build(streamRound).execute(user, 3);
 
@@ -142,7 +150,9 @@ describe('GenerateAiGreetingAction', () => {
   it('el saludo no se cruza entre usuarios ni entre negocios', async () => {
     const streamRound = jest
       .fn()
-      .mockResolvedValue(round({ text: 'Soy Place, el asistente de Esencia & Grano: pregúntame.' }));
+      .mockResolvedValue(
+        round({ text: 'Soy Place, el asistente de Esencia & Grano: pregúntame.' }),
+      );
     const action = build(streamRound);
 
     await action.execute(user, 3, 1_000);
@@ -150,5 +160,29 @@ describe('GenerateAiGreetingAction', () => {
     await action.execute(user, 4, 1_000);
 
     expect(streamRound).toHaveBeenCalledTimes(3);
+  });
+
+  it('registra los tokens del saludo como consumo (kind greeting)', async () => {
+    const text =
+      'Soy Place, el asistente de Esencia & Grano: llevo tus ventas, caja e inventario al día.';
+    const usage = {
+      prompt_tokens: 50,
+      output_tokens: 20,
+      thoughts_tokens: 0,
+      cached_tokens: 0,
+      total_tokens: 70,
+    };
+    await build(jest.fn().mockResolvedValue({ ...round({ text }), usage })).execute(user, 3, 0);
+    expect(credits.recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ company_id: 3, kind: 'greeting', usage, rounds: 1 }),
+    );
+  });
+
+  it('sin créditos (allowAi = false) no llama a Gemini ni gasta tokens', async () => {
+    const streamRound = jest.fn();
+    const greeting = await build(streamRound).execute(user, 3, 0, false);
+    expect(greeting.source).toBe('fallback');
+    expect(streamRound).not.toHaveBeenCalled();
+    expect(credits.recordUsage).not.toHaveBeenCalled();
   });
 });

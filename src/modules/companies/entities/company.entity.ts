@@ -124,6 +124,14 @@ export class Company {
   ai_enabled!: boolean;
 
   /**
+   * Preguntas diarias que la cuenta puede hacerle a Place (calendario de
+   * Colombia, compartidas por todos los usuarios de la company). 0 = bloqueado.
+   * Se asignan desde el panel superadmin. Migración 1747012920000.
+   */
+  @Column({ type: 'integer', default: 0 })
+  ai_daily_credits!: number;
+
+  /**
    * Slug público del catálogo web: el "nombre de usuario" que viaja en la URL
    * `/catalog/<slug>` de la landing (p. ej. `esenciaygrano`). UNA palabra en
    * minúsculas `[a-z0-9]` (sin espacios, acentos ni símbolos), UNIQUE GLOBAL
