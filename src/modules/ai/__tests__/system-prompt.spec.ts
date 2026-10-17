@@ -47,9 +47,40 @@ describe('buildSystemPrompt', () => {
     expect(buildSystemPrompt(context())).toContain('Nunca inventes');
   });
 
-  it('lista las herramientas disponibles del actor', () => {
-    const prompt = buildSystemPrompt(context());
-    expect(prompt).toContain('- get_daily_summary: Resumen del día');
+  it('lista las herramientas disponibles del actor (solo nombres)', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'get_daily_summary', description: 'Resumen financiero de un día: ventas…' },
+          { name: 'list_sales', description: 'Lista las ventas de un día una por una…' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('- get_daily_summary, list_sales.');
+  });
+
+  it('NO repite las descripciones de las herramientas (ya van en sus declaraciones)', () => {
+    const description = 'Resumen financiero de un día: ventas en efectivo, consignaciones…';
+    const prompt = buildSystemPrompt(
+      context({ availableTools: [{ name: 'get_daily_summary', description }] }),
+    );
+    expect(prompt).not.toContain(description);
+  });
+
+  it('lo que cambia (negocio, usuario, fecha) va AL FINAL: el inicio es idéntico entre negocios y días', () => {
+    const a = buildSystemPrompt(context());
+    const b = buildSystemPrompt(
+      context({
+        businessName: 'Otra Tienda',
+        userName: 'Ana',
+        userRole: 'empleado',
+        today: '2026-12-01',
+      }),
+    );
+    const marker = 'CONTEXTO DE ESTA CONVERSACIÓN';
+    expect(a.slice(0, a.indexOf(marker))).toBe(b.slice(0, b.indexOf(marker)));
+    expect(a.trimEnd().endsWith('(zona horaria America/Bogota)')).toBe(true);
+    expect(a.indexOf(marker)).toBeGreaterThan(a.indexOf('ESTILO'));
   });
 
   it('avisa cuando el usuario no tiene ninguna herramienta', () => {
@@ -84,6 +115,46 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('status "executed"');
     expect(prompt).toContain('Los gastos NO se editan');
     expect(prompt).not.toContain('solo puedes leer información, nunca modificarla');
+  });
+
+  it('sin la herramienta de pedidos no menciona las reglas de ventas', () => {
+    const prompt = buildSystemPrompt(context());
+    expect(prompt).not.toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
+  });
+
+  it('con la herramienta de pedidos explica interpretar, sugerir tamaños y confirmar', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'prepare_sale', description: 'x' },
+          { name: 'confirm_sale', description: 'x' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
+    expect(prompt).toContain('"alternatives"');
+    expect(prompt).toContain('primero los menores');
+    expect(prompt).toContain('Llama confirm_sale SOLO cuando');
+    expect(prompt).toContain('Nunca prepares y confirmes en la misma respuesta');
+    expect(prompt).toContain('registrar ventas como PEDIDO POR COBRAR');
+    expect(prompt).not.toContain('solo puedes leer información, nunca modificarla');
+    expect(prompt).not.toContain('GASTOS: REGISTRAR Y ARCHIVAR');
+  });
+
+  it('con gastos y pedidos lista ambas modificaciones permitidas', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'register_expense', description: 'x' },
+          { name: 'prepare_sale', description: 'x' },
+        ],
+      }),
+    );
+    expect(prompt).toContain(
+      'registrar y archivar GASTOS VARIABLES y registrar ventas como PEDIDO POR COBRAR',
+    );
+    expect(prompt).toContain('GASTOS: REGISTRAR Y ARCHIVAR');
+    expect(prompt).toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
   });
 
   it('recuerda las reglas financieras del negocio', () => {

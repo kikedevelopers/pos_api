@@ -1,10 +1,11 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Company } from '@/modules/companies/entities/company.entity';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import { AiCreditsAction, type CreditReservation } from './actions/ai-credits.action';
 import { GenerateAiGreetingAction, type AiGreeting } from './actions/generate-ai-greeting.action';
 import { ResolveAiActorAction } from './actions/resolve-ai-actor.action';
 import {
@@ -13,6 +14,7 @@ import {
   type StreamAiChatParams,
 } from './actions/stream-ai-chat.action';
 import { GeminiClient } from './internal/gemini-client';
+import type { AiCreditsStatus } from './internal/ai-usage';
 import { ASSISTANT_NAME } from './internal/system-prompt';
 import { toolSummariesFor, type AiToolSummary } from './internal/tool-catalog';
 
@@ -27,7 +29,13 @@ export interface AiStatus {
   models: string[];
   /** Herramientas que ESTE usuario puede usar de verdad (según sus permisos). */
   tools: AiToolSummary[];
+  /** Preguntas diarias de la cuenta: con `remaining = 0` el chat se bloquea. */
+  credits: AiCreditsStatus;
 }
+
+/** Mensaje para el cliente cuando la cuenta agotó sus preguntas del día. */
+export const CREDITS_EXHAUSTED_MESSAGE =
+  'Ya usaste todas las consultas de Place disponibles por hoy. Podrás volver a preguntarle mañana.';
 
 /**
  * Facade del módulo `ai`. Sin lógica: delega en las actions.
@@ -39,6 +47,7 @@ export class AiService {
     private readonly generateGreeting: GenerateAiGreetingAction,
     private readonly resolveActor: ResolveAiActorAction,
     private readonly geminiClient: GeminiClient,
+    private readonly credits: AiCreditsAction,
     @InjectRepository(Company)
     private readonly companiesRepo: Repository<Company>,
   ) {}
@@ -71,9 +80,10 @@ export class AiService {
   }
 
   async status(user: AuthUser, companyId: number): Promise<AiStatus> {
-    const [actor, enabled] = await Promise.all([
+    const [actor, enabled, credits] = await Promise.all([
       this.resolveActor.execute(user, companyId),
       this.isAvailableFor(companyId),
+      this.credits.status(companyId),
     ]);
 
     return {
@@ -82,13 +92,43 @@ export class AiService {
       defaultModel: this.geminiClient.resolveModel(),
       models: this.geminiClient.allowedModels,
       tools: toolSummariesFor(actor),
+      credits,
     };
+  }
+
+  /**
+   * Gate de un mensaje al chat: acceso habilitado Y un crédito del día. Reserva
+   * el crédito ANTES de abrir el stream (atómico); sin créditos lanza 429
+   * `AI_CREDITS_EXHAUSTED` como error HTTP normal.
+   */
+  async reserveChatCredit(companyId: number): Promise<CreditReservation> {
+    await this.assertAvailableFor(companyId);
+    const reservation = await this.credits.reserve(companyId);
+    if (reservation) return reservation;
+    throw new HttpException(
+      {
+        message: CREDITS_EXHAUSTED_MESSAGE,
+        // El filtro global solo conserva `code` y `details` del payload.
+        payload: {
+          code: 'AI_CREDITS_EXHAUSTED',
+          details: { credits: await this.credits.status(companyId) },
+        },
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  /** Devuelve el crédito de un mensaje cuya respuesta falló. */
+  refundChatCredit(reservation: CreditReservation): Promise<void> {
+    return this.credits.refund(reservation);
   }
 
   async greeting(user: AuthUser, companyId: number): Promise<AiGreeting> {
     // Gate por cuenta: sin acceso no se gasta una llamada a Gemini para saludar.
     await this.assertAvailableFor(companyId);
-    return this.generateGreeting.execute(user, companyId);
+    // Sin preguntas disponibles hoy, el saludo es el fijo: no se gasta un token.
+    const credits = await this.credits.status(companyId);
+    return this.generateGreeting.execute(user, companyId, Date.now(), credits.remaining > 0);
   }
 
   async chat(params: StreamAiChatParams): Promise<void> {

@@ -114,6 +114,8 @@ import { SalesService } from './sales.service';
     GetConsolidatedInvoiceUpToAction,
     GetSaleCreditNoteAction,
   ],
-  exports: [SalesService, TypeOrmModule],
+  // `CreateSaleAction`: Place (asistente IA) crea pedidos con la misma lógica que
+  // `POST /sales`, dentro de su propia transacción (`runInTransaction`).
+  exports: [SalesService, TypeOrmModule, CreateSaleAction],
 })
 export class SalesModule {}

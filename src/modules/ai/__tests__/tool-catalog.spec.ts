@@ -132,6 +132,64 @@ describe('herramientas que ESCRIBEN gastos (solo administrador)', () => {
   });
 });
 
+describe('herramientas que CREAN pedidos (solo administrador)', () => {
+  const SALE_TOOLS = ['prepare_sale', 'confirm_sale'];
+  const allowedFor = (who: AiToolActor): string[] =>
+    SALE_TOOLS.filter((name) => {
+      const tool = findTool(name);
+      if (!tool) {
+        throw new Error(`Herramienta inexistente: ${name}`);
+      }
+      return isToolAllowed(tool, who);
+    });
+
+  it('existen, exigen rol administrador y el permiso del POS, y no exponen ganancias', () => {
+    for (const name of SALE_TOOLS) {
+      const tool = findTool(name);
+      expect(tool?.requires_administrator).toBe(true);
+      expect(tool?.permission).toBe('canAccessPOS');
+      expect(tool?.exposesProfit).toBe(false);
+    }
+  });
+
+  it('el owner/superadmin y el rol Administrador con POS las tienen', () => {
+    expect(allowedFor(actor({ isAdmin: true }))).toEqual(SALE_TOOLS);
+    expect(
+      allowedFor(actor({ is_administrator: true, permissions: new Set(['canAccessPOS']) })),
+    ).toEqual(SALE_TOOLS);
+  });
+
+  it('un Cajero o Vendedor con acceso al POS NO (el permiso no basta sin el rol)', () => {
+    const vendedor = actor({
+      permissions: new Set(['canAccessPOS', 'canAccessInventory', 'canAccessCustomers']),
+    });
+    expect(allowedFor(vendedor)).toEqual([]);
+    expect(declarationsFor(vendedor).map((d) => d.name)).not.toContain('prepare_sale');
+  });
+
+  it('el rol Administrador sin el permiso del POS tampoco (ambas condiciones)', () => {
+    expect(allowedFor(actor({ is_administrator: true }))).toEqual([]);
+  });
+
+  it('confirm_sale no recibe argumentos y no se lista; prepare_sale sí se lista', () => {
+    expect(findTool('confirm_sale')?.declaration.parameters?.properties).toEqual({});
+    const names = toolSummariesFor(actor({ isAdmin: true })).map((tool) => tool.name);
+    expect(names).toContain('prepare_sale');
+    expect(names).not.toContain('confirm_sale');
+  });
+
+  it('prepare_sale declara las líneas como arreglo de objetos con query/cantidad/precio', () => {
+    const properties = findTool('prepare_sale')?.declaration.parameters?.properties as Record<
+      string,
+      { type: string; items?: { type: string; properties: Record<string, unknown> } }
+    >;
+    expect(properties.items.type).toBe('array');
+    expect(Object.keys(properties.items.items?.properties ?? {})).toEqual(
+      expect.arrayContaining(['query', 'alternatives', 'product_id', 'quantity', 'unit_price']),
+    );
+  });
+});
+
 describe('salesScopeUserId', () => {
   it('el owner ve las ventas de todo el equipo', () => {
     expect(salesScopeUserId(actor({ isAdmin: true }))).toBeNull();

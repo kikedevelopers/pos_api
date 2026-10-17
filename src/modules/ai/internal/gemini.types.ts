@@ -65,6 +65,22 @@ export interface GeminiRequestBody {
 }
 
 /** Un evento SSE ya parseado del stream de Gemini. */
+/**
+ * Consumo de tokens que informa Gemini (`usageMetadata`). En streaming cada
+ * trama trae el acumulado de la ronda: la última es el total de esa ronda.
+ */
+export interface GeminiUsage {
+  /** Entrada: prompt de sistema + historial + resultados de herramientas. */
+  prompt_tokens: number;
+  /** Salida visible (`candidatesTokenCount`). */
+  output_tokens: number;
+  /** Razonamiento interno del modelo (`thoughtsTokenCount`); se cobra como salida. */
+  thoughts_tokens: number;
+  /** Parte de la entrada servida desde caché (`cachedContentTokenCount`). */
+  cached_tokens: number;
+  total_tokens: number;
+}
+
 export interface GeminiStreamEvent {
   /** Texto visible acumulable (excluye partes de razonamiento). */
   text: string;
@@ -76,4 +92,6 @@ export interface GeminiStreamEvent {
   blockReason?: string;
   /** Error embebido en el propio stream (Google los manda como data JSON). */
   error?: string;
+  /** Consumo acumulado de la ronda hasta esta trama, si Gemini lo informó. */
+  usage?: GeminiUsage;
 }

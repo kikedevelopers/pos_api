@@ -6,8 +6,9 @@ import type { GeminiFunctionDeclaration } from './gemini.types';
  * Catálogo de herramientas que PlacePOS IA puede ejecutar contra la base de
  * datos del negocio. Todas se filtran por `company_id` en su implementación
  * (`run-ai-tool.action.ts`). Son de solo lectura, SALVO las de gastos
- * (`register_expense`, `void_expense`, `confirm_expense_action`), que exigen
- * además ser administrador (`requires_administrator`) y nunca escriben sin la
+ * (`register_expense`, `void_expense`, `confirm_expense_action`) y las de
+ * pedidos (`prepare_sale`, `confirm_sale`), que exigen además ser
+ * administrador (`requires_administrator`) y nunca escriben sin la
  * confirmación explícita del usuario en un mensaje posterior.
  *
  * Cada herramienta declara el permiso del catálogo que exige. Si el actor no lo
@@ -31,6 +32,8 @@ export const AI_TOOL_NAMES = [
   'register_expense',
   'void_expense',
   'confirm_expense_action',
+  'prepare_sale',
+  'confirm_sale',
 ] as const;
 
 export type AiToolName = (typeof AI_TOOL_NAMES)[number];
@@ -389,6 +392,94 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
       name: 'confirm_expense_action',
       description:
         'EJECUTA el registro o archivo de gasto que preparaste en tu respuesta anterior, SOLO cuando el último mensaje del usuario es un "sí" explícito a ese resumen. Si el usuario cambió algún dato, dijo que no o preguntó algo, NO la llames: vuelve a preparar con los datos correctos. Solo después de que devuelva status "executed" puedes decir que quedó hecho; con cualquier otro status, explícale al usuario lo que dice el campo "message".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    name: 'prepare_sale',
+    label: 'Preparando pedido',
+    summary:
+      'Registra ventas como pedido por cobrar: interpreta los productos, te muestra la factura y la crea con tu confirmación.',
+    permission: 'canAccessPOS',
+    exposesProfit: false,
+    requires_administrator: true,
+    declaration: {
+      name: 'prepare_sale',
+      description:
+        'PREPARA una venta como PEDIDO POR COBRAR (queda en Tickets del POS para cobrarla allí); NO la crea todavía. Úsala cuando el usuario pida registrar/facturar/venderle algo a un cliente. Interpreta y busca cada producto en el inventario por su nombre (tolera tildes, mayúsculas, plurales, abreviaturas y tamaños: "por libra", "x media libra", "500 gr"). En UNA sola llamada manda el cliente y TODAS las líneas. Devuelve "needs_input" si algo no está claro (producto ambiguo, tamaño inexistente con alternativas y su cantidad equivalente, cliente ambiguo, cantidad faltante): pregúntale al usuario SOLO eso y vuelve a llamar con todas las líneas usando los product_id / customer_id elegidos. Devuelve "confirmation_required" con la vista previa de la factura: muéstrala y pide que responda "sí". No llames confirm_sale en esa misma respuesta.',
+      parameters: {
+        type: 'object',
+        properties: {
+          customer: {
+            type: 'string',
+            description:
+              'Cliente tal cual lo dijo el usuario (nombre, documento o teléfono). Omítelo si no dijo cliente (queda de mostrador).',
+          },
+          customer_id: {
+            type: 'integer',
+            description:
+              'Solo un customer_id que la herramienta te devolvió en ESTA misma respuesta. Los ids NO se conservan entre mensajes: si el usuario eligió un cliente en su último mensaje, manda su NOMBRE EXACTO en "customer".',
+          },
+          items: {
+            type: 'array',
+            description: 'Las líneas del pedido, en el orden en que las dijo el usuario.',
+            items: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description:
+                    'El producto como lo nombró el usuario, CON su tamaño o presentación y SIN la cantidad: "2 libras de fécula de maíz" → query "fécula de maíz por libra", quantity 2; "media libra de fécula" → query "fécula por media libra", quantity 1.',
+                },
+                alternatives: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'Hasta 4 nombres alternativos del MISMO producto cuando el usuario usa una marca o nombre coloquial: "maizena por libra" → ["fécula de maíz por libra"]. Mantén el tamaño.',
+                },
+                product_id: {
+                  type: 'integer',
+                  description:
+                    'Solo un product_id que la herramienta te devolvió en ESTA misma respuesta (nunca uno de memoria). Los ids NO se conservan entre mensajes: si el usuario eligió una opción en su último mensaje, manda el NOMBRE EXACTO de esa opción en "query".',
+                },
+                quantity: {
+                  type: 'number',
+                  description:
+                    'Cuántas unidades del tamaño que dice query, como número (1, 2, 500). El tamaño NUNCA se repite en la cantidad: "media libra de X" es quantity 1 de "X por media libra", jamás 0.5. Si el usuario no dijo la cantidad, omítela y la herramienta te pedirá preguntarla.',
+                },
+                price_level: {
+                  type: 'string',
+                  description:
+                    'Opcional: nombre del nivel de precio que pidió el usuario (ej. "mayorista"). Si se omite, el precio por defecto del POS.',
+                },
+                unit_price: {
+                  type: 'number',
+                  description:
+                    'Opcional: precio unitario MANUAL que dijo el usuario, como número sin separadores ("4 mil" → 4000). Solo si lo pidió explícitamente.',
+                },
+                note: {
+                  type: 'string',
+                  description: 'Opcional: nota de la línea que dictó el usuario.',
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'confirm_sale',
+    label: 'Creando pedido',
+    summary: 'Crea el pedido que acabas de confirmar.',
+    permission: 'canAccessPOS',
+    exposesProfit: false,
+    requires_administrator: true,
+    is_listed: false,
+    declaration: {
+      name: 'confirm_sale',
+      description:
+        'CREA el pedido que preparaste con prepare_sale en tu respuesta anterior, SOLO cuando el último mensaje del usuario es un "sí" explícito a esa vista previa. Si el usuario cambió algo, dijo que no o preguntó otra cosa, NO la llames: vuelve a llamar prepare_sale. Solo después de que devuelva status "executed" puedes decir que quedó creado (con el número de ticket); con cualquier otro status, explica su "message".',
       parameters: { type: 'object', properties: {} },
     },
   },

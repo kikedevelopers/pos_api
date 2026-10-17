@@ -7,23 +7,41 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import type { AiConfig } from '@/config/ai.config';
 import { todayUtcDate } from '@/modules/reports/internal/range';
 
+import { addUsage, EMPTY_USAGE } from '../internal/ai-usage';
 import { extractRequestContext } from '../internal/expense-tool-helpers';
 import { GeminiClient } from '../internal/gemini-client';
 import { buildGeminiRequest, hasSendableContent } from '../internal/gemini-request';
 import { describeBlockReason, describeFinishReason } from '../internal/gemini-sse';
-import type { ChatTurn, GeminiContent, GeminiPart } from '../internal/gemini.types';
+import type { ChatTurn, GeminiContent, GeminiPart, GeminiUsage } from '../internal/gemini.types';
 import { buildSystemPrompt } from '../internal/system-prompt';
 import { AI_TOOLS, declarationsFor, isToolAllowed } from '../internal/tool-catalog';
+import type { AiToolCard } from '../internal/tool-cards';
 
+import { AiCreditsAction } from './ai-credits.action';
 import { ResolveAiActorAction } from './resolve-ai-actor.action';
 import { RunAiToolAction } from './run-ai-tool.action';
+
+/**
+ * Instrucción de la última ronda (ya sin herramientas). Va solo en esa ronda,
+ * no queda en el historial del cliente.
+ */
+export const FINAL_ROUND_PROMPT =
+  '(Mensaje del sistema, no del usuario) Ya no puedes consultar más herramientas en esta respuesta. Responde AHORA al usuario, en español, con lo que ya sabes: qué encontraste y qué necesitas que te aclare. No dejes la respuesta vacía.';
 
 /** Eventos que viajan al cliente por SSE. */
 export type AiStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; name: string; label: string; status: 'running' | 'done' | 'error' }
+  | { type: 'card'; card: AiToolCard }
   | { type: 'done'; notice?: string }
   | { type: 'error'; message: string };
+
+/** Consumo acumulado de una pregunta mientras se responde. */
+interface UsageTracker {
+  usage: GeminiUsage;
+  rounds: number;
+  model: string;
+}
 
 export interface StreamAiChatParams {
   user: AuthUser;
@@ -57,16 +75,37 @@ export class StreamAiChatAction {
     private readonly geminiClient: GeminiClient,
     private readonly resolveActor: ResolveAiActorAction,
     private readonly runTool: RunAiToolAction,
+    private readonly credits: AiCreditsAction,
   ) {}
 
-  async execute({
-    user,
-    companyId,
-    turns,
-    model,
-    emit,
-    signal,
-  }: StreamAiChatParams): Promise<void> {
+  async execute(params: StreamAiChatParams): Promise<void> {
+    // Consumo de TODAS las rondas de esta pregunta; se registra pase lo que pase
+    // (respuesta completa, error, abortada).
+    const tracker: UsageTracker = {
+      usage: EMPTY_USAGE,
+      rounds: 0,
+      model: this.geminiClient.resolveModel(params.model),
+    };
+    try {
+      await this.run(params, tracker);
+    } finally {
+      if (tracker.rounds > 0) {
+        await this.credits.recordUsage({
+          company_id: params.companyId,
+          user_id: params.user.user_id ?? null,
+          kind: 'chat',
+          model: tracker.model,
+          usage: tracker.usage,
+          rounds: tracker.rounds,
+        });
+      }
+    }
+  }
+
+  private async run(
+    { user, companyId, turns, model, emit, signal }: StreamAiChatParams,
+    tracker: UsageTracker,
+  ): Promise<void> {
     const config = this.configService.getOrThrow<AiConfig>('ai');
 
     if (!this.geminiClient.isEnabled()) {
@@ -122,7 +161,18 @@ export class StreamAiChatAction {
       // En la última ronda se le quitan las herramientas: obligamos a que
       // responda con texto en vez de pedir otra consulta que ya no correremos.
       const isLastRound = round === config.maxToolRounds;
-      const roundBody = isLastRound ? { ...body, tools: undefined } : body;
+      // Sin herramientas el modelo a veces responde VACÍO (quería otra
+      // consulta). Se le dice explícitamente que conteste con lo que tiene.
+      const roundBody = isLastRound
+        ? {
+            ...body,
+            tools: undefined,
+            contents: [
+              ...body.contents,
+              { role: 'user' as const, parts: [{ text: FINAL_ROUND_PROMPT }] },
+            ],
+          }
+        : body;
 
       const result = await this.geminiClient.streamRound(roundBody, {
         model: resolvedModel,
@@ -132,6 +182,9 @@ export class StreamAiChatAction {
           emit({ type: 'delta', text });
         },
       });
+
+      tracker.rounds += 1;
+      tracker.usage = addUsage(tracker.usage, result.usage);
 
       if (signal.aborted) {
         return;
@@ -194,6 +247,12 @@ export class StreamAiChatAction {
           label: execution.label,
           status: execution.ok ? 'done' : 'error',
         });
+
+        // La vista previa (o el pedido creado) se dibuja con los datos del
+        // servidor, nunca con lo que el modelo escriba de ella.
+        if (execution.card) {
+          emit({ type: 'card', card: execution.card });
+        }
 
         this.logger.log(
           {

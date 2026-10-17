@@ -36,7 +36,7 @@ export interface AssertMarginInput {
  *   - `pos_margins`: JSON array de números (ej. `'[20, 30]'`). El primero es
  *     el mínimo permitido.
  */
-async function loadMarginConfig(
+export async function loadMarginConfig(
   manager: EntityManager,
   companyId: number,
 ): Promise<{ enabled: boolean; minimum: number | null }> {

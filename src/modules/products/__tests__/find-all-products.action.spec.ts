@@ -2,6 +2,7 @@ import type { DataSource } from 'typeorm';
 
 import { toProductResponseDto } from '../dto/product-response.dto';
 import {
+  buildFindAllProductsSql,
   FindAllProductsAction,
   sortParentsThenChildren,
 } from '../actions/find-all-products.action';
@@ -66,11 +67,26 @@ function rawRow(over: Partial<Record<string, unknown>> = {}): Record<string, unk
   };
 }
 
+/** Doble del DataSource: la consulta corre en una transacción (SET LOCAL jit). */
+function makeDataSource(rows: Record<string, unknown>[]): {
+  dataSource: DataSource;
+  transaction: jest.Mock;
+  calls: Array<{ sql: string; params?: unknown[] }>;
+} {
+  const calls: Array<{ sql: string; params?: unknown[] }> = [];
+  const manager = {
+    query: jest.fn((sql: string, params?: unknown[]) => {
+      calls.push({ sql, params });
+      return Promise.resolve(/SET LOCAL/.test(sql) ? [] : rows);
+    }),
+  };
+  const transaction = jest.fn((work: (m: typeof manager) => Promise<unknown>) => work(manager));
+  const dataSource = { transaction, manager } as unknown as DataSource;
+  return { dataSource, transaction, calls };
+}
+
 function makeAction(rows: Record<string, unknown>[]): FindAllProductsAction {
-  const dataSource = {
-    query: jest.fn().mockResolvedValue(rows),
-  } as unknown as DataSource;
-  return new FindAllProductsAction(dataSource);
+  return new FindAllProductsAction(makeDataSource(rows).dataSource);
 }
 
 describe('FindAllProductsAction (SQL crudo)', () => {
@@ -228,5 +244,47 @@ describe('sortParentsThenChildren (intacta)', () => {
     ];
     const sorted = sortParentsThenChildren(products).map((x) => x.id);
     expect(sorted).toEqual(['1', '9']);
+  });
+});
+
+describe('FindAllProductsAction · consulta optimizada', () => {
+  it('apaga el JIT en la MISMA transacción y antes de la consulta', async () => {
+    const { dataSource, transaction, calls } = makeDataSource([]);
+    await new FindAllProductsAction(dataSource).execute(42, {});
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(calls[0].sql).toBe('SET LOCAL jit = off');
+    expect(calls[1].sql).toMatch(/FROM products p/);
+  });
+
+  it('prefiltra por companies candidatas y mantiene el predicado de acceso como gate', () => {
+    const { sql, params } = buildFindAllProductsSql(42, {});
+    expect(sql).toMatch(/p\.company_id IN \(SELECT company_id FROM candidate_companies\)/);
+    expect(sql).toMatch(/inventory_shares/);
+    // La company activa en todos los placeholders del predicado (como antes).
+    expect(params).toEqual(['42', '42', '42', '42', '42']);
+  });
+
+  it('la última compra sale de UNA agregación, no de una subconsulta por producto', () => {
+    const { sql } = buildFindAllProductsSql(42, {});
+    expect(sql).toMatch(/last_purchases AS \(/);
+    expect(sql).toMatch(
+      /LEFT JOIN last_purchases lp ON lp\.product_id = p\.id AND lp\.company_id = p\.company_id/,
+    );
+    expect(sql).not.toMatch(/SELECT MAX\(pur\.received_at\)\s+FROM purchase_lines/);
+  });
+
+  it('archivados y búsqueda: mismos filtros y parámetros que antes', () => {
+    const plain = buildFindAllProductsSql(42, {});
+    expect(plain.sql).toMatch(/p\.is_archived = false/);
+    const archived = buildFindAllProductsSql(42, { include_archived: true });
+    expect(archived.sql).not.toMatch(/p\.is_archived = false/);
+    const search = buildFindAllProductsSql(42, { search: '  FÉCULA ' });
+    expect(search.params[5]).toBe('%fécula%');
+    expect(search.sql).toMatch(/LOWER\(p\.name\) LIKE \$6/);
+  });
+
+  it('orden determinista: created_at DESC con desempate por id', () => {
+    expect(buildFindAllProductsSql(42, {}).sql).toMatch(/ORDER BY p\.created_at DESC, p\.id DESC/);
   });
 });

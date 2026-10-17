@@ -258,7 +258,10 @@ export const resolveExpenseSource = (
 // Confirmación explícita
 // ──────────────────────────────────────────────────────────────────────────
 
-/** Palabras que, por sí solas, significan "sí, hazlo". */
+/** Operación que se está confirmando: cada una suma su propio vocabulario. */
+export type ConfirmationKind = 'expense' | 'sale';
+
+/** Palabras que, por sí solas, significan "sí, hazlo" en cualquier operación. */
 const AFFIRMATIVE_WORDS = new Set([
   'si',
   'sii',
@@ -294,16 +297,36 @@ const AFFIRMATIVE_WORDS = new Set([
   'registralo',
   'registrelo',
   'registra',
-  'archivalo',
-  'archivelo',
-  'archiva',
-  'eliminalo',
-  'eliminelo',
-  'borralo',
-  'borrelo',
-  'anulalo',
-  'una',
+  // "de una" (= ya mismo) se lee como frase; "una" suelta NO confirma:
+  // después de un resumen, "solo una" es una corrección de cantidad.
+  'deuna',
 ]);
+
+/** Afirmaciones propias de cada operación ("archívalo" no confirma un pedido). */
+const AFFIRMATIVE_BY_KIND: Record<ConfirmationKind, ReadonlySet<string>> = {
+  expense: new Set([
+    'archivalo',
+    'archivelo',
+    'archiva',
+    'eliminalo',
+    'eliminelo',
+    'borralo',
+    'borrelo',
+    'anulalo',
+  ]),
+  sale: new Set([
+    'facturalo',
+    'facturelo',
+    'factura',
+    'facturar',
+    'crealo',
+    'creelo',
+    'montalo',
+    'montelo',
+    'envialo',
+    'envielo',
+  ]),
+};
 
 /** Relleno permitido junto a una afirmación ("sí, por favor", "de acuerdo"). */
 const FILLER_WORDS = new Set([
@@ -322,7 +345,7 @@ const FILLER_WORDS = new Set([
   'y',
   'lo',
   'el',
-  'gasto',
+  'la',
   'seguro',
   'va',
   'ya',
@@ -334,22 +357,31 @@ const FILLER_WORDS = new Set([
   'mano',
 ]);
 
+/** Relleno propio de cada operación ("sí, el pedido" / "sí, el gasto"). */
+const FILLER_BY_KIND: Record<ConfirmationKind, ReadonlySet<string>> = {
+  expense: new Set(['gasto']),
+  sale: new Set(['pedido', 'venta']),
+};
+
 const MAX_CONFIRMATION_WORDS = 8;
 
 /**
  * ¿El mensaje es un "sí" explícito y NADA más?
  *
- * Todas las palabras deben pertenecer al vocabulario de confirmación y al
- * menos una debe ser afirmativa. Por eso "sí, pero de 60 mil", "no", "sí pero
- * desde Nequi" o "¿de qué caja sale?" NO confirman: cualquier palabra fuera
- * del vocabulario (un número, un "pero", un nombre) obliga a re-preparar la
- * operación con los datos nuevos y a mostrar un resumen nuevo.
+ * Todas las palabras deben pertenecer al vocabulario de confirmación DE ESA
+ * operación y al menos una debe ser afirmativa. Por eso "sí, pero de 60 mil",
+ * "no", "sí pero desde Nequi" o "¿de qué caja sale?" NO confirman: cualquier
+ * palabra fuera del vocabulario (un número, un "pero", un nombre) obliga a
+ * re-preparar la operación con los datos nuevos y a mostrar un resumen nuevo.
  */
-export const isExplicitConfirmation = (message: string | null | undefined): boolean => {
+export const isExplicitConfirmation = (
+  message: string | null | undefined,
+  kind: ConfirmationKind = 'expense',
+): boolean => {
   if (typeof message !== 'string') {
     return false;
   }
-  const normalized = normalizeText(message);
+  const normalized = normalizeText(message).replace(/\bde una\b/g, 'deuna');
   if (normalized.length === 0) {
     return false;
   }
@@ -357,8 +389,12 @@ export const isExplicitConfirmation = (message: string | null | undefined): bool
   if (words.length > MAX_CONFIRMATION_WORDS) {
     return false;
   }
-  const allKnown = words.every((word) => AFFIRMATIVE_WORDS.has(word) || FILLER_WORDS.has(word));
-  return allKnown && words.some((word) => AFFIRMATIVE_WORDS.has(word));
+  const affirmative = (word: string): boolean =>
+    AFFIRMATIVE_WORDS.has(word) || AFFIRMATIVE_BY_KIND[kind].has(word);
+  const allKnown = words.every(
+    (word) => affirmative(word) || FILLER_WORDS.has(word) || FILLER_BY_KIND[kind].has(word),
+  );
+  return allKnown && words.some(affirmative);
 };
 
 /** Huella de un mensaje del usuario (se compara entre peticiones). */

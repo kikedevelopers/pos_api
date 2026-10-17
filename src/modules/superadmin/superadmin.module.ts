@@ -55,8 +55,15 @@ import { SuperadminController } from './superadmin.controller';
  *     las actions de listado/detalle/suscripción/borrado. `ListTenantsAction`
  *     usa el repo de `User` y un LEFT JOIN manual a `subscriptions`.
  */
+import { AiModule } from '@/modules/ai/ai.module';
+
+import { GetAiUsageAction } from './actions/get-ai-usage.action';
+import { SuperadminAiController } from './superadmin-ai.controller';
+
 @Module({
   imports: [
+    // Créditos y consumo de Place.
+    AiModule,
     // Para limpiar del bucket las imágenes de un tenant que se borra.
     ProductImagesModule,
     UsersModule,
@@ -64,9 +71,10 @@ import { SuperadminController } from './superadmin.controller';
     CompaniesModule,
     TypeOrmModule.forFeature([Company, User, Subscription]),
   ],
-  controllers: [SuperadminController, MigrateCatalogController],
+  controllers: [SuperadminController, SuperadminAiController, MigrateCatalogController],
   providers: [
     SuperadminSignatureGuard,
+    GetAiUsageAction,
     AdminSignatureGuard,
     MigrateCatalogAction,
     ListTenantsAction,
