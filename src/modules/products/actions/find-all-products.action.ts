@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import { Product, ProductType } from '@/modules/products/entities/product.entity';
 
 import type { InventoryQueryDto } from '../dto/inventory-query.dto';
-import { accessibleProductsPredicate } from '../internal/accessible-products.helper';
+import {
+  accessibleCompanyIdsSql,
+  accessibleProductsPredicate,
+} from '../internal/accessible-products.helper';
 import { attachComboComponentsTo } from '../internal/combo-components.helper';
 
 /**
@@ -45,95 +48,17 @@ export class FindAllProductsAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(companyId: number, query: InventoryQueryDto): Promise<Product[]> {
-    // FASE 2 (COMPARTIR): visibilidad = propios + compartidos por el principal.
-    // El predicado consume $1..$5 (la company activa repetida). El filtro de
-    // edición/compra/precio NO usa esto (siguen `company_id = activa`).
-    const accessPred = accessibleProductsPredicate('p', companyId, 1);
-    const params: unknown[] = [...accessPred.params];
-    const where: string[] = [accessPred.sql];
+    const { sql, params } = buildFindAllProductsSql(companyId, query);
 
-    if (query.include_archived !== true) {
-      where.push('p.is_archived = false');
-    }
-
-    if (query.search && query.search.trim().length > 0) {
-      params.push(`%${query.search.trim().toLowerCase()}%`);
-      const idx = `$${params.length}`;
-      where.push(
-        `(LOWER(p.name) LIKE ${idx} OR LOWER(p.sku_code) LIKE ${idx} OR LOWER(p.bar_code) LIKE ${idx})`,
-      );
-    }
-
-    const sql = `
-      SELECT
-        p.id              AS id,
-        p.name            AS name,
-        p.description     AS description,
-        p.product_type    AS product_type,
-        p.parent_id       AS parent_id,
-        p.sku_code        AS sku_code,
-        p.bar_code        AS bar_code,
-        p.packaging_id    AS packaging_id,
-        p.category_id     AS category_id,
-        p.tax_rate_id     AS tax_rate_id,
-        p.cost            AS cost,
-        p.stock           AS stock,
-        p.is_purchasable  AS is_purchasable,
-        p.image           AS image,
-        p.show_in_pos     AS show_in_pos,
-        p.catalog_visible AS catalog_visible,
-        p.catalog_out_of_stock AS catalog_out_of_stock,
-        p.is_archived     AS is_archived,
-        p.created_by      AS created_by,
-        p.updated_by      AS updated_by,
-        p.created_at      AS created_at,
-        p.updated_at      AS updated_at,
-        p.company_id      AS company_id,
-        p.cloned_from_company_id AS cloned_from_company_id,
-        -- Última compra RECIBIDA (ingresada al inventario) que incluyó el producto.
-        -- Solo compras RECEIVED (no PENDING) y no borradas. Los purchase_lines se
-        -- registran contra el producto BASE. null si nunca se recibió una compra
-        -- con él (el front cae a created_at).
-        (
-          SELECT MAX(pur.received_at)
-          FROM purchase_lines pl
-          JOIN purchases pur ON pur.id = pl.purchase_id
-          WHERE pl.product_id = p.id
-            AND pur.company_id = p.company_id
-            AND pur.is_deleted = false
-            AND pur.status = 'RECEIVED'
-        ) AS last_purchase_date,
-        pk.id             AS packaging__id,
-        pk.name           AS packaging__name,
-        pk.value          AS packaging__value,
-        pk.is_auto        AS packaging__is_auto,
-        cat.id            AS category__id,
-        cat.name          AS category__name,
-        COALESCE(pr.prices, '[]'::jsonb) AS prices
-      FROM products p
-      LEFT JOIN packagings pk ON pk.id = p.packaging_id
-      LEFT JOIN categories  cat ON cat.id = p.category_id
-      LEFT JOIN LATERAL (
-        SELECT jsonb_agg(
-          jsonb_build_object(
-            'id',             pp.id,
-            'name',           pp.name,
-            'sale_price',     pp.sale_price,
-            'profit',         pp.profit,
-            'margin',         pp.margin,
-            'iva_percentage', pp.iva_percentage,
-            'taxable_base',   pp.taxable_base,
-            'tax_amount',     pp.tax_amount
-          ) ORDER BY pp.id
-        ) AS prices
-        FROM product_prices pp
-        WHERE pp.product_id = p.id
-      ) pr ON TRUE
-      WHERE ${where.join(' AND ')}
-      ORDER BY p.created_at DESC
-    `;
-
-    const rows = await this.dataSource.query<RawProductRow[]>(sql, params);
+    // JIT apagado SOLO para esta consulta: con el `OR` del predicado de acceso
+    // el planificador sobreestima el costo y Postgres compilaba ~140 funciones
+    // a código nativo en CADA carga del inventario (~220 ms de CPU por
+    // request, más que toda la ejecución). Una consulta de ~2.500 filas nunca
+    // amortiza esa compilación. `SET LOCAL` muere con la transacción.
+    const rows = await this.dataSource.transaction(async (manager) => {
+      await manager.query('SET LOCAL jit = off');
+      return manager.query<RawProductRow[]>(sql, params);
+    });
 
     const products = rows.map((r) => mapRawToProduct(r, companyId));
     // Los COMBO viajan con su receta: de ella sale su `stock_display`.
@@ -141,6 +66,134 @@ export class FindAllProductsAction {
 
     return sortParentsThenChildren(products);
   }
+}
+
+/**
+ * SQL del listado. Exportado para los tests de equivalencia y rendimiento.
+ *
+ * Optimización (oct 2026) — mismas filas y mismos valores que la versión
+ * anterior (verificado con EXCEPT/deep-equal en todas las companies):
+ *
+ *   1. `p.company_id IN (companies candidatas)` antes del predicado de acceso:
+ *      usa el índice por company en vez de evaluar el `OR` (con sus EXISTS)
+ *      sobre el catálogo de TODOS los tenants. El predicado sigue siendo el gate.
+ *   2. Última compra RECIBIDA en UNA agregación (`last_purchases`), recorriendo
+ *      solo las compras recibidas de las companies candidatas y sus líneas por
+ *      el índice `purchase_id`. Antes era una
+ *      subconsulta correlacionada POR PRODUCTO sobre `purchase_lines`, sin un
+ *      índice que empezara por `product_id`: miles de escaneos por request.
+ *   3. JIT apagado para la consulta (ver `execute`).
+ *   4. Precios con `json_agg`/`json_build_object` (texto) en vez de `jsonb`: el
+ *      driver los parsea igual y `mapRawToProduct` reconstruye cada precio con
+ *      claves explícitas, así que la salida es idéntica sin el costo de
+ *      construir jsonb binario por fila.
+ */
+export function buildFindAllProductsSql(
+  companyId: number,
+  query: InventoryQueryDto,
+): { sql: string; params: unknown[] } {
+  // FASE 2 (COMPARTIR): visibilidad = propios + compartidos por el principal.
+  // El predicado consume $1..$5 (la company activa repetida). El filtro de
+  // edición/compra/precio NO usa esto (siguen `company_id = activa`).
+  const accessPred = accessibleProductsPredicate('p', companyId, 1);
+  const params: unknown[] = [...accessPred.params];
+  const where: string[] = [
+    'p.company_id IN (SELECT company_id FROM candidate_companies)',
+    accessPred.sql,
+  ];
+
+  if (query.include_archived !== true) {
+    where.push('p.is_archived = false');
+  }
+
+  if (query.search && query.search.trim().length > 0) {
+    params.push(`%${query.search.trim().toLowerCase()}%`);
+    const idx = `$${params.length}`;
+    where.push(
+      `(LOWER(p.name) LIKE ${idx} OR LOWER(p.sku_code) LIKE ${idx} OR LOWER(p.bar_code) LIKE ${idx})`,
+    );
+  }
+
+  const sql = `
+    WITH candidate_companies (company_id) AS MATERIALIZED (${accessibleCompanyIdsSql('$1')}
+    ),
+    -- Última compra RECIBIDA (ingresada al inventario) que incluyó el producto.
+    -- Solo compras RECEIVED (no PENDING) y no borradas, de la company DUEÑA del
+    -- producto. Los purchase_lines se registran contra el producto BASE. null
+    -- si nunca se recibió una compra con él (el front cae a created_at).
+    last_purchases AS (
+      SELECT pur.company_id, pl.product_id, MAX(pur.received_at) AS last_purchase_date
+        FROM purchases pur
+        -- Las líneas de CADA compra por su índice de purchase_id (el OFFSET 0 evita
+        -- que el planificador lo aplane en un hash join con seq scan de TODAS las
+        -- purchase_lines de todos los tenants).
+        CROSS JOIN LATERAL (
+          SELECT l.product_id FROM purchase_lines l WHERE l.purchase_id = pur.id OFFSET 0
+        ) pl
+       WHERE pur.company_id IN (SELECT company_id FROM candidate_companies)
+         AND pur.is_deleted = false
+         AND pur.status = 'RECEIVED'
+       GROUP BY pur.company_id, pl.product_id
+    )
+    SELECT
+      p.id              AS id,
+      p.name            AS name,
+      p.description     AS description,
+      p.product_type    AS product_type,
+      p.parent_id       AS parent_id,
+      p.sku_code        AS sku_code,
+      p.bar_code        AS bar_code,
+      p.packaging_id    AS packaging_id,
+      p.category_id     AS category_id,
+      p.tax_rate_id     AS tax_rate_id,
+      p.cost            AS cost,
+      p.stock           AS stock,
+      p.is_purchasable  AS is_purchasable,
+      p.image           AS image,
+      p.show_in_pos     AS show_in_pos,
+      p.catalog_visible AS catalog_visible,
+      p.catalog_out_of_stock AS catalog_out_of_stock,
+      p.is_archived     AS is_archived,
+      p.created_by      AS created_by,
+      p.updated_by      AS updated_by,
+      p.created_at      AS created_at,
+      p.updated_at      AS updated_at,
+      p.company_id      AS company_id,
+      p.cloned_from_company_id AS cloned_from_company_id,
+      lp.last_purchase_date AS last_purchase_date,
+      pk.id             AS packaging__id,
+      pk.name           AS packaging__name,
+      pk.value          AS packaging__value,
+      pk.is_auto        AS packaging__is_auto,
+      cat.id            AS category__id,
+      cat.name          AS category__name,
+      COALESCE(pr.prices, '[]'::json) AS prices
+    FROM products p
+    LEFT JOIN last_purchases lp ON lp.product_id = p.id AND lp.company_id = p.company_id
+    LEFT JOIN packagings pk ON pk.id = p.packaging_id
+    LEFT JOIN categories  cat ON cat.id = p.category_id
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id',             pp.id,
+          'name',           pp.name,
+          'sale_price',     pp.sale_price,
+          'profit',         pp.profit,
+          'margin',         pp.margin,
+          'iva_percentage', pp.iva_percentage,
+          'taxable_base',   pp.taxable_base,
+          'tax_amount',     pp.tax_amount
+        ) ORDER BY pp.id
+      ) AS prices
+      FROM product_prices pp
+      WHERE pp.product_id = p.id
+    ) pr ON TRUE
+    WHERE ${where.join(' AND ')}
+    -- Desempate por id: con imports masivos muchos productos comparten
+    -- created_at y el orden de esos empates no puede depender del plan.
+    ORDER BY p.created_at DESC, p.id DESC
+  `;
+  return { sql, params };
 }
 
 /**

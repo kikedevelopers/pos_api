@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { ProductType } from '@/modules/products/entities/product.entity';
-import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
+import {
+  accessibleCompanyIdsSql,
+  accessibleProductsPredicate,
+} from '@/modules/products/internal/accessible-products.helper';
 import {
   comboStockFromComponents,
   loadComboRecipes,
@@ -88,7 +91,7 @@ export interface PosItem {
 /**
  * Fila cruda del SQL de items POS. `bigint`/`numeric` llegan como `string`
  * desde el driver `pg`; `created_at` como `Date`; `prices` como array JSON ya
- * parseado (jsonb). El LATERAL agrega los precios en 1 fila por producto.
+ * parseado. El LATERAL agrega los precios en 1 fila por producto.
  */
 interface RawPosItemRow {
   id: string;
@@ -121,58 +124,86 @@ interface RawPosItemRow {
     | null;
 }
 
+/**
+ * SQL de `GET /pos-data/items`. Exportado para los tests de equivalencia.
+ *
+ * 1 FILA POR PRODUCTO. `prices` agregado vía LEFT JOIN LATERAL correlacionado
+ * (usa `idx_product_prices_product_id`), packaging como LEFT JOIN escalar. NO
+ * se hidratan entidades TypeORM.
+ *
+ * Optimización (oct 2026) — mismas filas y mismos valores que antes
+ * (verificado contra la consulta anterior en todas las companies):
+ *   - `p.company_id IN (companies candidatas)` antes del predicado de acceso:
+ *     usa el índice por company en vez de evaluar el `OR` del predicado sobre
+ *     el catálogo de TODOS los tenants. El predicado sigue siendo el gate.
+ *   - Precios con `json_agg` (texto) en vez de `jsonb`: el mapeo los
+ *     reconstruye con claves explícitas y `Number(...)`, salida idéntica.
+ *   - `ORDER BY p.id`: los empates de `created_at` (imports masivos) ya no
+ *     dependen del plan; el orden final lo siguen poniendo los `sort` de JS.
+ */
+export function buildPosItemsSql(companyId: number): { sql: string; params: unknown[] } {
+  // FASE 2: WHERE de visibilidad = propios + compartidos (predicado reusable).
+  const accessPred = accessibleProductsPredicate('p', companyId, 1);
+  const sql = `
+    SELECT
+      p.id            AS id,
+      p.name          AS name,
+      p.cost          AS cost,
+      p.bar_code      AS bar_code,
+      p.sku_code      AS sku_code,
+      p.parent_id     AS parent_id,
+      p.packaging_id  AS packaging_id,
+      p.product_type  AS product_type,
+      p.show_in_pos   AS show_in_pos,
+      p.created_at    AS created_at,
+      p.stock         AS stock,
+      p.company_id    AS company_id,
+      p.image         AS image,
+      p.use_parent_image AS use_parent_image,
+      p.description   AS description,
+      pk.id           AS packaging__id,
+      pk.name         AS packaging__name,
+      pk.value        AS packaging__value,
+      pk.is_auto      AS packaging__is_auto,
+      COALESCE(pr.prices, '[]'::json) AS prices
+    FROM products p
+    LEFT JOIN packagings pk ON pk.id = p.packaging_id
+    LEFT JOIN LATERAL (
+      SELECT json_agg(
+        json_build_object(
+          'id',         pp.id,
+          'sale_price', pp.sale_price,
+          'profit',     pp.profit,
+          'margin',     pp.margin
+        ) ORDER BY pp.id
+      ) AS prices
+      FROM product_prices pp
+      WHERE pp.product_id = p.id
+    ) pr ON TRUE
+    WHERE p.company_id IN (${accessibleCompanyIdsSql('$1')})
+      AND ${accessPred.sql}
+      AND p.is_archived = false
+    ORDER BY p.id
+  `;
+  return { sql, params: [...accessPred.params] };
+}
+
 @Injectable()
 export class GetItemsAction {
   constructor(private readonly dataSource: DataSource) {}
 
   async execute(companyId: number): Promise<PosItem[]> {
-    // FASE 2: WHERE de visibilidad = propios + compartidos (predicado reusable).
-    const accessPred = accessibleProductsPredicate('p', companyId, 1);
-    // SQL crudo: 1 FILA POR PRODUCTO. `prices` agregado vía LEFT JOIN LATERAL
-    // correlacionado (usa `idx_product_prices_product_id`), packaging como
-    // LEFT JOIN escalar. NO se hidratan entidades TypeORM. El post-proceso JS
-    // posterior es IDÉNTICO al anterior (filtro show_in_pos, parentMap,
-    // childrenByParent, orden por created_at, stock:0 placeholder).
-    const sql = `
-      SELECT
-        p.id            AS id,
-        p.name          AS name,
-        p.cost          AS cost,
-        p.bar_code      AS bar_code,
-        p.sku_code      AS sku_code,
-        p.parent_id     AS parent_id,
-        p.packaging_id  AS packaging_id,
-        p.product_type  AS product_type,
-        p.show_in_pos   AS show_in_pos,
-        p.created_at    AS created_at,
-        p.stock         AS stock,
-        p.company_id    AS company_id,
-        p.image         AS image,
-        p.use_parent_image AS use_parent_image,
-        p.description   AS description,
-        pk.id           AS packaging__id,
-        pk.name         AS packaging__name,
-        pk.value        AS packaging__value,
-        pk.is_auto      AS packaging__is_auto,
-        COALESCE(pr.prices, '[]'::jsonb) AS prices
-      FROM products p
-      LEFT JOIN packagings pk ON pk.id = p.packaging_id
-      LEFT JOIN LATERAL (
-        SELECT jsonb_agg(
-          jsonb_build_object(
-            'id',         pp.id,
-            'sale_price', pp.sale_price,
-            'profit',     pp.profit,
-            'margin',     pp.margin
-          ) ORDER BY pp.id
-        ) AS prices
-        FROM product_prices pp
-        WHERE pp.product_id = p.id
-      ) pr ON TRUE
-      WHERE ${accessPred.sql} AND p.is_archived = false
-    `;
+    const { sql, params } = buildPosItemsSql(companyId);
 
-    const rows = await this.dataSource.query<RawPosItemRow[]>(sql, [...accessPred.params]);
+    // JIT apagado SOLO para esta consulta: con el `OR` del predicado de acceso
+    // el planificador sobreestima el costo y Postgres compilaba la consulta a
+    // código nativo en CADA carga del POS (más de la mitad del tiempo, puro
+    // CPU). Una consulta de ~2.500 filas nunca amortiza esa compilación.
+    // `SET LOCAL` muere con la transacción.
+    const rows = await this.dataSource.transaction(async (manager) => {
+      await manager.query('SET LOCAL jit = off');
+      return manager.query<RawPosItemRow[]>(sql, params);
+    });
 
     const normalized = rows.map((p) => ({
       id: Number(p.id),
