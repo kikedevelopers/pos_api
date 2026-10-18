@@ -11,7 +11,12 @@ import {
 } from './gemini-errors';
 import { buildStreamUrl } from './gemini-request';
 import { parseGeminiEvent, splitSseEvents } from './gemini-sse';
-import type { GeminiFunctionCall, GeminiPart, GeminiRequestBody } from './gemini.types';
+import type {
+  GeminiFunctionCall,
+  GeminiPart,
+  GeminiRequestBody,
+  GeminiUsage,
+} from './gemini.types';
 
 /** Resultado de UNA ronda de generación (hasta que el modelo calla o pide tools). */
 export interface GeminiRoundResult {
@@ -24,6 +29,8 @@ export interface GeminiRoundResult {
   blockReason?: string;
   /** Mensaje de error YA traducido al español, listo para el usuario. */
   error?: string;
+  /** Tokens de la ronda (la última trama de Gemini trae el total). */
+  usage?: GeminiUsage;
 }
 
 /** Pausa antes del único reintento de un fallo transitorio. */
@@ -153,6 +160,9 @@ export class GeminiClient {
             accumulated.error = event.error;
             continue;
           }
+          if (event.usage) {
+            accumulated.usage = event.usage;
+          }
           if (event.blockReason) {
             accumulated.blockReason = event.blockReason;
           }
@@ -179,6 +189,9 @@ export class GeminiClient {
         if (event.error) {
           accumulated.error = event.error;
           continue;
+        }
+        if (event.usage) {
+          accumulated.usage = event.usage;
         }
         if (event.blockReason) {
           accumulated.blockReason = event.blockReason;

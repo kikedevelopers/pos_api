@@ -1,4 +1,9 @@
-import type { GeminiFunctionCall, GeminiPart, GeminiStreamEvent } from './gemini.types';
+import type {
+  GeminiFunctionCall,
+  GeminiPart,
+  GeminiStreamEvent,
+  GeminiUsage,
+} from './gemini.types';
 
 /**
  * Parser del stream SSE de Gemini. Puro y por eso testeable: la parte impura
@@ -52,6 +57,28 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
  * Nunca lanza: un JSON corrupto devuelve un evento vacío. Un stream a medias no
  * puede tumbar la petición del usuario.
  */
+const tokenCount = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+
+/** `usageMetadata` de Gemini → consumo tipado. `undefined` si no vino. */
+export const parseUsage = (raw: unknown): GeminiUsage | undefined => {
+  const usage = asRecord(raw);
+  if (!usage) {
+    return undefined;
+  }
+  const prompt_tokens = tokenCount(usage.promptTokenCount);
+  const output_tokens = tokenCount(usage.candidatesTokenCount);
+  const thoughts_tokens = tokenCount(usage.thoughtsTokenCount);
+  return {
+    prompt_tokens,
+    output_tokens,
+    thoughts_tokens,
+    cached_tokens: tokenCount(usage.cachedContentTokenCount),
+    total_tokens:
+      tokenCount(usage.totalTokenCount) || prompt_tokens + output_tokens + thoughts_tokens,
+  };
+};
+
 export const parseGeminiEvent = (raw: string): GeminiStreamEvent => {
   const empty: GeminiStreamEvent = { text: '', parts: [], functionCalls: [] };
   const trimmed = raw.trim();
@@ -78,6 +105,7 @@ export const parseGeminiEvent = (raw: string): GeminiStreamEvent => {
     return { ...empty, error: message };
   }
 
+  const usage = parseUsage(root.usageMetadata);
   const promptFeedback = asRecord(root.promptFeedback);
   const blockReason =
     promptFeedback && typeof promptFeedback.blockReason === 'string'
@@ -87,7 +115,7 @@ export const parseGeminiEvent = (raw: string): GeminiStreamEvent => {
   const candidates = Array.isArray(root.candidates) ? root.candidates : [];
   const candidate = asRecord(candidates[0]);
   if (!candidate) {
-    return { ...empty, blockReason };
+    return { ...empty, blockReason, usage };
   }
 
   const finishReason =
@@ -124,7 +152,7 @@ export const parseGeminiEvent = (raw: string): GeminiStreamEvent => {
     }
   }
 
-  return { text, parts, functionCalls, finishReason, blockReason };
+  return { text, parts, functionCalls, finishReason, blockReason, usage };
 };
 
 /**

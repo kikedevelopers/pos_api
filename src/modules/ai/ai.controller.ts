@@ -49,10 +49,7 @@ export class AiController {
     summary: 'Disponibilidad de Place, modelo en uso y herramientas del usuario.',
   })
   @ApiResponse({ status: HttpStatus.OK })
-  status(
-    @CurrentUser() user: AuthUser,
-    @CurrentCompany() companyId: number,
-  ): Promise<AiStatus> {
+  status(@CurrentUser() user: AuthUser, @CurrentCompany() companyId: number): Promise<AiStatus> {
     return this.aiService.status(user, companyId);
   }
 
@@ -84,9 +81,15 @@ export class AiController {
     // Gate por cuenta ANTES de abrir el stream: si Place no está habilitado para
     // esta company, respondemos 403 (AI_NOT_ENABLED) como error HTTP normal —
     // el cliente lo muestra sin siquiera iniciar la respuesta.
-    await this.aiService.assertAvailableFor(companyId);
+    // …y reserva 1 crédito del día (429 AI_CREDITS_EXHAUSTED si no quedan).
+    const reservation = await this.aiService.reserveChatCredit(companyId);
 
     const writer = new SseWriter(response);
+    // Primero el saldo: el cliente bloquea la caja de texto si este era el último.
+    writer.send('credits', reservation.status);
+    // Si la respuesta falla antes de decir algo, el crédito se devuelve.
+    let answered = false;
+    let failed = false;
     const abort = new AbortController();
 
     // El usuario cerró la pestaña o pulsó "detener": cortamos la generación
@@ -101,17 +104,23 @@ export class AiController {
         model: dto.model,
         signal: abort.signal,
         emit: (event) => {
+          if (event.type === 'delta' || event.type === 'card') answered = true;
+          if (event.type === 'error') failed = true;
           const { type, ...data } = event;
           writer.send(type, data);
         },
       });
     } catch (error) {
+      failed = true;
       this.logger.error({ err: error, companyId, userId: user.user_id }, 'Fallo en /ai/chat');
       writer.send('error', {
         message: 'Ocurrió un error inesperado al hablar con la IA. Intenta de nuevo.',
       });
     } finally {
       writer.close();
+      if (failed && !answered) {
+        await this.aiService.refundChatCredit(reservation);
+      }
     }
   }
 }

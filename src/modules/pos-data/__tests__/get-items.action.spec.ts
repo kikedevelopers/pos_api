@@ -1,6 +1,6 @@
 import type { DataSource } from 'typeorm';
 
-import { GetItemsAction } from '../actions/get-items.action';
+import { buildPosItemsSql, GetItemsAction } from '../actions/get-items.action';
 
 /**
  * Garantiza la EQUIVALENCIA tras migrar el fetch del POS a SQL crudo:
@@ -58,8 +58,13 @@ function makeAction(
   rows: Record<string, unknown>[],
   comboRows: FakeComboRow[] = [],
 ): GetItemsAction {
+  // La consulta corre en una transacción (SET LOCAL jit = off antes).
+  const txManager = {
+    query: jest.fn((sql: string) => Promise.resolve(/SET LOCAL/.test(sql) ? [] : rows)),
+  };
   const dataSource = {
-    query: jest.fn().mockResolvedValue(rows),
+    transaction: jest.fn((work: (m: typeof txManager) => Promise<unknown>) => work(txManager)),
+    txManager,
     manager: {
       find: jest.fn((_entity: unknown, options: { where: Record<string, unknown> }) => {
         const where = options.where as {
@@ -465,6 +470,30 @@ describe('GetItemsAction (SQL crudo)', () => {
       const manager = (action as unknown as { dataSource: { manager: { find: jest.Mock } } })
         .dataSource.manager;
       expect(manager.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('consulta optimizada', () => {
+    it('apaga el JIT en la MISMA transacción y antes de la consulta', async () => {
+      const action = makeAction([]);
+      await action.execute(42);
+      const tx = (
+        action as unknown as {
+          dataSource: { txManager: { query: jest.Mock<Promise<unknown>, [string]> } };
+        }
+      ).dataSource.txManager;
+      const statements = tx.query.mock.calls.map(([sql]) => sql);
+      expect(statements[0]).toBe('SET LOCAL jit = off');
+      expect(statements[1]).toMatch(/FROM products p/);
+    });
+
+    it('prefiltra por companies candidatas, conserva el gate de acceso y ordena por id', () => {
+      const { sql, params } = buildPosItemsSql(42);
+      expect(sql).toMatch(/p\.company_id IN \(/);
+      expect(sql).toMatch(/inventory_shares/);
+      expect(sql).toMatch(/p\.is_archived = false/);
+      expect(sql).toMatch(/ORDER BY p\.id\s*$/);
+      expect(params).toEqual(['42', '42', '42', '42', '42']);
     });
   });
 });

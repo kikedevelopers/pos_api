@@ -12,7 +12,6 @@ import { parseUtcRange } from '@/modules/reports/internal/range';
 
 import {
   hashMessage,
-  isExplicitConfirmation,
   PENDING_ACTION_TTL_MINUTES,
   readDescriptionArg,
   readMoneyArg,
@@ -30,13 +29,16 @@ import {
   MARK_PENDING_EXPIRED_SQL,
   UPSERT_PENDING_ACTION_SQL,
 } from '../internal/expense-tool-sql';
+import {
+  checkPendingConfirmation,
+  EXPENSE_ACTION_TYPES,
+  type PendingActionType,
+} from '../internal/pending-confirmation';
 import { readDate, readString } from '../internal/tool-args';
 import type { AiToolActor } from '../internal/tool-catalog';
 
 /** Nota de auditoría que queda en el gasto: se registró conversando con Place. */
 export const PLACE_EXPENSE_NOTE = 'Registrado con Place (asistente IA)';
-
-type PendingActionType = 'REGISTER_EXPENSE' | 'VOID_EXPENSE';
 
 interface RegisterPayload {
   description: string;
@@ -438,43 +440,21 @@ export class RunAiExpenseToolAction {
           };
         }
 
-        const expire = async (): Promise<void> => {
-          await manager.query(MARK_PENDING_EXPIRED_SQL, [pending.id, String(company_id)]);
-        };
+        // La pendiente vigente es de otro tipo (un pedido): este tool no la toca.
+        if (!EXPENSE_ACTION_TYPES.has(pending.action_type)) {
+          return {
+            status: 'wrong_operation',
+            message:
+              'La operación pendiente NO es un gasto (es un pedido). NO se ejecutó nada con esta herramienta: confírmala con la herramienta de pedidos.',
+          };
+        }
 
-        if (pending.request_id === context.request_id) {
-          return {
-            status: 'awaiting_user_reply',
-            message:
-              'NO se ejecutó nada: el usuario todavía no ha respondido al resumen. Muéstraselo y espera a que responda "sí".',
-          };
-        }
-        if (pending.is_expired) {
-          await expire();
-          return {
-            status: 'expired',
-            message:
-              'La operación preparada venció sin confirmarse. NO se ejecutó nada. Vuelve a prepararla y pide confirmación de nuevo.',
-          };
-        }
-        if (
-          context.previous_user_message === null ||
-          hashMessage(context.previous_user_message) !== pending.trigger_message_hash
-        ) {
-          await expire();
-          return {
-            status: 'stale_confirmation',
-            message:
-              'La respuesta del usuario no corresponde al último resumen que se le mostró. NO se ejecutó nada. Vuelve a preparar la operación, muéstrale el resumen y pide su "sí".',
-          };
-        }
-        if (!isExplicitConfirmation(context.current_user_message)) {
-          await expire();
-          return {
-            status: 'confirmation_not_explicit',
-            message:
-              'El usuario no respondió con un "sí" explícito (cambió algo, dijo que no o preguntó otra cosa). NO se ejecutó nada. Si cambió datos, prepara de nuevo con los datos nuevos; si no, pregúntale si confirma.',
-          };
+        const rejection = checkPendingConfirmation(pending, context);
+        if (rejection) {
+          if (rejection.expire) {
+            await manager.query(MARK_PENDING_EXPIRED_SQL, [pending.id, String(company_id)]);
+          }
+          return { status: rejection.status, message: rejection.message };
         }
 
         if (pending.action_type === 'REGISTER_EXPENSE') {
@@ -676,7 +656,7 @@ export class RunAiExpenseToolAction {
   private async savePending(
     company_id: number,
     user_id: number,
-    action_type: PendingActionType,
+    action_type: Exclude<PendingActionType, 'CREATE_SALE'>,
     payload: RegisterPayload | VoidPayload,
     context: AiToolRequestContext,
   ): Promise<'saved' | 'one_at_a_time' | 'concurrent'> {

@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, HttpException } from '@nestjs/common';
 
 import { AiService } from '../ai.service';
 
@@ -10,7 +10,26 @@ import { AiService } from '../ai.service';
 const USER = { user_id: 1, type: 'owner' } as never;
 const ACTOR = { companyId: 7, isAdmin: true, permissions: new Set<string>(), userId: 1 };
 
-function build(opts: { geminiEnabled: boolean; companyAiEnabled: boolean | null }) {
+function build(opts: {
+  geminiEnabled: boolean;
+  companyAiEnabled: boolean | null;
+  /** Créditos que quedan hoy (por defecto 5). */
+  remaining?: number;
+}) {
+  const remaining = opts.remaining ?? 5;
+  const credits = {
+    status: jest.fn().mockResolvedValue({ daily_limit: 5, used_today: 5 - remaining, remaining }),
+    reserve: jest.fn().mockResolvedValue(
+      remaining > 0
+        ? {
+            company_id: 7,
+            day: '2026-10-17',
+            status: { daily_limit: 5, used_today: 6 - remaining, remaining: remaining - 1 },
+          }
+        : null,
+    ),
+    refund: jest.fn().mockResolvedValue(undefined),
+  };
   const streamExecute = jest.fn().mockResolvedValue(undefined);
   const greetingExecute = jest.fn().mockResolvedValue({ text: 'hola', source: 'ai' });
   const resolveExecute = jest.fn().mockResolvedValue(ACTOR);
@@ -31,10 +50,11 @@ function build(opts: { geminiEnabled: boolean; companyAiEnabled: boolean | null 
     { execute: greetingExecute } as never,
     { execute: resolveExecute } as never,
     geminiClient as never,
+    credits as never,
     companiesRepo as never,
   );
 
-  return { service, streamExecute, greetingExecute };
+  return { service, streamExecute, greetingExecute, credits };
 }
 
 describe('AiService · gate de acceso por cuenta', () => {
@@ -93,5 +113,55 @@ describe('AiService · gate de acceso por cuenta', () => {
     const greeting = await service.greeting(USER, 7);
     expect(greeting).toEqual({ text: 'hola', source: 'ai' });
     expect(greetingExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('greeting sin créditos del día usa el saludo fijo (allowAi = false)', async () => {
+    const { service, greetingExecute } = build({
+      geminiEnabled: true,
+      companyAiEnabled: true,
+      remaining: 0,
+    });
+    await service.greeting(USER, 7);
+    expect(greetingExecute).toHaveBeenCalledWith(USER, 7, expect.any(Number), false);
+  });
+});
+
+describe('AiService · créditos diarios', () => {
+  it('status informa los créditos de la cuenta', async () => {
+    const { service } = build({ geminiEnabled: true, companyAiEnabled: true, remaining: 3 });
+    const status = await service.status(USER, 7);
+    expect(status.credits).toEqual({ daily_limit: 5, used_today: 2, remaining: 3 });
+  });
+
+  it('reserveChatCredit reserva un crédito si quedan', async () => {
+    const { service, credits } = build({
+      geminiEnabled: true,
+      companyAiEnabled: true,
+      remaining: 1,
+    });
+    const reservation = await service.reserveChatCredit(7);
+    expect(credits.reserve).toHaveBeenCalledWith(7);
+    expect(reservation.status.remaining).toBe(0);
+  });
+
+  it('sin créditos: 429 AI_CREDITS_EXHAUSTED con el mensaje para el cliente', async () => {
+    const { service } = build({ geminiEnabled: true, companyAiEnabled: true, remaining: 0 });
+    expect.assertions(3);
+    try {
+      await service.reserveChatCredit(7);
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpException);
+      expect((err as HttpException).getStatus()).toBe(429);
+      expect((err as HttpException).getResponse()).toMatchObject({
+        message: expect.stringContaining('consultas de Place') as unknown,
+        payload: { code: 'AI_CREDITS_EXHAUSTED' },
+      });
+    }
+  });
+
+  it('una cuenta apagada da 403 y NO toca los créditos', async () => {
+    const { service, credits } = build({ geminiEnabled: true, companyAiEnabled: false });
+    await expect(service.reserveChatCredit(7)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(credits.reserve).not.toHaveBeenCalled();
   });
 });
