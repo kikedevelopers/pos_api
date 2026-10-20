@@ -162,4 +162,58 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Los gastos se restan de la ganancia');
     expect(prompt).toContain('Excedente (reinversión)');
   });
+
+  describe('negocios del dueño (sucursales)', () => {
+    const MAIN = { id: 10, name: 'El Surtidor La 21', is_branch: false, is_active: true };
+    const NORTE = { id: 11, name: 'Sucursal Norte', is_branch: true, is_active: true };
+
+    it('sin negocios (empleado) no habla de sucursales ni agrega reglas', () => {
+      const prompt = buildSystemPrompt(context());
+      expect(prompt).not.toContain('TUS NEGOCIOS');
+      expect(prompt).not.toContain('VARIOS NEGOCIOS');
+    });
+
+    it('owner sin sucursales: le dice que solo tiene el principal, sin reglas multi-negocio', () => {
+      const prompt = buildSystemPrompt(context({ businesses: [MAIN], current_company_id: 10 }));
+      expect(prompt).toContain('solo el negocio principal (El Surtidor La 21)');
+      expect(prompt).toContain('NO tiene sucursales');
+      expect(prompt).not.toContain('VARIOS NEGOCIOS');
+    });
+
+    it('owner con sucursales: lista compacta con el actual + reglas de uso', () => {
+      const prompt = buildSystemPrompt(
+        context({ businesses: [MAIN, NORTE], current_company_id: 11 }),
+      );
+      expect(prompt).toContain('VARIOS NEGOCIOS');
+      expect(prompt).toContain('get_businesses_overview');
+      expect(prompt).toContain('business_id');
+      expect(prompt).toContain('#10 El Surtidor La 21 (principal)');
+      expect(prompt).toContain('#11 Sucursal Norte (sucursal, ACTUAL)');
+      expect(prompt).toContain('Gastos y pedidos solo en el negocio ACTUAL');
+      expect(prompt).toContain('nunca escribas el # ni business_id');
+    });
+
+    it('la lista de negocios va AL FINAL y las reglas fijas antes del contexto (prefijo cacheable)', () => {
+      const prompt = buildSystemPrompt(
+        context({ businesses: [MAIN, NORTE], current_company_id: 10 }),
+      );
+      const marker = 'CONTEXTO DE ESTA CONVERSACIÓN';
+      expect(prompt.indexOf('VARIOS NEGOCIOS')).toBeLessThan(prompt.indexOf(marker));
+      expect(prompt.indexOf('TUS NEGOCIOS (')).toBeGreaterThan(prompt.indexOf(marker));
+      expect(prompt.trimEnd().endsWith('#11 Sucursal Norte (sucursal)')).toBe(true);
+
+      // Dos owners multi-negocio distintos comparten todo hasta el contexto.
+      const other = buildSystemPrompt(
+        context({
+          businessName: 'Otra',
+          businesses: [
+            { ...MAIN, id: 50, name: 'Otra' },
+            { ...NORTE, id: 51 },
+          ],
+          current_company_id: 50,
+        }),
+      );
+      expect(prompt.slice(0, prompt.indexOf(marker))).toBe(other.slice(0, other.indexOf(marker)));
+    });
+  });
 });

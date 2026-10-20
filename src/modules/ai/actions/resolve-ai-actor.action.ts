@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
 
+import type { AiBusiness } from '../internal/business-scope';
 import type { AiToolActor } from '../internal/tool-catalog';
 
 /** Todo lo que el asistente necesita saber de quién pregunta. */
@@ -42,7 +43,7 @@ export class ResolveAiActorAction {
   async execute(user: AuthUser, companyId: number): Promise<AiActorContext> {
     const isAdmin = user.type === 'owner' || user.type === 'superadmin';
 
-    const [permissions, businessName, employee_flags] = await Promise.all([
+    const [permissions, businessName, employee_flags, businesses] = await Promise.all([
       this.resolvePermissions.execute({
         type: user.type,
         account: user.account,
@@ -51,6 +52,7 @@ export class ResolveAiActorAction {
       }),
       this.fetchBusinessName(companyId),
       this.fetchEmployeeFlags(user, companyId, isAdmin),
+      this.fetchOwnerBusinesses(user, companyId),
     ]);
 
     return {
@@ -64,7 +66,52 @@ export class ResolveAiActorAction {
       full_name: `${user.name ?? ''} ${user.lastname ?? ''}`.trim() || 'Usuario',
       userRole: ROLE_LABELS[user.type] ?? 'usuario',
       businessName,
+      // Owner sin membresías: solo el negocio actual (Place dirá que no tiene sucursales).
+      businesses: businesses ?? [
+        { id: companyId, name: businessName, is_branch: false, is_active: true },
+      ],
     };
+  }
+
+  /**
+   * Negocios del OWNER (principal primero, luego sucursales por id), de
+   * `company_members` — la misma fuente que el selector de sucursal y los
+   * informes consolidados. Sale del `user_id` del JWT, así que da lo mismo
+   * desde qué negocio esté conectado.
+   *
+   * Solo el owner: un empleado o el superadmin reciben `[]` sin tocar la BD.
+   * `null` = owner sin membresías válidas (cuenta antigua): el caller asume
+   * solo el negocio actual.
+   */
+  private async fetchOwnerBusinesses(
+    user: AuthUser,
+    companyId: number,
+  ): Promise<AiBusiness[] | null> {
+    if (user.type !== 'owner') {
+      return [];
+    }
+    const rows = await this.dataSource.query<
+      Array<{ id: string; name: string | null; is_branch: boolean; is_active: boolean }>
+    >(
+      `SELECT c.id::text AS id, c.name, c.is_branch, cm.is_active
+         FROM company_members cm
+         JOIN companies c ON c.id = cm.company_id
+        WHERE cm.user_id = $1
+        ORDER BY c.is_branch ASC, c.id ASC`,
+      [String(user.user_id)],
+    );
+    const businesses = rows.map((row) => ({
+      id: Number(row.id),
+      name: row.name?.trim() || `Negocio #${row.id}`,
+      is_branch: row.is_branch === true,
+      is_active: row.is_active !== false,
+    }));
+    // Anti-IDOR: el negocio de la sesión tiene que ser suyo; si no aparece
+    // (cuenta sin membresías), no se le abre ningún otro.
+    if (!businesses.some((business) => business.id === companyId)) {
+      return null;
+    }
+    return businesses;
   }
 
   private async fetchBusinessName(companyId: number): Promise<string> {

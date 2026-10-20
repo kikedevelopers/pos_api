@@ -131,6 +131,8 @@ export class StreamAiChatAction {
       today: todayUtcDate(),
       availableTools,
       canViewProfit: actor.canViewProfit,
+      businesses: actor.businesses,
+      current_company_id: companyId,
     });
 
     const body = buildGeminiRequest({

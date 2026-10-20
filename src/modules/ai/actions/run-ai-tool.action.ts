@@ -2,12 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { APP_TIMEZONE, dayjs } from '@/common/utils/dayjs';
-import { preciseNumber } from '@/common/utils/precision';
+import { preciseNumber, toBig } from '@/common/utils/precision';
 import { DashboardService } from '@/modules/dashboard/dashboard.service';
 import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
 import { parseUtcRange, todayUtcDate } from '@/modules/reports/internal/range';
 import { TreasuryService } from '@/modules/treasury/treasury.service';
 
+import {
+  hasMultipleBusinesses,
+  queryableBusinesses,
+  resolveBusinessScope,
+} from '../internal/business-scope';
 import type { AiToolRequestContext } from '../internal/expense-tool-helpers';
 import { cardForToolResult, type AiToolCard } from '../internal/tool-cards';
 import { readDate, readDateRange, readInt, readNumber, readString } from '../internal/tool-args';
@@ -20,6 +25,7 @@ import {
   SUPPLIER_RECENT_PURCHASES,
 } from '../internal/tool-sql';
 import {
+  acceptsBusinessScope,
   findTool,
   isToolAllowed,
   salesScopeUserId,
@@ -111,15 +117,33 @@ export class RunAiToolAction {
         ok: false,
         response: {
           error:
-            'El usuario no tiene permiso para consultar esta información. Explícale que su rol no incluye ese módulo.',
+            tool.requires_branches === true && !hasMultipleBusinesses(actor)
+              ? 'El usuario no tiene sucursales activas: solo su negocio principal. Díselo y usa get_daily_summary para este negocio.'
+              : 'El usuario no tiene permiso para consultar esta información. Explícale que su rol no incluye ese módulo.',
         },
         durationMs: Date.now() - startedAt,
       };
     }
 
+    // Otro negocio del owner (`business_id`): se valida contra SUS negocios
+    // antes de tocar la BD. Sin él, la company de la sesión como siempre.
+    const scope = resolveBusinessScope(actor, companyId, args ?? {}, acceptsBusinessScope(tool));
+    if (!scope.ok) {
+      return {
+        name,
+        label: tool.label,
+        ok: false,
+        response: { error: scope.error },
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
     try {
-      const raw = await this.dispatch(companyId, actor, tool.name, args ?? {}, context);
-      const response = stripProfitFields(raw, actor.canViewProfit);
+      const raw = await this.dispatch(scope.company_id, actor, tool.name, args ?? {}, context);
+      // Con otro negocio, el resultado dice de cuál es: el modelo no lo confunde
+      // con el actual al encadenar varias consultas.
+      const scoped = scope.business ? { business: scope.business.name, ...raw } : raw;
+      const response = stripProfitFields(scoped, actor.canViewProfit);
       const card = cardForToolResult(tool.name, response);
       return {
         name: tool.name,
@@ -177,6 +201,8 @@ export class RunAiToolAction {
         return this.expensesSummary(companyId, args);
       case 'get_treasury_accounts':
         return this.treasuryAccounts(companyId);
+      case 'get_businesses_overview':
+        return this.businessesOverview(actor, args);
       case 'register_expense':
         return this.expenseTools.prepareRegistration(companyId, actor, args, context);
       case 'void_expense':
@@ -397,6 +423,68 @@ export class RunAiToolAction {
     const limit = readInt(args, 'limit', 10, 1, 50);
     const products = await this.dashboardService.topProducts(companyId, limit);
     return { limit, products };
+  }
+
+  /**
+   * Día de TODOS los negocios del owner en una llamada (en paralelo). Cada fila
+   * sale de `DashboardService.today` —la misma maquinaria de get_daily_summary—,
+   * así la cifra de una sucursal cuadra con la que da Place parado en ella.
+   * Filas compactas (sin desgloses) para gastar los mínimos tokens; el total se
+   * suma con Big.js y los márgenes se recalculan sobre los agregados.
+   */
+  private async businessesOverview(
+    actor: AiToolActor,
+    args: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const date = readDate(args, 'date') ?? todayUtcDate();
+    const businesses = queryableBusinesses(actor);
+    const summaries = await Promise.all(
+      businesses.map((business) => this.dashboardService.today(business.id, date)),
+    );
+
+    const marginOf = (profit: number, sales: number): number =>
+      sales > 0 ? num(toBig(profit).div(sales).times(100)) : 0;
+
+    const rows = businesses.map((business, index) => {
+      const summary = summaries[index];
+      return {
+        name: business.name,
+        is_branch: business.is_branch,
+        collected: num(summary.totalCollected),
+        sales: num(summary.totalSales),
+        sales_count: summary.salesCount,
+        credit_sales: num(summary.creditSales),
+        orders: num(summary.ordersTotal),
+        profit: num(summary.salesProfit),
+        margin: marginOf(summary.salesProfit, summary.totalSales),
+        expenses: num(summary.expenses),
+        real_profit: num(summary.salesRealProfit),
+        cash_balance: num(summary.cashAccounts.totals.grand),
+      };
+    });
+
+    const sum = (pick: (row: (typeof rows)[number]) => number): number =>
+      num(rows.reduce((acc, row) => acc.plus(toBig(pick(row))), toBig(0)));
+    const total_sales = sum((row) => row.sales);
+    const total_profit = sum((row) => row.profit);
+
+    return {
+      date,
+      businesses: rows,
+      totals: {
+        collected: sum((row) => row.collected),
+        sales: total_sales,
+        sales_count: rows.reduce((acc, row) => acc + row.sales_count, 0),
+        credit_sales: sum((row) => row.credit_sales),
+        orders: sum((row) => row.orders),
+        profit: total_profit,
+        margin: marginOf(total_profit, total_sales),
+        expenses: sum((row) => row.expenses),
+        real_profit: sum((row) => row.real_profit),
+        cash_balance: sum((row) => row.cash_balance),
+      },
+      note: 'Pesos colombianos. "collected" = dinero que entró ese día; "sales" incluye créditos y pedidos; "real_profit" = ganancia − gastos variables; "cash_balance" = saldo actual de cajas, bancos y billeteras. "totals" ya es la suma: no la recalcules.',
+    };
   }
 
   private async treasuryAccounts(companyId: number): Promise<Record<string, unknown>> {

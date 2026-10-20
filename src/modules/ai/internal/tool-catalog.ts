@@ -1,5 +1,10 @@
 import type { PermissionKey } from '@/modules/roles/internal/permission-catalog';
 
+import {
+  hasMultipleBusinesses,
+  withBusinessIdParam,
+  type AiBusinessScopeActor,
+} from './business-scope';
 import type { GeminiFunctionDeclaration } from './gemini.types';
 
 /**
@@ -29,6 +34,7 @@ export const AI_TOOL_NAMES = [
   'search_suppliers',
   'get_expenses_summary',
   'get_treasury_accounts',
+  'get_businesses_overview',
   'register_expense',
   'void_expense',
   'confirm_expense_action',
@@ -57,6 +63,11 @@ export interface AiToolDefinition {
    * de fábrica "Administrador". Se suma al `permission`, no lo reemplaza.
    */
   requires_administrator?: boolean;
+  /**
+   * Solo para el OWNER con sucursales (consolidado de todos sus negocios). A
+   * cualquier otro usuario ni se le declara.
+   */
+  requires_branches?: boolean;
   /** false = no se lista en "qué puede hacer Place" (es un paso interno). */
   is_listed?: boolean;
   declaration: GeminiFunctionDeclaration;
@@ -314,6 +325,25 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
     },
   },
   {
+    name: 'get_businesses_overview',
+    label: 'Resumen de tus negocios',
+    summary: 'Cómo van todos tus negocios (principal y sucursales) en un día, con el total.',
+    permission: 'canAccessDashboard',
+    exposesProfit: true,
+    requires_branches: true,
+    declaration: {
+      name: 'get_businesses_overview',
+      description:
+        'Día de TODOS los negocios del dueño (principal y sucursales activas) en una llamada, con el total: recaudo, ventas, créditos, pedidos, ganancia, margen, gastos, ganancia real y saldo en cajas. Para "¿cómo van mis negocios?" o comparar sucursales.',
+      parameters: {
+        type: 'object',
+        properties: {
+          date: dateParam('Día a consultar. Si se omite, hoy.'),
+        },
+      },
+    },
+  },
+  {
     name: 'register_expense',
     label: 'Preparando gasto',
     summary:
@@ -490,7 +520,7 @@ const TOOLS_BY_NAME = new Map<string, AiToolDefinition>(AI_TOOLS.map((tool) => [
 export const findTool = (name: string): AiToolDefinition | undefined => TOOLS_BY_NAME.get(name);
 
 /** Actor mínimo necesario para decidir qué herramientas se ofrecen. */
-export interface AiToolActor {
+export interface AiToolActor extends AiBusinessScopeActor {
   /** owner/superadmin: acceso total, no dependen del catálogo. */
   isAdmin: boolean;
   permissions: ReadonlySet<string>;
@@ -515,7 +545,19 @@ export interface AiToolActor {
 export const salesScopeUserId = (actor: AiToolActor): number | null =>
   actor.isAdmin || actor.permissions.has('canViewAllSales') ? null : actor.userId;
 
+/**
+ * ¿La herramienta puede correr contra otro negocio del owner (`business_id`)?
+ * Solo las de lectura sobre UN negocio: las que escriben operan siempre en el
+ * negocio de la sesión, y el consolidado ya cubre a todos.
+ */
+export const acceptsBusinessScope = (tool: AiToolDefinition): boolean =>
+  tool.requires_administrator !== true && tool.requires_branches !== true;
+
 export const isToolAllowed = (tool: AiToolDefinition, actor: AiToolActor): boolean => {
+  // `businesses` solo lo trae el owner: sin sucursales no hay consolidado.
+  if (tool.requires_branches === true && !hasMultipleBusinesses(actor)) {
+    return false;
+  }
   // Escritura: fail-closed. Ni el permiso del módulo basta sin el rol.
   if (tool.requires_administrator === true && !actor.isAdmin && actor.is_administrator !== true) {
     return false;
@@ -533,9 +575,18 @@ export const isToolAllowed = (tool: AiToolDefinition, actor: AiToolActor): boole
 export const allowedToolsFor = (actor: AiToolActor): AiToolDefinition[] =>
   AI_TOOLS.filter((tool) => isToolAllowed(tool, actor));
 
-/** Declaraciones que se le mandan al modelo, ya filtradas por permisos. */
-export const declarationsFor = (actor: AiToolActor): GeminiFunctionDeclaration[] =>
-  allowedToolsFor(actor).map((tool) => tool.declaration);
+/**
+ * Declaraciones que se le mandan al modelo, ya filtradas por permisos. Al owner
+ * con sucursales se le agrega `business_id` a las de lectura; a los demás, nada.
+ */
+export const declarationsFor = (actor: AiToolActor): GeminiFunctionDeclaration[] => {
+  const multi_business = hasMultipleBusinesses(actor);
+  return allowedToolsFor(actor).map((tool) =>
+    multi_business && acceptsBusinessScope(tool)
+      ? withBusinessIdParam(tool.declaration)
+      : tool.declaration,
+  );
+};
 
 /** Lo que ve el usuario en "qué puedo consultar": solo lo que de verdad puede. */
 export interface AiToolSummary {
@@ -566,6 +617,7 @@ const PROFIT_KEYS = new Set([
   'salesProfit',
   'realProfit',
   'salesRealProfit',
+  'real_profit',
   'surplus',
   'salesSurplus',
   'margin',
