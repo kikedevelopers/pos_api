@@ -41,6 +41,7 @@ const SETTINGS_ENDPOINTS: ControllerMethod[] = [
   // Los GET NO (los lee el PaymentModal con cualquier rol) — ver describe aparte.
   'upsertEnableCreditPayment',
   'upsertEnableThirdPartyLoan',
+  'upsertTicketPrint',
   'findAll',
   'findOne',
   'upsert',
@@ -78,7 +79,7 @@ describe('AppSettingsController · RBAC metadata', () => {
   // el cajero recibiría 403 y el front caería al fallback. Por eso los GET NO
   // llevan el permiso (solo @Roles con employee); los PUT sí lo mantienen.
   describe('A1 · GET de visibilidad legibles por cualquier rol; PUT solo admin', () => {
-    it.each(['getEnableCreditPayment', 'getEnableThirdPartyLoan'] as const)(
+    it.each(['getEnableCreditPayment', 'getEnableThirdPartyLoan', 'getTicketPrint'] as const)(
       '%s NO exige canAccessSettings (el cajero puede leerlo → 200)',
       (getter) => {
         expect(permissionOf(getter)).toBeUndefined();
@@ -87,16 +88,17 @@ describe('AppSettingsController · RBAC metadata', () => {
       },
     );
 
-    it.each(['upsertEnableCreditPayment', 'upsertEnableThirdPartyLoan'] as const)(
-      '%s SÍ exige canAccessSettings (el cajero NO puede cambiar el flag)',
-      (setter) => {
-        expect(permissionOf(setter)).toBe('canAccessSettings');
-        // Igual que los demás flags de negocio: owner/superadmin, no manager.
-        const roles = rolesOf(setter);
-        expect(roles).toContain('owner');
-        expect(roles).toContain('superadmin');
-        expect(roles).not.toContain('manager');
-      },
-    );
+    it.each([
+      'upsertEnableCreditPayment',
+      'upsertEnableThirdPartyLoan',
+      'upsertTicketPrint',
+    ] as const)('%s SÍ exige canAccessSettings (el cajero NO puede cambiar el flag)', (setter) => {
+      expect(permissionOf(setter)).toBe('canAccessSettings');
+      // Igual que los demás flags de negocio: owner/superadmin, no manager.
+      const roles = rolesOf(setter);
+      expect(roles).toContain('owner');
+      expect(roles).toContain('superadmin');
+      expect(roles).not.toContain('manager');
+    });
   });
 });
