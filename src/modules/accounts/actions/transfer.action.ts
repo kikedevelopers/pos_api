@@ -439,10 +439,26 @@ export class TransferAction {
 
     // Validar que el user destino existe en la company (multi-tenant) y no
     // es superadmin. Sin esto, un owner podría disparar 404 cross-tenant.
-    const destinationUser = await manager.findOne(User, {
+    const user_select = { id: true, name: true, lastname: true, type: true } as const;
+    let destinationUser = await manager.findOne(User, {
       where: { id: String(destinationUserId), company_id: String(companyId) },
-      select: { id: true, name: true, lastname: true, type: true },
+      select: user_select,
     });
+    if (!destinationUser) {
+      // Owner miembro de una SUCURSAL: su usuario vive en el principal pero
+      // tiene caja propia en esta company. Es destino válido solo si esa caja
+      // existe aquí (mismo criterio que `GetTransferDestinationsAction`).
+      const member_register = await manager.findOne(CashRegister, {
+        where: { company_id: String(companyId), user_id: String(destinationUserId) },
+        select: { id: true },
+      });
+      if (member_register) {
+        destinationUser = await manager.findOne(User, {
+          where: { id: String(destinationUserId) },
+          select: user_select,
+        });
+      }
+    }
     if (!destinationUser || destinationUser.type === UserType.SUPERADMIN) {
       throw new NotFoundException('Usuario destino no encontrado');
     }

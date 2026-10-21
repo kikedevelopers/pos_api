@@ -1,6 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 
 import {
   PURCHASE_PAYMENT_SOURCE_TYPES,
@@ -18,6 +27,11 @@ import {
  *
  * `force_stock_adjustment` solo lo aceptan owner/superadmin para clampear
  * stock a 0 si una reversión dejaría inventario negativo.
+ *
+ * `client_operation_id` lo envía PlacePos en cada archivado; se acepta por
+ * paridad (antes el pipe lo rechazaba con "property client_operation_id
+ * should not exist"). Archivar ya es idempotente por estado: un segundo
+ * intento sobre una compra archivada no repite la reversión.
  */
 export class ArchivePurchaseDto {
   @ApiPropertyOptional({
@@ -53,4 +67,15 @@ export class ArchivePurchaseDto {
   @IsOptional()
   @IsBoolean()
   force_stock_adjustment?: boolean;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    nullable: true,
+    description:
+      'UUID v4 generado por el cliente para deduplicar reintentos. Aceptado por paridad placepos.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID('4', { message: 'client_operation_id debe ser un UUID v4 válido' })
+  client_operation_id?: string | null;
 }

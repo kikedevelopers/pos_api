@@ -42,7 +42,8 @@ export interface TransferDestinationItem {
  * multi-sucursal:
  *
  *   - Si source = wallet → destinos: otras wallets + bancos + usuarios con
- *     caja registradora (`cash_register`) en la misma company.
+ *     caja registradora (`cash_register`) en la misma company (incluye el
+ *     owner miembro de una sucursal, cuyo usuario vive en el principal).
  *   - Si source = bank → destinos: otros bancos + wallets.
  *   - Si la company del JWT es una SUCURSAL → se agregan, al final, los
  *     `wallet`/`bank` ACTIVOS del NEGOCIO PRINCIPAL con `scope='main'`
@@ -107,13 +108,14 @@ export class GetTransferDestinationsAction {
 
       // Solo se listan usuarios con caja registrada (modelo PlacePos: el
       // INNER JOIN garantiza que la caja existe; el balance mostrado es el
-      // de la caja, no el `balance` personal del User). Cualquier user-type
-      // dentro de la company es candidato (owner + employees con login
-      // habilitado han creado fila espejo en `users`).
+      // de la caja, no el `balance` personal del User). Se parte de las CAJAS
+      // de la company, no de `u.company_id`: en una sucursal el owner tiene
+      // caja propia pero su usuario vive en el principal (`company_members`),
+      // y filtrando por `u.company_id` su caja no aparecía como destino.
       const usersWithRegister = await this.userRepo
         .createQueryBuilder('u')
-        .innerJoin(CashRegister, 'cr', 'cr.user_id = u.id AND cr.company_id = u.company_id')
-        .where('u.company_id = :companyId', { companyId: String(companyId) })
+        .innerJoin(CashRegister, 'cr', 'cr.user_id = u.id')
+        .where('cr.company_id = :companyId', { companyId: String(companyId) })
         .andWhere('u.type != :superadmin', { superadmin: UserType.SUPERADMIN })
         .select(['u.id AS id', 'u.name AS name', 'u.lastname AS lastname', 'cr.balance AS balance'])
         .orderBy('u.name', 'ASC')

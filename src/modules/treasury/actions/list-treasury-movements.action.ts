@@ -58,9 +58,10 @@ export class ListTreasuryMovementsAction {
           cr.id::int AS id,
           NULLIF(TRIM(BOTH FROM CONCAT_WS(' ', u.name, u.lastname)), '') AS name
         FROM cash_registers cr
+        -- Sin filtrar u.company_id: la caja del owner en una sucursal es de la
+        -- sucursal pero su usuario vive en el principal. Scope = cr.company_id.
         LEFT JOIN users u
           ON u.id = cr.user_id
-         AND u.company_id = $1
         WHERE cr.company_id = $1
         `,
         [cid],
