@@ -14,6 +14,11 @@ import { preciseNumber } from '@/common/utils/precision';
  *
  * Multi-tenant: las tres queries filtran por `company_id = $1`. Las
  * categorías son disjuntas — no hay JOIN cross-tenant posible.
+ *
+ * El nombre de la caja se resuelve por `cr.user_id` SIN exigir
+ * `u.company_id = $1`: en una SUCURSAL la caja del owner es de la sucursal,
+ * pero su usuario vive en el principal (entra como `company_members`). Con ese
+ * filtro su caja salía como "Sin asignar". El scope lo da `cr.company_id`.
  */
 
 interface CashRegisterRow {
@@ -60,7 +65,6 @@ export async function fetchCashAccounts(
       FROM cash_registers cr
       LEFT JOIN users u
         ON u.id = cr.user_id
-       AND u.company_id = $1
       WHERE cr.company_id = $1
       ORDER BY user_name NULLS LAST, cr.id ASC
       `,

@@ -68,7 +68,9 @@ describe('TransferAction', () => {
       findOne: jest.fn(
         (entity: { name?: string } | string, options: { where: Record<string, string> }) => {
           const entityName = typeof entity === 'string' ? entity : (entity.name ?? 'Unknown');
-          const key = `${entityName}|${options.where.id}|${options.where.company_id}`;
+          // Lookup por `user_id` (caja de un miembro de sucursal) → `user:<id>`.
+          const idPart = options.where.id ?? `user:${options.where.user_id}`;
+          const key = `${entityName}|${idPart}|${options.where.company_id}`;
           const account = accounts.get(key);
           if (!account) {
             return Promise.resolve(null);
@@ -178,6 +180,21 @@ describe('TransferAction', () => {
     });
   }
 
+  /**
+   * Usuario que vive en OTRA company (p. ej. owner del principal): solo lo
+   * encuentra el lookup por id sin `company_id` (key `User|id|undefined`).
+   */
+  function seedUserElsewhere(id: number, name: string, lastname: string, type = 'owner'): void {
+    accounts.set(`User|${String(id)}|undefined`, { id, name, lastname, type, balance: 0 });
+  }
+  /** Caja del usuario `userId` en `companyId` (lookup por `user_id`). */
+  function seedRegisterOfUser(userId: number, companyId: number): void {
+    accounts.set(`CashRegister|user:${String(userId)}|${String(companyId)}`, {
+      id: 555,
+      name: 'cash',
+      balance: 0,
+    });
+  }
   function seedCompany(id: number, name: string, isBranch: boolean): void {
     companies.set(String(id), { name, is_branch: isBranch });
   }
@@ -313,6 +330,84 @@ describe('TransferAction', () => {
         { id: 9, fullName: 'Owner Boss' },
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('wallet → caja del owner miembro de la SUCURSAL (usuario del principal con caja aquí): acredita su caja', async () => {
+    seedWallet(1, 100, 42, 'Efectivo');
+    // El owner vive en el principal (company 1), pero tiene caja en la sucursal 42.
+    seedUserElsewhere(13, 'Richard', 'Bastidas');
+    seedRegisterOfUser(13, 42);
+    seedCashRegisterForLookup(999, 42, 25);
+
+    const result = await action.execute(
+      {
+        sourceType: 'wallet',
+        sourceId: 1,
+        destinationType: 'user',
+        destinationId: 13,
+        amount: 25,
+      },
+      42,
+      { id: 9, fullName: 'Owner Boss' },
+    );
+
+    expect(cashRecordSpy).toHaveBeenCalledTimes(1);
+    const cashCalls = cashRecordSpy.mock.calls as Array<
+      [unknown, { userId: number; companyId: number }]
+    >;
+    const cashCall = cashCalls[0]?.[1];
+    expect(cashCall?.userId).toBe(13);
+    // La caja que se acredita es la de la SUCURSAL, no la del principal.
+    expect(cashCall?.companyId).toBe(42);
+    expect(recordSpy).toHaveBeenCalledTimes(2);
+    expect(updates.find((u) => u.entity === 'Wallet')?.patch.balance).toBe(75);
+    expect(result.destination).toMatchObject({ type: 'user', id: 13 });
+    expect(result.message).toContain('Richard Bastidas');
+  });
+
+  it('lanza 404 si el user destino es de otra company y NO tiene caja en esta', async () => {
+    seedWallet(1, 100, 42, 'Efectivo');
+    seedUserElsewhere(13, 'Ajeno', 'Externo', 'employee');
+    // Sin seedRegisterOfUser(13, 42): no es miembro con caja en la company 42.
+
+    await expect(
+      action.execute(
+        {
+          sourceType: 'wallet',
+          sourceId: 1,
+          destinationType: 'user',
+          destinationId: 13,
+          amount: 10,
+        },
+        42,
+        { id: 9, fullName: 'Owner Boss' },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    // El débito de la wallet ocurre en la misma transacción: el 404 la revierte
+    // en BD real (el mock no simula rollback), así que solo se fija que la caja
+    // destino nunca se acredita.
+    expect(cashRecordSpy).not.toHaveBeenCalled();
+  });
+
+  it('lanza 404 si el user destino con caja en la company es superadmin', async () => {
+    seedWallet(1, 100, 42, 'Efectivo');
+    seedUserElsewhere(13, 'Super', 'Admin', 'superadmin');
+    seedRegisterOfUser(13, 42);
+
+    await expect(
+      action.execute(
+        {
+          sourceType: 'wallet',
+          sourceId: 1,
+          destinationType: 'user',
+          destinationId: 13,
+          amount: 10,
+        },
+        42,
+        { id: 9, fullName: 'Owner Boss' },
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(cashRecordSpy).not.toHaveBeenCalled();
   });
 
   it('rechaza source === destination con 422', async () => {
