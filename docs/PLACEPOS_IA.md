@@ -319,6 +319,38 @@ Superadmin (`SuperadminAiController`, firma Ed25519): `GET /superadmin/ai/usage`
 Pruebas: `test/ai-credits-usage.e2e-spec.ts`, `ai-usage.spec.ts`,
 `ai-controller-credits.spec.ts`, `ai-service-gate.spec.ts`.
 
+## Sucursales del owner (multi-negocio, 20 oct 2026)
+
+Place conoce TODOS los negocios del **owner** (solo `type='owner'`) y puede
+consultar cualquiera, esté conectado al principal o a una sucursal.
+
+- **Fuente**: `ResolveAiActorAction.fetchOwnerBusinesses` lee `company_members`
+  por el `user_id` del JWT (principal primero, luego sucursales) en paralelo
+  con el resto del actor (0,015 ms en local). Empleados/superadmin: `[]`, sin
+  consulta. Si la company de la sesión no aparece entre sus membresías, solo se
+  le da esa (anti-IDOR).
+- **Prompt** (`internal/business-scope.ts`): al final, en el contexto variable,
+  la lista compacta `#id nombre (principal|sucursal|SUSPENDIDA, ACTUAL)`; el
+  modelo reconoce "¿cómo va la 28?" sin gastar una llamada. Con sucursales se
+  agregan las reglas fijas `BUSINESS_SCOPE_RULES` antes del contexto (prefijo
+  cacheable). Sin sucursales activas, una línea: "solo tiene el negocio
+  principal" → Place se lo dice.
+- **`business_id`**: parámetro opcional que se declara SOLO al owner con
+  sucursales y SOLO en las herramientas de lectura (`acceptsBusinessScope`).
+  `RunAiToolAction` lo valida con `resolveBusinessScope` antes de tocar la BD:
+  id ajeno, sucursal suspendida, no-owner o herramienta de escritura → error.
+  Con otro negocio la respuesta lleva `business: <nombre>`.
+- **Escritura**: gastos y pedidos siempre en el negocio de la sesión.
+- **`get_businesses_overview`** (`requires_branches`): el día de todos los
+  negocios consultables en UNA llamada (`DashboardService.today` en paralelo,
+  misma maquinaria que `get_daily_summary` → cuadra al centavo) + totales con
+  Big.js y margen sobre agregados.
+- **Acceso y créditos siguen siendo por negocio**: para usar Place parado en
+  una sucursal, esa company necesita `ai_enabled` y `ai_daily_credits` > 0.
+- **Costo medido con `countTokens`** (por ronda): empleado +0, owner sin
+  sucursales +56, owner con sucursales +479 (`business_id` sin descripción a
+  propósito: se repetiría 11 veces).
+
 ## Configuración
 
 | Variable | Por defecto | Notas |

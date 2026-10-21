@@ -22,8 +22,10 @@ import { UpsertEnableThirdPartyLoanAction } from './actions/upsert-enable-third-
 import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
 import { AssignTurnNumberAction } from './actions/assign-turn-number.action';
+import { GetTicketPrintAction } from './actions/get-ticket-print.action';
 import { GetTurnosAction } from './actions/get-turnos.action';
 import { ResetTurnosCounterAction } from './actions/reset-turnos-counter.action';
+import { UpsertTicketPrintAction } from './actions/upsert-ticket-print.action';
 import { UpsertTurnosAction } from './actions/upsert-turnos.action';
 import { AppSettingsController } from './app-settings.controller';
 import { AppSettingsService } from './app-settings.service';
@@ -62,6 +64,8 @@ import { AppSetting } from './entities/app-setting.entity';
     UpsertTurnosAction,
     ResetTurnosCounterAction,
     AssignTurnNumberAction,
+    GetTicketPrintAction,
+    UpsertTicketPrintAction,
   ],
   exports: [
     AppSettingsService,

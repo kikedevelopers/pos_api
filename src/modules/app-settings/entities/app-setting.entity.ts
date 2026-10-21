@@ -59,6 +59,16 @@ export const APP_SETTING_KEYS = {
   TURNOS_ENABLED: 'turnos_enabled',
   TURNOS_MAX: 'turnos_max',
   TURNOS_COUNTER: 'turnos_counter',
+  // Espacios para diligenciar A MANO en el ticket térmico impreso (entre el
+  // TOTAL y el "Gracias por su compra"). Independientes entre sí:
+  //   - `*_enabled`       (`'true'` | `'false'`). Default false (fila ausente
+  //     ⇒ el ticket sale como siempre).
+  //   - `*_ticket_types`  JSON array con los tipos de ticket donde aparece
+  //     (`SALE` | `ORDER` | `CREDIT`). Default: todos.
+  TICKET_OBSERVATIONS_SPACE_ENABLED: 'ticket_observations_space_enabled',
+  TICKET_OBSERVATIONS_SPACE_TICKET_TYPES: 'ticket_observations_space_ticket_types',
+  TICKET_SIGNATURE_SPACE_ENABLED: 'ticket_signature_space_enabled',
+  TICKET_SIGNATURE_SPACE_TICKET_TYPES: 'ticket_signature_space_ticket_types',
 } as const;
 
 export type AppSettingKey = (typeof APP_SETTING_KEYS)[keyof typeof APP_SETTING_KEYS];

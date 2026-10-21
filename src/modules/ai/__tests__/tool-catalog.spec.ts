@@ -35,9 +35,21 @@ describe('catálogo de herramientas', () => {
 });
 
 describe('isToolAllowed', () => {
-  it('el admin puede usar todas', () => {
+  it('el admin puede usar todas, salvo el consolidado de sucursales si no tiene', () => {
     const admin = actor({ isAdmin: true });
-    expect(AI_TOOLS.every((tool) => isToolAllowed(tool, admin))).toBe(true);
+    const denied = AI_TOOLS.filter((tool) => !isToolAllowed(tool, admin)).map((tool) => tool.name);
+    expect(denied).toEqual(['get_businesses_overview']);
+  });
+
+  it('el owner con sucursales puede usar TODAS, incluido el consolidado', () => {
+    const owner = actor({
+      isAdmin: true,
+      businesses: [
+        { id: 1, name: 'Principal', is_branch: false, is_active: true },
+        { id: 2, name: 'Norte', is_branch: true, is_active: true },
+      ],
+    });
+    expect(AI_TOOLS.every((tool) => isToolAllowed(tool, owner))).toBe(true);
   });
 
   it('el empleado solo usa las de los permisos que tiene', () => {

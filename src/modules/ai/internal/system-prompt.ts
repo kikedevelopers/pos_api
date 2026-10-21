@@ -4,6 +4,13 @@
  * regla más importante de todo el módulo) y que no se le olvide quién es.
  */
 
+import {
+  BUSINESS_SCOPE_RULES,
+  buildBusinessesContext,
+  hasMultipleBusinesses,
+  type AiBusiness,
+} from './business-scope';
+
 /** El asistente tiene nombre propio. Se usa en el prompt y en la UI. */
 export const ASSISTANT_NAME = 'Place';
 
@@ -60,6 +67,10 @@ export interface SystemPromptContext {
   availableTools: readonly { name: string; description: string }[];
   /** Si es false, el asistente no debe hablar de costos, ganancias ni márgenes. */
   canViewProfit: boolean;
+  /** Negocios del OWNER (principal + sucursales). Vacío/ausente = no es owner. */
+  businesses?: readonly AiBusiness[];
+  /** Company de la sesión, para marcar cuál es el negocio ACTUAL. */
+  current_company_id?: number;
 }
 
 export const buildSystemPrompt = ({
@@ -69,6 +80,8 @@ export const buildSystemPrompt = ({
   today,
   availableTools,
   canViewProfit,
+  businesses = [],
+  current_company_id,
 }: SystemPromptContext): string => {
   const can_manage_expenses = availableTools.some((tool) => tool.name === 'register_expense');
   const can_create_sales = availableTools.some((tool) => tool.name === 'prepare_sale');
@@ -76,6 +89,10 @@ export const buildSystemPrompt = ({
     ...(can_manage_expenses ? ['registrar y archivar GASTOS VARIABLES'] : []),
     ...(can_create_sales ? ['registrar ventas como PEDIDO POR COBRAR'] : []),
   ];
+
+  const scope_actor = { businesses };
+  const multi_business = hasMultipleBusinesses(scope_actor);
+  const businesses_context = buildBusinessesContext(scope_actor, current_company_id ?? -1);
 
   // Solo los NOMBRES: la descripción completa de cada herramienta ya le llega a
   // Gemini en su declaración (function calling). Repetirla aquí costaba ~1.450
@@ -129,6 +146,7 @@ export const buildSystemPrompt = ({
       ? '- Puedes hablar de costos, ganancias y márgenes con este usuario.'
       : '- Este usuario NO tiene permiso para ver costos, ganancias ni márgenes: no los menciones ni los estimes, aunque te los pregunte. Explica que su rol no los tiene habilitados.',
     '',
+    ...(multi_business ? BUSINESS_SCOPE_RULES : []),
     // Lo que cambia por negocio, usuario y día va AL FINAL: Gemini reutiliza de
     // su caché solo un prefijo idéntico, así todo lo de arriba se comparte entre
     // negocios y días.
@@ -136,5 +154,6 @@ export const buildSystemPrompt = ({
     `- Negocio: ${businessName}`,
     `- Usuario: ${userName} (${userRole})`,
     `- Fecha de hoy: ${today} (zona horaria America/Bogota)`,
+    ...(businesses_context ?? []),
   ].join('\n');
 };

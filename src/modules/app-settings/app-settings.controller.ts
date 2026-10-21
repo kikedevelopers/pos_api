@@ -20,6 +20,7 @@ import { GetPosMarginsAction } from './actions/get-pos-margins.action';
 import { GetShowAllBaseProductsInPurchasesAction } from './actions/get-show-all-base-products-in-purchases.action';
 import { GetShowDailyQuotaBarAction } from './actions/get-show-daily-quota-bar.action';
 import { GetStrictInventoryAction } from './actions/get-strict-inventory.action';
+import { GetTicketPrintAction } from './actions/get-ticket-print.action';
 import { GetTurnosAction } from './actions/get-turnos.action';
 import { ResetTurnosCounterAction } from './actions/reset-turnos-counter.action';
 import { UpsertCustomerPointsAction } from './actions/upsert-customer-points.action';
@@ -30,6 +31,7 @@ import { UpsertPosMarginsAction } from './actions/upsert-pos-margins.action';
 import { UpsertShowAllBaseProductsInPurchasesAction } from './actions/upsert-show-all-base-products-in-purchases.action';
 import { UpsertShowDailyQuotaBarAction } from './actions/upsert-show-daily-quota-bar.action';
 import { UpsertStrictInventoryAction } from './actions/upsert-strict-inventory.action';
+import { UpsertTicketPrintAction } from './actions/upsert-ticket-print.action';
 import { UpsertTurnosAction } from './actions/upsert-turnos.action';
 import { AppSettingsService } from './app-settings.service';
 import { AppSettingResponseDto, toAppSettingResponseDto } from './dto/app-setting-response.dto';
@@ -50,6 +52,7 @@ import {
   UpdateShowDailyQuotaBarDto,
 } from './dto/show-daily-quota-bar.dto';
 import { StrictInventoryConfigDto, UpdateStrictInventoryDto } from './dto/strict-inventory.dto';
+import { TicketPrintConfigDto, UpdateTicketPrintDto } from './dto/ticket-print.dto';
 import { TurnosConfigDto, UpdateTurnosDto } from './dto/turnos.dto';
 import { UpsertAppSettingDto } from './dto/upsert-app-setting.dto';
 
@@ -100,6 +103,8 @@ export class AppSettingsController {
     private readonly getTurnosAction: GetTurnosAction,
     private readonly upsertTurnosAction: UpsertTurnosAction,
     private readonly resetTurnosCounterAction: ResetTurnosCounterAction,
+    private readonly getTicketPrintAction: GetTicketPrintAction,
+    private readonly upsertTicketPrintAction: UpsertTicketPrintAction,
   ) {}
 
   // ----------------------------------------------------------------------
@@ -388,6 +393,46 @@ export class AppSettingsController {
   }
 
   // ----------------------------------------------------------------------
+  // Impresión del ticket: espacios para diligenciar a mano (observaciones y
+  // firma) en el ticket térmico.
+  // ----------------------------------------------------------------------
+
+  // NOTA (A1): sin `canAccessSettings` — quien imprime el ticket es cualquier
+  // rol (cajero/vendedor incluidos) y el main process lo lee con su token. Si
+  // exigiera el permiso, el cajero recibiría 403 y el ticket saldría sin los
+  // espacios. El guard SÍ se mantiene en el PUT.
+  @Get('ticket-print')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Configuración de impresión del ticket (observaciones / firma)',
+    description:
+      'Devuelve `{ observations_enabled, observations_ticket_types, signature_enabled, signature_ticket_types }`. Default: apagados y en todos los tipos de ticket. Legible por cualquier rol autenticado (lo consume la impresión del ticket).',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: TicketPrintConfigDto })
+  async getTicketPrint(@CurrentCompany() companyId: number): Promise<TicketPrintConfigDto> {
+    return this.getTicketPrintAction.execute(companyId);
+  }
+
+  @Put('ticket-print')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'superadmin', 'employee')
+  @RequirePermission('canAccessSettings')
+  @ApiOperation({
+    summary: 'Set configuración de impresión del ticket',
+    description:
+      'Actualización PARCIAL: cada campo enviado se persiste; los ausentes conservan su valor. Al menos uno es obligatorio.',
+  })
+  @ApiBody({ type: UpdateTicketPrintDto })
+  @ApiResponse({ status: HttpStatus.OK, type: TicketPrintConfigDto })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload sin campos' })
+  async upsertTicketPrint(
+    @Body() dto: UpdateTicketPrintDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<TicketPrintConfigDto> {
+    return this.upsertTicketPrintAction.execute(dto, companyId);
+  }
+
+  // ----------------------------------------------------------------------
   // TURNOS de pedido (solo modo restaurante). Contador cíclico + 2º ticket.
   // ----------------------------------------------------------------------
 
@@ -415,7 +460,10 @@ export class AppSettingsController {
   })
   @ApiBody({ type: UpdateTurnosDto })
   @ApiResponse({ status: HttpStatus.OK, type: TurnosConfigDto })
-  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Payload inválido (max fuera de 1..99)' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Payload inválido (max fuera de 1..99)',
+  })
   async upsertTurnos(
     @Body() dto: UpdateTurnosDto,
     @CurrentCompany() companyId: number,
