@@ -2,22 +2,64 @@ import {
   hashMessage,
   isExplicitConfirmation,
   type AiToolRequestContext,
+  type ConfirmationKind,
 } from './expense-tool-helpers';
 
 /**
  * Reglas COMPARTIDAS para ejecutar una operación que Place dejó pendiente
- * (gastos y pedidos). Puras: deciden con la fila pendiente y el contexto de la
+ * (gastos, pedidos y movimientos de tesorería). Puras: deciden con la fila pendiente y el contexto de la
  * petición, sin BD, para que gastos y ventas no puedan divergir en lo único que
  * no admite matices — que nada se ejecute sin el "sí" del usuario.
  */
 
 /** Tipos de operación que viven en `ai_pending_actions`. */
-export type PendingActionType = 'REGISTER_EXPENSE' | 'VOID_EXPENSE' | 'CREATE_SALE';
+export type PendingActionType =
+  | 'REGISTER_EXPENSE'
+  | 'VOID_EXPENSE'
+  | 'CREATE_SALE'
+  | 'TRANSFER_FUNDS'
+  | 'ADJUST_BALANCE';
 
 export const EXPENSE_ACTION_TYPES: ReadonlySet<PendingActionType> = new Set([
   'REGISTER_EXPENSE',
   'VOID_EXPENSE',
 ]);
+
+export const TREASURY_ACTION_TYPES: ReadonlySet<PendingActionType> = new Set([
+  'TRANSFER_FUNDS',
+  'ADJUST_BALANCE',
+]);
+
+/** Vocabulario del "sí" que aplica a cada tipo de operación. */
+const CONFIRMATION_KIND: Record<PendingActionType, ConfirmationKind> = {
+  REGISTER_EXPENSE: 'expense',
+  VOID_EXPENSE: 'expense',
+  CREATE_SALE: 'sale',
+  TRANSFER_FUNDS: 'transfer',
+  ADJUST_BALANCE: 'adjust',
+};
+
+/** Qué es la pendiente y con qué herramienta se confirma. */
+const PENDING_OWNER: Record<ConfirmationKind, { label: string; tool: string }> = {
+  expense: { label: 'un gasto', tool: 'confirm_expense_action' },
+  sale: { label: 'un pedido', tool: 'confirm_sale' },
+  transfer: { label: 'un movimiento de saldo', tool: 'confirm_treasury_action' },
+  adjust: { label: 'una corrección de saldo', tool: 'confirm_treasury_action' },
+};
+
+/**
+ * Respuesta cuando se intenta confirmar con la herramienta de OTRO tipo de
+ * operación: no se toca la pendiente y se le dice al modelo cuál usar.
+ */
+export const wrongOperationResult = (
+  action_type: PendingActionType,
+): { status: 'wrong_operation'; message: string } => {
+  const owner = PENDING_OWNER[CONFIRMATION_KIND[action_type]];
+  return {
+    status: 'wrong_operation',
+    message: `La operación pendiente es ${owner.label}: NO se ejecutó nada con esta herramienta. Confírmala con ${owner.tool}.`,
+  };
+};
 
 /** Lo que el guard necesita de la fila pendiente (ya bloqueada `FOR UPDATE`). */
 export interface PendingConfirmationRow {
@@ -80,8 +122,9 @@ export const checkPendingConfirmation = (
       expire: true,
     };
   }
-  const kind = pending.action_type === 'CREATE_SALE' ? 'sale' : 'expense';
-  if (!isExplicitConfirmation(context.current_user_message, kind)) {
+  if (
+    !isExplicitConfirmation(context.current_user_message, CONFIRMATION_KIND[pending.action_type])
+  ) {
     return {
       status: 'confirmation_not_explicit',
       message:

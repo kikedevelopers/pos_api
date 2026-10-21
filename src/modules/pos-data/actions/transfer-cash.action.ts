@@ -80,104 +80,141 @@ export class TransferCashAction {
     companyId: number,
     actor: TransferCashActor,
   ): Promise<TransferCashResult> {
+    // Aislamiento SERIALIZABLE (CLAUDE.md §9.4): transferencias entre la
+    // caja del actor y bank/wallet combinan read+write y son susceptibles
+    // a write-skew con cobros concurrentes. PG aborta con 40001 si detecta
+    // anomalía; reintentamos hasta 2 veces.
+    this.assertTransferable(dto);
+    return runSerializableWithRetry<TransferCashResult>(this.dataSource, (manager) =>
+      this.runInTransaction(manager, dto, companyId, actor),
+    );
+  }
+
+  /**
+   * El traslado dentro de una transacción existente (el caller decide
+   * aislamiento y reintentos). Lo usa `execute` y también Place, que confirma
+   * su operación pendiente en la MISMA transacción (exactly-once).
+   *
+   * `register_user_id`: dueño de la caja de ORIGEN. Por defecto el actor (el
+   * POS solo mueve la caja propia); el owner, desde Place, puede vaciar la de
+   * un empleado de su company. La caja se resuelve SIEMPRE por
+   * `(company_id, user_id)`: nunca sale de otra company.
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    dto: TransferCashDto,
+    companyId: number,
+    actor: TransferCashActor,
+    register_user_id: number = actor.id,
+  ): Promise<TransferCashResult> {
+    const { destinationType, amountBig } = this.assertTransferable(dto);
+
+    // La caja propia se crea si no existe (como siempre en el POS); la de otro
+    // usuario tiene que EXISTIR en esta company — nunca se fabrica una caja.
+    const register =
+      register_user_id === actor.id
+        ? await getOrCreateCashRegisterForUser(manager, companyId, register_user_id)
+        : await manager.findOne(CashRegister, {
+            where: { company_id: String(companyId), user_id: String(register_user_id) },
+            lock: { mode: 'pessimistic_write' },
+          });
+    if (!register) {
+      throw new NotFoundException('Caja origen no encontrada');
+    }
+
+    const destination = await this.loadDestination(
+      manager,
+      destinationType,
+      dto.destinationId,
+      companyId,
+    );
+
+    const balanceBig = toBig(register.balance);
+    if (balanceBig.lt(amountBig)) {
+      throw new UnprocessableEntityException(
+        `Saldo insuficiente en caja. Disponible: ${balanceBig.toFixed(2)}`,
+      );
+    }
+
+    const amount = preciseNumber(amountBig, 2);
+
+    // UPDATE balance origen (modelo PERMANENTE).
+    const newOriginBalance = preciseNumber(balanceBig.minus(amountBig), 2);
+    await manager.update(
+      CashRegister,
+      { id: register.id, company_id: String(companyId) },
+      { balance: newOriginBalance },
+    );
+
+    await manager.getRepository(CashRegisterLog).save({
+      company_id: register.company_id,
+      cash_register_id: register.id,
+      type: CashRegisterLogType.CASH_TRANSFER_OUT,
+      direction: 'OUT',
+      amount,
+      affects_balance: true,
+      description: `Traslado a ${destination.name}`,
+      created_by: actor.fullName,
+      created_by_id: String(actor.id),
+    });
+
+    const newDestBalance = preciseNumber(toBig(destination.balance).plus(amountBig), 2);
+    await this.setDestinationBalance(
+      manager,
+      destinationType,
+      destination.id,
+      companyId,
+      newDestBalance,
+    );
+
+    const referenceCode = `POS-TRF-${randomUUID()}`;
+    const destinationAccountRef: AccountReference = destinationType;
+
+    await this.financialMovementsService.record(manager, {
+      companyId,
+      amount,
+      movement_type: MovementType.TRANSFER,
+      concept: MovementConcept.TRANSFER,
+      description: `Traslado de efectivo a ${destination.name}`,
+      source_type: 'cash_register',
+      source_id: Number(register.id),
+      destination_type: destinationAccountRef,
+      destination_id: destination.id,
+      reference_code: referenceCode,
+      created_by: actor.fullName,
+      created_by_id: actor.id,
+    });
+
+    this.logger.log({
+      event: 'pos_data.transfer_cash_completed',
+      companyId,
+      actorId: actor.id,
+      cashRegisterId: Number(register.id),
+      amount: amountBig.toFixed(2),
+      destinationType,
+      destinationId: destination.id,
+      referenceCode,
+    });
+
+    return { message: 'Traslado completado exitosamente' };
+  }
+
+  /** Reglas sin I/O: destino bank|wallet y monto > 0. */
+  private assertTransferable(dto: TransferCashDto): {
+    destinationType: 'wallet' | 'bank';
+    amountBig: Big;
+  } {
     if (dto.destinationType === 'user') {
       throw new UnprocessableEntityException({
         message: 'Transferencias a caja personal de usuario no soportadas en cloud',
         payload: { code: 'UNSUPPORTED_DESTINATION' },
       });
     }
-    // Narrow explícito: el guard anterior elimina 'user' del union pero
-    // TypeScript no lo propaga al callback de transaction. Capturamos el
-    // tipo ya estrechado en una const tipada.
-    const destinationType: 'wallet' | 'bank' = dto.destinationType;
-
     const amountBig: Big = toBig(dto.amount);
     if (amountBig.lte(0)) {
       throw new UnprocessableEntityException('El monto debe ser mayor a cero');
     }
-
-    // Aislamiento SERIALIZABLE (CLAUDE.md §9.4): transferencias entre la
-    // caja del actor y bank/wallet combinan read+write y son susceptibles
-    // a write-skew con cobros concurrentes. PG aborta con 40001 si detecta
-    // anomalía; reintentamos hasta 2 veces.
-    return runSerializableWithRetry<TransferCashResult>(this.dataSource, async (manager) => {
-      const register = await getOrCreateCashRegisterForUser(manager, companyId, actor.id);
-      const destination = await this.loadDestination(
-        manager,
-        destinationType,
-        dto.destinationId,
-        companyId,
-      );
-
-      const balanceBig = toBig(register.balance);
-      if (balanceBig.lt(amountBig)) {
-        throw new UnprocessableEntityException(
-          `Saldo insuficiente en caja. Disponible: ${balanceBig.toFixed(2)}`,
-        );
-      }
-
-      const amount = preciseNumber(amountBig, 2);
-
-      // UPDATE balance origen (modelo PERMANENTE).
-      const newOriginBalance = preciseNumber(balanceBig.minus(amountBig), 2);
-      await manager.update(
-        CashRegister,
-        { id: register.id, company_id: String(companyId) },
-        { balance: newOriginBalance },
-      );
-
-      await manager.getRepository(CashRegisterLog).save({
-        company_id: register.company_id,
-        cash_register_id: register.id,
-        type: CashRegisterLogType.CASH_TRANSFER_OUT,
-        direction: 'OUT',
-        amount,
-        affects_balance: true,
-        description: `Traslado a ${destination.name}`,
-        created_by: actor.fullName,
-        created_by_id: String(actor.id),
-      });
-
-      const newDestBalance = preciseNumber(toBig(destination.balance).plus(amountBig), 2);
-      await this.setDestinationBalance(
-        manager,
-        destinationType,
-        destination.id,
-        companyId,
-        newDestBalance,
-      );
-
-      const referenceCode = `POS-TRF-${randomUUID()}`;
-      const destinationAccountRef: AccountReference = destinationType;
-
-      await this.financialMovementsService.record(manager, {
-        companyId,
-        amount,
-        movement_type: MovementType.TRANSFER,
-        concept: MovementConcept.TRANSFER,
-        description: `Traslado de efectivo a ${destination.name}`,
-        source_type: 'cash_register',
-        source_id: Number(register.id),
-        destination_type: destinationAccountRef,
-        destination_id: destination.id,
-        reference_code: referenceCode,
-        created_by: actor.fullName,
-        created_by_id: actor.id,
-      });
-
-      this.logger.log({
-        event: 'pos_data.transfer_cash_completed',
-        companyId,
-        actorId: actor.id,
-        cashRegisterId: Number(register.id),
-        amount: amountBig.toFixed(2),
-        destinationType,
-        destinationId: destination.id,
-        referenceCode,
-      });
-
-      return { message: 'Traslado completado exitosamente' };
-    });
+    return { destinationType: dto.destinationType, amountBig };
   }
 
   private async loadDestination(

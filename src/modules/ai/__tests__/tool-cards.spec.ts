@@ -26,6 +26,28 @@ describe('cardForToolResult', () => {
     );
   });
 
+  it.each(['prepare_treasury_transfer', 'prepare_balance_correction'])(
+    '%s con confirmación pendiente → tarjeta de tesorería con el summary exacto',
+    (name) => {
+      const treasury = { operation: 'transfer', amount: 100000 };
+      expect(
+        cardForToolResult(name, { status: 'confirmation_required', summary: treasury }),
+      ).toEqual({ kind: 'treasury_preview', data: treasury });
+    },
+  );
+
+  it('confirm_treasury_action ejecutado → tarjeta del resultado; rechazado → sin tarjeta', () => {
+    const result = { operation: 'adjust', balance: 10000 };
+    expect(cardForToolResult('confirm_treasury_action', { status: 'executed', result })).toEqual({
+      kind: 'treasury_done',
+      data: result,
+    });
+    expect(cardForToolResult('confirm_treasury_action', { status: 'changed', result })).toBeNull();
+    expect(
+      cardForToolResult('prepare_treasury_transfer', { status: 'insufficient_balance' }),
+    ).toBeNull();
+  });
+
   it('confirm_sale ejecutado → tarjeta del pedido creado', () => {
     const order = { ticket_number: 'PED-001', total: 15500 };
     expect(cardForToolResult('confirm_sale', { status: 'executed', order })).toEqual({

@@ -5,6 +5,7 @@ import type { TreasuryService } from '@/modules/treasury/treasury.service';
 
 import type { RunAiExpenseToolAction } from '../actions/run-ai-expense-tool.action';
 import type { RunAiSaleToolAction } from '../actions/run-ai-sale-tool.action';
+import type { RunAiTreasuryToolAction } from '../actions/run-ai-treasury-tool.action';
 import { RunAiToolAction } from '../actions/run-ai-tool.action';
 import type { AiToolActor } from '../internal/tool-catalog';
 
@@ -35,6 +36,7 @@ describe('RunAiToolAction · search_suppliers', () => {
       {} as unknown as TreasuryService,
       {} as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
+      {} as unknown as RunAiTreasuryToolAction,
     );
   };
 

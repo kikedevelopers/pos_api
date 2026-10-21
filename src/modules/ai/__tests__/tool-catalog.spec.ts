@@ -1,4 +1,5 @@
 import {
+  acceptsBusinessScope,
   AI_TOOLS,
   declarationsFor,
   findTool,
@@ -199,6 +200,76 @@ describe('herramientas que CREAN pedidos (solo administrador)', () => {
     expect(Object.keys(properties.items.items?.properties ?? {})).toEqual(
       expect.arrayContaining(['query', 'alternatives', 'product_id', 'quantity', 'unit_price']),
     );
+  });
+});
+
+describe('herramientas de TESORERÍA (solo el dueño)', () => {
+  const TREASURY_TOOLS = [
+    'prepare_treasury_transfer',
+    'prepare_balance_correction',
+    'confirm_treasury_action',
+  ];
+  const allowedFor = (who: AiToolActor): string[] =>
+    TREASURY_TOOLS.filter((name) => {
+      const tool = findTool(name);
+      return tool !== undefined && isToolAllowed(tool, who);
+    });
+
+  it('existen, exigen ser dueño y no exponen ganancias', () => {
+    for (const name of TREASURY_TOOLS) {
+      const tool = findTool(name);
+      expect(tool?.requires_owner).toBe(true);
+      expect(tool?.exposesProfit).toBe(false);
+    }
+  });
+
+  it('el owner/superadmin las tiene todas', () => {
+    expect(allowedFor(actor({ isAdmin: true, is_administrator: true }))).toEqual(TREASURY_TOOLS);
+  });
+
+  it('el rol Administrador NO (igual que "Mover saldo"/"Corregir caja" en la API)', () => {
+    const administrator = actor({
+      is_administrator: true,
+      permissions: new Set(['canAccessBanks', 'canAccessWallets']),
+    });
+    expect(allowedFor(administrator)).toEqual([]);
+    expect(declarationsFor(administrator).map((d) => d.name)).not.toContain(
+      'prepare_treasury_transfer',
+    );
+  });
+
+  it('un empleado con permiso de Bancos tampoco', () => {
+    expect(allowedFor(actor({ permissions: new Set(['canAccessBanks']) }))).toEqual([]);
+  });
+
+  it('operan SOLO en el negocio de la sesión (sin business_id) aunque tenga sucursales', () => {
+    for (const name of TREASURY_TOOLS) {
+      const tool = findTool(name);
+      expect(tool && acceptsBusinessScope(tool)).toBe(false);
+    }
+    const owner = actor({
+      isAdmin: true,
+      is_administrator: true,
+      businesses: [
+        { id: 1, name: 'Principal', is_branch: false, is_active: true },
+        { id: 2, name: 'Sucursal', is_branch: true, is_active: true },
+      ],
+    });
+    const declaration = declarationsFor(owner).find((d) => d.name === 'prepare_treasury_transfer');
+    expect(JSON.stringify(declaration)).not.toContain('business_id');
+  });
+
+  it('la confirmación no recibe argumentos y no se lista; las de preparar sí', () => {
+    const owner = actor({ isAdmin: true, is_administrator: true });
+    const listed = toolSummariesFor(owner).map((tool) => tool.name);
+    expect(listed).toEqual(
+      expect.arrayContaining(['prepare_treasury_transfer', 'prepare_balance_correction']),
+    );
+    expect(listed).not.toContain('confirm_treasury_action');
+    expect(findTool('confirm_treasury_action')?.declaration.parameters).toEqual({
+      type: 'object',
+      properties: {},
+    });
   });
 });
 

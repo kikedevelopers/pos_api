@@ -37,6 +37,7 @@ import { WalletsService } from './wallets.service';
     CreateDefaultWalletAction,
     ApplyWalletAdjustmentAction,
   ],
-  exports: [WalletsService, CreateDefaultWalletAction, TypeOrmModule],
+  // ApplyWalletAdjustmentAction: Place corrige saldos con la misma lógica.
+  exports: [WalletsService, CreateDefaultWalletAction, TypeOrmModule, ApplyWalletAdjustmentAction],
 })
 export class WalletsModule {}

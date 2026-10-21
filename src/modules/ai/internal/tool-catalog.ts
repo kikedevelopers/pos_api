@@ -13,8 +13,10 @@ import type { GeminiFunctionDeclaration } from './gemini.types';
  * (`run-ai-tool.action.ts`). Son de solo lectura, SALVO las de gastos
  * (`register_expense`, `void_expense`, `confirm_expense_action`) y las de
  * pedidos (`prepare_sale`, `confirm_sale`), que exigen además ser
- * administrador (`requires_administrator`) y nunca escriben sin la
- * confirmación explícita del usuario en un mensaje posterior.
+ * administrador (`requires_administrator`), y las de tesorería
+ * (`prepare_treasury_transfer`, `prepare_balance_correction`,
+ * `confirm_treasury_action`), solo del dueño (`requires_owner`). Ninguna
+ * escribe sin la confirmación explícita del usuario en un mensaje posterior.
  *
  * Cada herramienta declara el permiso del catálogo que exige. Si el actor no lo
  * tiene, la herramienta ni siquiera se le ofrece al modelo (no puede llamarla) y
@@ -40,6 +42,9 @@ export const AI_TOOL_NAMES = [
   'confirm_expense_action',
   'prepare_sale',
   'confirm_sale',
+  'prepare_treasury_transfer',
+  'prepare_balance_correction',
+  'confirm_treasury_action',
 ] as const;
 
 export type AiToolName = (typeof AI_TOOL_NAMES)[number];
@@ -63,6 +68,12 @@ export interface AiToolDefinition {
    * de fábrica "Administrador". Se suma al `permission`, no lo reemplaza.
    */
   requires_administrator?: boolean;
+  /**
+   * Herramienta que ESCRIBE y que solo puede usar el owner/superadmin — ni el
+   * rol Administrador: espejo de "Mover saldo"/"Corregir caja", que la API ya
+   * restringe al dueño.
+   */
+  requires_owner?: boolean;
   /**
    * Solo para el OWNER con sucursales (consolidado de todos sus negocios). A
    * cualquier otro usuario ni se le declara.
@@ -513,6 +524,79 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    name: 'prepare_treasury_transfer',
+    label: 'Preparando movimiento',
+    summary: 'Mueve saldo entre cajas, bancos y billeteras, siempre con tu confirmación.',
+    permission: 'canAccessBanks',
+    exposesProfit: false,
+    requires_administrator: true,
+    requires_owner: true,
+    declaration: {
+      name: 'prepare_treasury_transfer',
+      description:
+        'PREPARA mover dinero entre cuentas (caja, banco, billetera); NO lo mueve. Si falta un dato, llama igual: te dice qué preguntar y qué cuentas hay.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from: {
+            type: 'string',
+            description:
+              'Origen como lo dijo el usuario ("banco Nequi", "caja de Ana", "mi caja").',
+          },
+          to: { type: 'string', description: 'Destino, igual que from.' },
+          amount: {
+            type: 'number',
+            description: 'Pesos sin separadores ("100 mil" → 100000).',
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'prepare_balance_correction',
+    label: 'Preparando corrección',
+    summary: 'Corrige el saldo de una caja, banco o billetera al valor real, con tu confirmación.',
+    permission: 'canAccessBanks',
+    exposesProfit: false,
+    requires_administrator: true,
+    requires_owner: true,
+    declaration: {
+      name: 'prepare_balance_correction',
+      description:
+        'PREPARA dejar UNA cuenta EXACTAMENTE en target_balance, sea cual sea su saldo ("corrige Nequi a 10 mil"); NO la corrige.',
+      parameters: {
+        type: 'object',
+        properties: {
+          account: {
+            type: 'string',
+            description: 'Cuenta como la dijo el usuario.',
+          },
+          target_balance: {
+            type: 'number',
+            description: 'Saldo final, pesos sin separadores (puede ser 0).',
+          },
+          reason: { type: 'string', description: 'Motivo, solo si el usuario lo dijo.' },
+        },
+      },
+    },
+  },
+  {
+    name: 'confirm_treasury_action',
+    label: 'Ejecutando movimiento',
+    summary: 'Ejecuta el movimiento o la corrección de saldo que acabas de confirmar.',
+    permission: 'canAccessBanks',
+    exposesProfit: false,
+    requires_administrator: true,
+    requires_owner: true,
+    is_listed: false,
+    declaration: {
+      name: 'confirm_treasury_action',
+      description:
+        'EJECUTA el movimiento o corrección preparado antes, SOLO si el último mensaje del usuario es un "sí" a ese resumen.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
 ] as const;
 
 const TOOLS_BY_NAME = new Map<string, AiToolDefinition>(AI_TOOLS.map((tool) => [tool.name, tool]));
@@ -551,7 +635,9 @@ export const salesScopeUserId = (actor: AiToolActor): number | null =>
  * negocio de la sesión, y el consolidado ya cubre a todos.
  */
 export const acceptsBusinessScope = (tool: AiToolDefinition): boolean =>
-  tool.requires_administrator !== true && tool.requires_branches !== true;
+  tool.requires_administrator !== true &&
+  tool.requires_owner !== true &&
+  tool.requires_branches !== true;
 
 export const isToolAllowed = (tool: AiToolDefinition, actor: AiToolActor): boolean => {
   // `businesses` solo lo trae el owner: sin sucursales no hay consolidado.
@@ -559,6 +645,9 @@ export const isToolAllowed = (tool: AiToolDefinition, actor: AiToolActor): boole
     return false;
   }
   // Escritura: fail-closed. Ni el permiso del módulo basta sin el rol.
+  if (tool.requires_owner === true && !actor.isAdmin) {
+    return false;
+  }
   if (tool.requires_administrator === true && !actor.isAdmin && actor.is_administrator !== true) {
     return false;
   }

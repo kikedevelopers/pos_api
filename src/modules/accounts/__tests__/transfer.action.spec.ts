@@ -823,4 +823,85 @@ describe('TransferAction', () => {
       expect(transactionSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('runInTransaction (Place confirma dentro de su propia transacción)', () => {
+    const run = (dto: Parameters<TransferAction['runInTransaction']>[1]): Promise<unknown> =>
+      (transactionSpy as (cb: (manager: never) => Promise<unknown>) => Promise<unknown>)(
+        (manager) => action.runInTransaction(manager, dto, 1, { id: 1, fullName: 'O' }),
+      );
+
+    it('re-valida las mismas reglas que execute (no confía en el caller)', async () => {
+      seedBank(1, 100, 1);
+      seedWallet(2, 100, 1);
+      await expect(
+        run({
+          sourceType: 'bank',
+          sourceId: 1,
+          destinationType: 'user',
+          destinationId: 7,
+          amount: 1,
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      await expect(
+        run({
+          sourceType: 'wallet',
+          sourceId: 2,
+          destinationType: 'user',
+          destinationId: 1,
+          amount: 1,
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      await expect(
+        run({
+          sourceType: 'bank',
+          sourceId: 1,
+          destinationType: 'bank',
+          destinationId: 1,
+          amount: 1,
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      await expect(
+        run({
+          sourceType: 'bank',
+          sourceId: 1,
+          destinationType: 'wallet',
+          destinationId: 2,
+          amount: 0,
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('no admite el traslado al negocio principal (ese camino es cross-company)', async () => {
+      seedBank(1, 100, 1);
+      seedWallet(2, 100, 1);
+      await expect(
+        run({
+          sourceType: 'bank',
+          sourceId: 1,
+          destinationType: 'wallet',
+          destinationId: 2,
+          amount: 1,
+          destinationScope: 'main',
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('camino feliz: mismo par EXPENSE + INCOME que execute', async () => {
+      seedBank(1, 100, 1);
+      seedWallet(2, 0, 1);
+      await run({
+        sourceType: 'bank',
+        sourceId: 1,
+        destinationType: 'wallet',
+        destinationId: 2,
+        amount: 40,
+      });
+      const types = (recordSpy.mock.calls as unknown[][]).map(
+        (call) => (call[1] as { movement_type: string }).movement_type,
+      );
+      expect(types).toEqual(['EXPENSE', 'INCOME']);
+    });
+  });
 });

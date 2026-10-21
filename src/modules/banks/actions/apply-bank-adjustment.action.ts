@@ -7,7 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import Big from 'big.js';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
@@ -68,6 +68,23 @@ export class ApplyBankAdjustmentAction {
     companyId: number,
     actor: BankAdjustmentActor,
   ): Promise<BankAdjustmentResult> {
+    return this.dataSource.transaction<BankAdjustmentResult>((manager) =>
+      this.runInTransaction(manager, bankId, dto, companyId, actor),
+    );
+  }
+
+  /**
+   * La corrección dentro de una transacción existente. Lo usa `execute` y
+   * también Place, que confirma su operación pendiente en la MISMA
+   * transacción (exactly-once).
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    bankId: number,
+    dto: CreateBankAdjustmentDto,
+    companyId: number,
+    actor: BankAdjustmentActor,
+  ): Promise<BankAdjustmentResult> {
     const movementType: MovementType =
       dto.movement_type === 'INCOME' ? MovementType.INCOME : MovementType.EXPENSE;
 
@@ -75,72 +92,70 @@ export class ApplyBankAdjustmentAction {
     const amount: Big = toBig(dto.amount).round(2);
     const trimmedDescription = dto.description.trim();
 
-    return this.dataSource.transaction<BankAdjustmentResult>(async (manager) => {
-      // Lock pesimista en la fila del bank dentro de la company.
-      // Importante: el filtro `company_id` se aplica DENTRO del lock para
-      // no exponer la existencia de bancos de otras companies.
-      const locked = await manager
-        .createQueryBuilder(Bank, 'b')
-        .setLock('pessimistic_write')
-        .where('b.id = :id', { id: String(bankId) })
-        .andWhere('b.company_id = :companyId', { companyId: String(companyId) })
-        .getOne();
+    // Lock pesimista en la fila del bank dentro de la company.
+    // Importante: el filtro `company_id` se aplica DENTRO del lock para
+    // no exponer la existencia de bancos de otras companies.
+    const locked = await manager
+      .createQueryBuilder(Bank, 'b')
+      .setLock('pessimistic_write')
+      .where('b.id = :id', { id: String(bankId) })
+      .andWhere('b.company_id = :companyId', { companyId: String(companyId) })
+      .getOne();
 
-      if (!locked) {
-        throw new NotFoundException('Cuenta bancaria no encontrada.');
-      }
-      if (locked.is_archived === true) {
-        throw new UnprocessableEntityException('La cuenta bancaria está archivada.');
-      }
+    if (!locked) {
+      throw new NotFoundException('Cuenta bancaria no encontrada.');
+    }
+    if (locked.is_archived === true) {
+      throw new UnprocessableEntityException('La cuenta bancaria está archivada.');
+    }
 
-      const currentBalance: Big = toBig(locked.balance);
-      const signed: Big = movementType === MovementType.INCOME ? amount : amount.neg();
-      const newBalance: Big = currentBalance.plus(signed).round(2);
+    const currentBalance: Big = toBig(locked.balance);
+    const signed: Big = movementType === MovementType.INCOME ? amount : amount.neg();
+    const newBalance: Big = currentBalance.plus(signed).round(2);
 
-      if (newBalance.lt(0)) {
-        throw new UnprocessableEntityException('El monto excede el saldo disponible del banco.');
-      }
+    if (newBalance.lt(0)) {
+      throw new UnprocessableEntityException('El monto excede el saldo disponible del banco.');
+    }
 
-      await manager.update(
-        Bank,
-        { id: String(bankId), company_id: String(companyId) },
-        { balance: newBalance.toNumber(), updated_at: new Date() },
-      );
+    await manager.update(
+      Bank,
+      { id: String(bankId), company_id: String(companyId) },
+      { balance: newBalance.toNumber(), updated_at: new Date() },
+    );
 
-      const isIncome = movementType === MovementType.INCOME;
-      const movement = await this.financialMovementsService.record(manager, {
-        companyId,
-        amount: amount.toNumber(),
-        movement_type: movementType,
-        concept: MovementConcept.ADJUSTMENT,
-        description: `Corrección de caja: ${trimmedDescription}`,
-        source_type: isIncome ? null : 'bank',
-        source_id: isIncome ? null : bankId,
-        destination_type: isIncome ? 'bank' : null,
-        destination_id: isIncome ? bankId : null,
-        reference_code: randomUUID(),
-        created_by: actor.fullName,
-        created_by_id: actor.id,
-      });
-
-      // Re-fetch del bank actualizado para devolver el estado fresco
-      // (balance, updated_at). findOneOrFail porque el UPDATE confirmó
-      // la existencia.
-      const updatedBank = await manager.findOneOrFail(Bank, {
-        where: { id: String(bankId), company_id: String(companyId) },
-      });
-
-      this.logger.log({
-        event: 'bank.adjustment_applied',
-        companyId,
-        bankId,
-        movement_type: movementType,
-        amount: amount.toFixed(2),
-        new_balance: newBalance.toFixed(2),
-        actorId: actor.id,
-      });
-
-      return { bank: updatedBank, movement };
+    const isIncome = movementType === MovementType.INCOME;
+    const movement = await this.financialMovementsService.record(manager, {
+      companyId,
+      amount: amount.toNumber(),
+      movement_type: movementType,
+      concept: MovementConcept.ADJUSTMENT,
+      description: `Corrección de caja: ${trimmedDescription}`,
+      source_type: isIncome ? null : 'bank',
+      source_id: isIncome ? null : bankId,
+      destination_type: isIncome ? 'bank' : null,
+      destination_id: isIncome ? bankId : null,
+      reference_code: randomUUID(),
+      created_by: actor.fullName,
+      created_by_id: actor.id,
     });
+
+    // Re-fetch del bank actualizado para devolver el estado fresco
+    // (balance, updated_at). findOneOrFail porque el UPDATE confirmó
+    // la existencia.
+    const updatedBank = await manager.findOneOrFail(Bank, {
+      where: { id: String(bankId), company_id: String(companyId) },
+    });
+
+    this.logger.log({
+      event: 'bank.adjustment_applied',
+      companyId,
+      bankId,
+      movement_type: movementType,
+      amount: amount.toFixed(2),
+      new_balance: newBalance.toFixed(2),
+      actorId: actor.id,
+    });
+
+    return { bank: updatedBank, movement };
   }
 }

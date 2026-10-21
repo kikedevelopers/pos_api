@@ -47,6 +47,7 @@ import { PosDataService } from './pos-data.service';
   ],
   // CloseCashAction se exporta para que EmployeesModule reutilice el cierre de
   // caja (admin cierra la caja de un empleado) sin duplicar la lógica de dinero.
-  exports: [PosDataService, CloseCashAction],
+  // TransferCashAction: Place traslada desde una caja con la misma lógica.
+  exports: [PosDataService, CloseCashAction, TransferCashAction],
 })
 export class PosDataModule {}

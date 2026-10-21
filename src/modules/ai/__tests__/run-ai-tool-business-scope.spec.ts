@@ -6,6 +6,7 @@ import type { TreasuryService } from '@/modules/treasury/treasury.service';
 
 import type { RunAiExpenseToolAction } from '../actions/run-ai-expense-tool.action';
 import type { RunAiSaleToolAction } from '../actions/run-ai-sale-tool.action';
+import type { RunAiTreasuryToolAction } from '../actions/run-ai-treasury-tool.action';
 import { RunAiToolAction } from '../actions/run-ai-tool.action';
 import type { AiBusiness } from '../internal/business-scope';
 import type { AiToolRequestContext } from '../internal/expense-tool-helpers';
@@ -95,6 +96,7 @@ describe('RunAiToolAction · alcance por negocio (sucursales del owner)', () => 
       { accounts: accountsFn } as unknown as TreasuryService,
       expenseTools as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
+      {} as unknown as RunAiTreasuryToolAction,
     );
     return { action, todayFn, accountsFn, query, expenseTools };
   };

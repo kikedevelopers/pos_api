@@ -354,3 +354,18 @@ describe('extractRequestContext', () => {
     ).toBeNull();
   });
 });
+
+describe('readMoneyArg · saldo objetivo (allow_zero)', () => {
+  it('acepta 0 solo con allow_zero', () => {
+    const zero = readMoneyArg({ v: 0 }, 'v', { allow_zero: true });
+    expect(zero.status === 'ok' && zero.amount.eq(0)).toBe(true);
+    expect(readMoneyArg({ v: '0' }, 'v', { allow_zero: true }).status).toBe('ok');
+    expect(readMoneyArg({ v: 0 }, 'v').status).toBe('invalid');
+  });
+
+  it('nunca acepta negativos ni separadores de miles, con o sin allow_zero', () => {
+    const negative = readMoneyArg({ v: -1 }, 'v', { allow_zero: true });
+    expect(negative.status === 'invalid' && negative.reason).toContain('negativo');
+    expect(readMoneyArg({ v: '10.000' }, 'v', { allow_zero: true }).status).toBe('invalid');
+  });
+});

@@ -38,6 +38,7 @@ import { CashRegister } from './entities/cash-register.entity';
     RecordCashRegisterLogAction,
     AdjustCashRegisterAction,
   ],
-  exports: [CashRegisterService, TypeOrmModule],
+  // AdjustCashRegisterAction: Place corrige saldos de caja con la misma lógica.
+  exports: [CashRegisterService, TypeOrmModule, AdjustCashRegisterAction],
 })
 export class CashRegisterModule {}

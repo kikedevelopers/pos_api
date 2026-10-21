@@ -54,6 +54,19 @@ const SALE_RULES: readonly string[] = [
   '',
 ];
 
+/**
+ * Reglas para mover y corregir saldos. Solo se incluyen si el usuario tiene
+ * las herramientas (el dueño). El servidor valida cuentas, saldo y el "sí";
+ * estas reglas solo evitan que Place suponga datos o repita la tarjeta.
+ */
+const TREASURY_RULES: readonly string[] = [
+  'TESORERÍA: MOVER Y CORREGIR SALDOS',
+  '- "Mueve/pasa X de A a B" → prepare_treasury_transfer. "Corrige/deja A en X" → prepare_balance_correction (X es el saldo FINAL, no la diferencia).',
+  '- Cuentas como las dijo el usuario, con su tipo si lo dijo ("banco Nequi", "caja de Ana"). Nunca supongas cuenta ni valor. Si la herramienta rechaza, explica su "message" sin probar otra cuenta.',
+  '- Con "confirmation_required" el usuario ya ve una tarjeta: NO la repitas; pide su "sí" en una frase. confirm_treasury_action solo si su último mensaje es un "sí" a ese resumen, nunca en la misma respuesta; solo con "executed" di que quedó hecho.',
+  '',
+];
+
 export interface SystemPromptContext {
   /** Nombre del negocio (company). */
   businessName: string;
@@ -85,9 +98,11 @@ export const buildSystemPrompt = ({
 }: SystemPromptContext): string => {
   const can_manage_expenses = availableTools.some((tool) => tool.name === 'register_expense');
   const can_create_sales = availableTools.some((tool) => tool.name === 'prepare_sale');
+  const can_move_funds = availableTools.some((tool) => tool.name === 'prepare_treasury_transfer');
   const allowed_writes = [
     ...(can_manage_expenses ? ['registrar y archivar GASTOS VARIABLES'] : []),
     ...(can_create_sales ? ['registrar ventas como PEDIDO POR COBRAR'] : []),
+    ...(can_move_funds ? ['MOVER y CORREGIR saldos de cajas, bancos y billeteras'] : []),
   ];
 
   const scope_actor = { businesses };
@@ -121,11 +136,12 @@ export const buildSystemPrompt = ({
     '3. Después de consultar, responde con los números reales, interpretados: qué significan y qué conviene hacer. Eres asesor, no un volcado de datos.',
     '4. Si una herramienta devuelve vacío, dilo explícitamente ("no hay ventas registradas hoy") en vez de rellenar con supuestos.',
     allowed_writes.length > 0
-      ? `5. Las ÚNICAS modificaciones que puedes hacer son: ${allowed_writes.join(' y ')} (reglas abajo). Para cualquier otra (crear productos o clientes, cobrar o anular ventas, gastos fijos, ajustar saldos) explica el paso a paso dentro de PlacePOS: no puedes hacerla tú.`
+      ? `5. Las ÚNICAS modificaciones que puedes hacer son: ${allowed_writes.join(' y ')} (reglas abajo). Para cualquier otra (crear productos o clientes, cobrar o anular ventas, gastos fijos${can_move_funds ? '' : ', mover o ajustar saldos'}) explica el paso a paso dentro de PlacePOS: no puedes hacerla tú.`
       : '5. Si el usuario pide una acción que modifica datos (crear productos, registrar ventas o gastos, anular ventas), explica el paso a paso dentro de PlacePOS: solo puedes leer información, nunca modificarla.',
     '',
     ...(can_manage_expenses ? EXPENSE_RULES : []),
     ...(can_create_sales ? SALE_RULES : []),
+    ...(can_move_funds ? TREASURY_RULES : []),
     'HERRAMIENTAS DISPONIBLES PARA ESTE USUARIO',
     toolLine,
     '',

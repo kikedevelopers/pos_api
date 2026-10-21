@@ -45,7 +45,8 @@ export type MoneyReadResult =
 /**
  * Lee el valor del gasto que manda el modelo. NUNCA adivina:
  *
- *   - número JSON finito, > 0, con máximo 2 decimales → válido;
+ *   - número JSON finito, > 0 (o = 0 con `allow_zero`: un saldo objetivo),
+ *     con máximo 2 decimales → válido;
  *   - string solo con dígitos (opcionalmente `$` y hasta 2 decimales con
  *     punto) → válido;
  *   - "50.000", "50,000", "50 mil", "1.500,50"… → INVÁLIDO. En Colombia el
@@ -53,7 +54,11 @@ export type MoneyReadResult =
  *     de cincuenta mil. Mejor rechazar y que el modelo mande el número limpio.
  *   - más de 2 decimales → inválido (no se redondea en silencio).
  */
-export const readMoneyArg = (args: Record<string, unknown>, key: string): MoneyReadResult => {
+export const readMoneyArg = (
+  args: Record<string, unknown>,
+  key: string,
+  { allow_zero = false }: { allow_zero?: boolean } = {},
+): MoneyReadResult => {
   const raw = args?.[key];
   if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
     return { status: 'missing' };
@@ -79,8 +84,11 @@ export const readMoneyArg = (args: Record<string, unknown>, key: string): MoneyR
     return { status: 'invalid', reason: 'El valor no es un número válido.' };
   }
 
-  if (amount.lte(0)) {
-    return { status: 'invalid', reason: 'El valor del gasto debe ser mayor a cero.' };
+  if (amount.lt(0)) {
+    return { status: 'invalid', reason: 'El valor no puede ser negativo.' };
+  }
+  if (amount.eq(0) && !allow_zero) {
+    return { status: 'invalid', reason: 'El valor debe ser mayor a cero.' };
   }
   if (!amount.round(2).eq(amount)) {
     return { status: 'invalid', reason: 'El valor admite máximo 2 decimales.' };
@@ -259,7 +267,7 @@ export const resolveExpenseSource = (
 // ──────────────────────────────────────────────────────────────────────────
 
 /** Operación que se está confirmando: cada una suma su propio vocabulario. */
-export type ConfirmationKind = 'expense' | 'sale';
+export type ConfirmationKind = 'expense' | 'sale' | 'transfer' | 'adjust';
 
 /** Palabras que, por sí solas, significan "sí, hazlo" en cualquier operación. */
 const AFFIRMATIVE_WORDS = new Set([
@@ -326,6 +334,19 @@ const AFFIRMATIVE_BY_KIND: Record<ConfirmationKind, ReadonlySet<string>> = {
     'envialo',
     'envielo',
   ]),
+  // Solo formas de ACEPTAR ("muévelo"), nunca de ordenar ("mueve", "corrige"):
+  // con un traslado pendiente, "corrige el saldo" es otra orden, no un sí.
+  transfer: new Set([
+    'muevelo',
+    'muevalo',
+    'trasladalo',
+    'trasladelo',
+    'transfierelo',
+    'transfieralo',
+    'pasalo',
+    'paselo',
+  ]),
+  adjust: new Set(['corrigelo', 'corrijalo', 'ajustalo', 'ajustelo']),
 };
 
 /** Relleno permitido junto a una afirmación ("sí, por favor", "de acuerdo"). */
@@ -361,6 +382,8 @@ const FILLER_WORDS = new Set([
 const FILLER_BY_KIND: Record<ConfirmationKind, ReadonlySet<string>> = {
   expense: new Set(['gasto']),
   sale: new Set(['pedido', 'venta']),
+  transfer: new Set(['movimiento', 'traslado', 'transferencia']),
+  adjust: new Set(['correccion', 'ajuste']),
 };
 
 const MAX_CONFIRMATION_WORDS = 8;

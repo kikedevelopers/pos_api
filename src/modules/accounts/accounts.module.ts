@@ -39,6 +39,7 @@ import { TransferAction } from './actions/transfer.action';
   ],
   controllers: [AccountsController],
   providers: [AccountsService, GetTransferDestinationsAction, TransferAction],
-  exports: [AccountsService],
+  // TransferAction: Place (asistente IA) traslada con la misma lógica.
+  exports: [AccountsService, TransferAction],
 })
 export class AccountsModule {}
