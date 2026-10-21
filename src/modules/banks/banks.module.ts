@@ -33,6 +33,7 @@ import { Bank } from './entities/bank.entity';
     ArchiveBankAction,
     ApplyBankAdjustmentAction,
   ],
-  exports: [BanksService, TypeOrmModule],
+  // ApplyBankAdjustmentAction: Place corrige saldos con la misma lógica.
+  exports: [BanksService, TypeOrmModule, ApplyBankAdjustmentAction],
 })
 export class BanksModule {}

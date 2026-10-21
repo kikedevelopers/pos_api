@@ -7,7 +7,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Big from 'big.js';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 
 import { toBig } from '@/common/utils/precision';
 import { FinancialMovementsService } from '@/modules/financial-movements/financial-movements.service';
@@ -54,74 +54,89 @@ export class ApplyWalletAdjustmentAction {
     companyId: number,
     actor: WalletAdjustmentActor,
   ): Promise<WalletAdjustmentResult> {
+    return this.dataSource.transaction<WalletAdjustmentResult>((manager) =>
+      this.runInTransaction(manager, walletId, dto, companyId, actor),
+    );
+  }
+
+  /**
+   * La corrección dentro de una transacción existente. Lo usa `execute` y
+   * también Place, que confirma su operación pendiente en la MISMA
+   * transacción (exactly-once).
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    walletId: number,
+    dto: CreateWalletAdjustmentDto,
+    companyId: number,
+    actor: WalletAdjustmentActor,
+  ): Promise<WalletAdjustmentResult> {
     const movementType: MovementType =
       dto.movement_type === 'INCOME' ? MovementType.INCOME : MovementType.EXPENSE;
 
     const amount: Big = toBig(dto.amount).round(2);
     const trimmedDescription = dto.description.trim();
 
-    return this.dataSource.transaction<WalletAdjustmentResult>(async (manager) => {
-      const locked = await manager
-        .createQueryBuilder(Wallet, 'w')
-        .setLock('pessimistic_write')
-        .where('w.id = :id', { id: String(walletId) })
-        .andWhere('w.company_id = :companyId', { companyId: String(companyId) })
-        .getOne();
+    const locked = await manager
+      .createQueryBuilder(Wallet, 'w')
+      .setLock('pessimistic_write')
+      .where('w.id = :id', { id: String(walletId) })
+      .andWhere('w.company_id = :companyId', { companyId: String(companyId) })
+      .getOne();
 
-      if (!locked) {
-        throw new NotFoundException('Billetera no encontrada.');
-      }
-      if (locked.is_archived === true) {
-        throw new UnprocessableEntityException('La billetera está archivada.');
-      }
+    if (!locked) {
+      throw new NotFoundException('Billetera no encontrada.');
+    }
+    if (locked.is_archived === true) {
+      throw new UnprocessableEntityException('La billetera está archivada.');
+    }
 
-      const currentBalance: Big = toBig(locked.balance);
-      const signed: Big = movementType === MovementType.INCOME ? amount : amount.neg();
-      const newBalance: Big = currentBalance.plus(signed).round(2);
+    const currentBalance: Big = toBig(locked.balance);
+    const signed: Big = movementType === MovementType.INCOME ? amount : amount.neg();
+    const newBalance: Big = currentBalance.plus(signed).round(2);
 
-      if (newBalance.lt(0)) {
-        throw new UnprocessableEntityException(
-          'El monto excede el saldo disponible de la billetera.',
-        );
-      }
-
-      await manager.update(
-        Wallet,
-        { id: String(walletId), company_id: String(companyId) },
-        { balance: newBalance.toNumber(), updated_at: new Date() },
+    if (newBalance.lt(0)) {
+      throw new UnprocessableEntityException(
+        'El monto excede el saldo disponible de la billetera.',
       );
+    }
 
-      const isIncome = movementType === MovementType.INCOME;
-      const movement = await this.financialMovementsService.record(manager, {
-        companyId,
-        amount: amount.toNumber(),
-        movement_type: movementType,
-        concept: MovementConcept.ADJUSTMENT,
-        description: `Corrección de caja: ${trimmedDescription}`,
-        source_type: isIncome ? null : 'wallet',
-        source_id: isIncome ? null : walletId,
-        destination_type: isIncome ? 'wallet' : null,
-        destination_id: isIncome ? walletId : null,
-        reference_code: randomUUID(),
-        created_by: actor.fullName,
-        created_by_id: actor.id,
-      });
+    await manager.update(
+      Wallet,
+      { id: String(walletId), company_id: String(companyId) },
+      { balance: newBalance.toNumber(), updated_at: new Date() },
+    );
 
-      const updatedWallet = await manager.findOneOrFail(Wallet, {
-        where: { id: String(walletId), company_id: String(companyId) },
-      });
-
-      this.logger.log({
-        event: 'wallet.adjustment_applied',
-        companyId,
-        walletId,
-        movement_type: movementType,
-        amount: amount.toFixed(2),
-        new_balance: newBalance.toFixed(2),
-        actorId: actor.id,
-      });
-
-      return { wallet: updatedWallet, movement };
+    const isIncome = movementType === MovementType.INCOME;
+    const movement = await this.financialMovementsService.record(manager, {
+      companyId,
+      amount: amount.toNumber(),
+      movement_type: movementType,
+      concept: MovementConcept.ADJUSTMENT,
+      description: `Corrección de caja: ${trimmedDescription}`,
+      source_type: isIncome ? null : 'wallet',
+      source_id: isIncome ? null : walletId,
+      destination_type: isIncome ? 'wallet' : null,
+      destination_id: isIncome ? walletId : null,
+      reference_code: randomUUID(),
+      created_by: actor.fullName,
+      created_by_id: actor.id,
     });
+
+    const updatedWallet = await manager.findOneOrFail(Wallet, {
+      where: { id: String(walletId), company_id: String(companyId) },
+    });
+
+    this.logger.log({
+      event: 'wallet.adjustment_applied',
+      companyId,
+      walletId,
+      movement_type: movementType,
+      amount: amount.toFixed(2),
+      new_balance: newBalance.toFixed(2),
+      actorId: actor.id,
+    });
+
+    return { wallet: updatedWallet, movement };
   }
 }

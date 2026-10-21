@@ -308,4 +308,62 @@ describe('TransferCashAction', () => {
     const bankUpdate = updates.find((u) => u.entity === 'Bank');
     expect(bankUpdate?.patch.balance).toBe(100);
   });
+
+  describe('runInTransaction · caja de OTRO usuario (Place, dueño)', () => {
+    const EMPLOYEE_ID = 77;
+    const run = (dto: TransferCashDto, register_user_id: number): Promise<unknown> =>
+      (transactionSpy as (cb: (manager: never) => Promise<unknown>) => Promise<unknown>)(
+        (manager) => action.runInTransaction(manager, dto, 42, actor, register_user_id),
+      );
+
+    it('debita la caja del empleado (no la del actor) y deja el log en ESA caja', async () => {
+      seedCashRegisterForUser(1, 42, actor.id, 500);
+      seedCashRegisterForUser(2, 42, EMPLOYEE_ID, 300);
+      seedWallet(10, 42, 0);
+
+      await run(baseDto({ amount: 120 }), EMPLOYEE_ID);
+
+      expect(cashRegisters.get(`42|${EMPLOYEE_ID}`)?.balance).toBe(180);
+      expect(cashRegisters.get(`42|${actor.id}`)?.balance).toBe(500);
+      const log = saves.find((save) => save.entity === 'CashRegisterLog');
+      expect(log?.payload).toMatchObject({
+        cash_register_id: '2',
+        type: 'CASH_TRANSFER_OUT',
+        amount: 120,
+        created_by_id: String(actor.id),
+      });
+      const fmArgs = (recordSpy.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+      expect(fmArgs).toMatchObject({ source_type: 'cash_register', source_id: 2, amount: 120 });
+    });
+
+    it('si esa caja no existe en la company → 404 y NO se fabrica una caja', async () => {
+      seedWallet(10, 42, 0);
+      seedCashRegisterForUser(3, 99, EMPLOYEE_ID, 1000); // misma persona, OTRA company
+
+      await expect(run(baseDto(), EMPLOYEE_ID)).rejects.toBeInstanceOf(NotFoundException);
+      expect(saves).toEqual([]);
+      expect(updates).toEqual([]);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('saldo insuficiente en la caja del empleado → 422 sin tocar nada', async () => {
+      seedCashRegisterForUser(2, 42, EMPLOYEE_ID, 50);
+      seedWallet(10, 42, 0);
+
+      await expect(run(baseDto({ amount: 51 }), EMPLOYEE_ID)).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      expect(updates).toEqual([]);
+    });
+
+    it('re-valida monto y destino aunque no pase por execute', async () => {
+      seedCashRegisterForUser(2, 42, EMPLOYEE_ID, 500);
+      await expect(run(baseDto({ amount: 0 }), EMPLOYEE_ID)).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      await expect(
+        run(baseDto({ destinationType: 'user' as never }), EMPLOYEE_ID),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    });
+  });
 });

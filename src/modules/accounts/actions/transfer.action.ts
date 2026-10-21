@@ -121,6 +121,148 @@ export class TransferAction {
       return this.transferToMainBusiness(dto, companyId, actor, amountBig);
     }
 
+    this.assertSameCompanyTransfer(dto, actor);
+
+    // Aislamiento SERIALIZABLE (CLAUDE.md §9.4): transferencias entre cuentas
+    // combinan read+write sobre source y destino. Con READ COMMITTED dos
+    // transferencias concurrentes pueden leer el mismo balance y duplicar el
+    // débito (write-skew). PG aborta con 40001 cuando detecta anomalía;
+    // reintentamos hasta 2 veces.
+    return runSerializableWithRetry<TransferResult>(this.dataSource, (manager) =>
+      this.runInTransaction(manager, dto, companyId, actor),
+    );
+  }
+
+  /**
+   * Traslado entre cuentas de la MISMA company dentro de una transacción
+   * existente (el caller decide aislamiento y reintentos). Lo usa `execute` y
+   * también Place, que confirma su operación pendiente en la MISMA
+   * transacción del traslado (exactly-once). Re-valida todo: no confía en que
+   * el caller haya llamado antes a `execute`.
+   */
+  async runInTransaction(
+    manager: EntityManager,
+    dto: TransferDto,
+    companyId: number,
+    actor: TransferActor,
+  ): Promise<TransferResult> {
+    const amountBig: Big = toBig(dto.amount);
+    if (amountBig.lte(0)) {
+      throw new UnprocessableEntityException('El monto debe ser mayor a cero');
+    }
+    if (dto.destinationScope === 'main') {
+      throw new UnprocessableEntityException('El traslado al negocio principal no aplica aquí');
+    }
+    this.assertSameCompanyTransfer(dto, actor);
+
+    // 1. Cargar source con lock pessimistic_write (defensa contra oversell).
+    const source = await loadAccountInCompany(
+      manager,
+      dto.sourceType,
+      dto.sourceId,
+      companyId,
+      'source',
+    );
+
+    const sourceBalanceBig = toBig(source.balance);
+    if (amountBig.gt(sourceBalanceBig)) {
+      throw new UnprocessableEntityException(
+        `Saldo insuficiente. Disponible: ${sourceBalanceBig.toFixed(2)}`,
+      );
+    }
+
+    const amount = preciseNumber(amountBig, 2);
+    const newSourceBalance = preciseNumber(sourceBalanceBig.minus(amountBig), 2);
+
+    // 2. UPDATE balance del source.
+    await setAccountBalance(manager, dto.sourceType, source.id, companyId, newSourceBalance);
+
+    // 3. Acreditar el destino + registrar movimientos.
+    const referenceCode = `TRF-${randomUUID()}`;
+
+    if (dto.destinationType === 'user') {
+      return this.creditUserAndRecord({
+        manager,
+        companyId,
+        source: {
+          type: dto.sourceType,
+          id: source.id,
+          name: source.name,
+          newBalance: newSourceBalance,
+        },
+        destinationUserId: dto.destinationId,
+        amount,
+        amountBig,
+        referenceCode,
+        actor,
+      });
+    }
+
+    const destinationType: TransferSourceType = dto.destinationType;
+    const destination = await loadAccountInCompany(
+      manager,
+      destinationType,
+      dto.destinationId,
+      companyId,
+      'destination',
+    );
+    const newDestBalance = preciseNumber(toBig(destination.balance).plus(amountBig), 2);
+    await setAccountBalance(manager, destinationType, destination.id, companyId, newDestBalance);
+
+    await this.financialMovementsService.record(manager, {
+      companyId,
+      amount,
+      movement_type: MovementType.EXPENSE,
+      concept: MovementConcept.TRANSFER,
+      description: `Traslado a ${destination.name}`,
+      source_type: dto.sourceType,
+      source_id: source.id,
+      destination_type: destinationType,
+      destination_id: destination.id,
+      reference_code: referenceCode,
+      created_by: actor.fullName,
+      created_by_id: actor.id,
+    });
+
+    await this.financialMovementsService.record(manager, {
+      companyId,
+      amount,
+      movement_type: MovementType.INCOME,
+      concept: MovementConcept.TRANSFER,
+      description: `Traslado desde ${source.name}`,
+      source_type: dto.sourceType,
+      source_id: source.id,
+      destination_type: destinationType,
+      destination_id: destination.id,
+      reference_code: referenceCode,
+      created_by: actor.fullName,
+      created_by_id: actor.id,
+    });
+
+    this.logger.log({
+      event: 'accounts.transfer_completed',
+      companyId,
+      actorId: actor.id,
+      amount: amountBig.toFixed(2),
+      sourceType: dto.sourceType,
+      sourceId: source.id,
+      destinationType,
+      destinationId: destination.id,
+      referenceCode,
+    });
+
+    return {
+      message: `Traslado de ${amountBig.toFixed(2)} a ${destination.name} completado exitosamente`,
+      source: { type: dto.sourceType, id: source.id, balance: newSourceBalance },
+      destination: { type: destinationType, id: destination.id, balance: newDestBalance },
+    };
+  }
+
+  /**
+   * Reglas de un traslado DENTRO de la company (sin I/O). Se evalúan antes de
+   * abrir la transacción (fallo rápido) y otra vez dentro de `runInTransaction`.
+   */
+  private assertSameCompanyTransfer(dto: TransferDto, actor: TransferActor): void {
     // PlacePos solo permite destination=user cuando source=wallet
     // (`accounts.routes.ts` lo construye así en `buildDestinationList`).
     // Replicamos esa restricción: bank → user se rechaza con 422 + code.
@@ -144,115 +286,6 @@ export class TransferAction {
         payload: { code: 'SELF_TRANSFER' },
       });
     }
-
-    // Aislamiento SERIALIZABLE (CLAUDE.md §9.4): transferencias entre cuentas
-    // combinan read+write sobre source y destino. Con READ COMMITTED dos
-    // transferencias concurrentes pueden leer el mismo balance y duplicar el
-    // débito (write-skew). PG aborta con 40001 cuando detecta anomalía;
-    // reintentamos hasta 2 veces.
-    return runSerializableWithRetry<TransferResult>(this.dataSource, async (manager) => {
-      // 1. Cargar source con lock pessimistic_write (defensa contra oversell).
-      const source = await loadAccountInCompany(
-        manager,
-        dto.sourceType,
-        dto.sourceId,
-        companyId,
-        'source',
-      );
-
-      const sourceBalanceBig = toBig(source.balance);
-      if (amountBig.gt(sourceBalanceBig)) {
-        throw new UnprocessableEntityException(
-          `Saldo insuficiente. Disponible: ${sourceBalanceBig.toFixed(2)}`,
-        );
-      }
-
-      const amount = preciseNumber(amountBig, 2);
-      const newSourceBalance = preciseNumber(sourceBalanceBig.minus(amountBig), 2);
-
-      // 2. UPDATE balance del source.
-      await setAccountBalance(manager, dto.sourceType, source.id, companyId, newSourceBalance);
-
-      // 3. Acreditar el destino + registrar movimientos.
-      const referenceCode = `TRF-${randomUUID()}`;
-
-      if (dto.destinationType === 'user') {
-        return this.creditUserAndRecord({
-          manager,
-          companyId,
-          source: {
-            type: dto.sourceType,
-            id: source.id,
-            name: source.name,
-            newBalance: newSourceBalance,
-          },
-          destinationUserId: dto.destinationId,
-          amount,
-          amountBig,
-          referenceCode,
-          actor,
-        });
-      }
-
-      const destinationType: TransferSourceType = dto.destinationType;
-      const destination = await loadAccountInCompany(
-        manager,
-        destinationType,
-        dto.destinationId,
-        companyId,
-        'destination',
-      );
-      const newDestBalance = preciseNumber(toBig(destination.balance).plus(amountBig), 2);
-      await setAccountBalance(manager, destinationType, destination.id, companyId, newDestBalance);
-
-      await this.financialMovementsService.record(manager, {
-        companyId,
-        amount,
-        movement_type: MovementType.EXPENSE,
-        concept: MovementConcept.TRANSFER,
-        description: `Traslado a ${destination.name}`,
-        source_type: dto.sourceType,
-        source_id: source.id,
-        destination_type: destinationType,
-        destination_id: destination.id,
-        reference_code: referenceCode,
-        created_by: actor.fullName,
-        created_by_id: actor.id,
-      });
-
-      await this.financialMovementsService.record(manager, {
-        companyId,
-        amount,
-        movement_type: MovementType.INCOME,
-        concept: MovementConcept.TRANSFER,
-        description: `Traslado desde ${source.name}`,
-        source_type: dto.sourceType,
-        source_id: source.id,
-        destination_type: destinationType,
-        destination_id: destination.id,
-        reference_code: referenceCode,
-        created_by: actor.fullName,
-        created_by_id: actor.id,
-      });
-
-      this.logger.log({
-        event: 'accounts.transfer_completed',
-        companyId,
-        actorId: actor.id,
-        amount: amountBig.toFixed(2),
-        sourceType: dto.sourceType,
-        sourceId: source.id,
-        destinationType,
-        destinationId: destination.id,
-        referenceCode,
-      });
-
-      return {
-        message: `Traslado de ${amountBig.toFixed(2)} a ${destination.name} completado exitosamente`,
-        source: { type: dto.sourceType, id: source.id, balance: newSourceBalance },
-        destination: { type: destinationType, id: destination.id, balance: newDestBalance },
-      };
-    });
   }
 
   /**
