@@ -71,8 +71,9 @@ Si el cliente cierra la conexión, la generación se aborta (deja de gastar toke
 ## Herramientas (function calling)
 
 **Todas** filtran por `company_id` y son **de solo lectura**, salvo las tres de
-gastos (ver "Registrar y archivar gastos") y las dos de pedidos (ver "Registrar
-ventas como pedido por cobrar"). Antes de ejecutarse se revalida el
+gastos (ver "Registrar y archivar gastos"), las dos de pedidos (ver "Registrar
+ventas como pedido por cobrar") y las tres de tesorería (ver "Mover y corregir
+saldos"). Antes de ejecutarse se revalida el
 permiso: que el modelo invente una llamada no basta.
 
 Cada herramienta lleva además un `summary` en el idioma del comerciante — es lo
@@ -97,6 +98,9 @@ declaración es para el modelo; el `summary`, para la persona.
 | `confirm_expense_action` ✍️ | `canAccessExpenses` + administrador | Ejecuta lo preparado con `CreateExpenseAction` / `VoidExpenseAction` |
 | `prepare_sale` ✍️ | `canAccessPOS` + administrador | Interpreta cliente + productos (pool SQL + motor en memoria), arma la factura y la deja en `ai_pending_actions` |
 | `confirm_sale` ✍️ | `canAccessPOS` + administrador | Revalida y crea el pedido con `CreateSaleAction.runInTransaction` |
+| `prepare_treasury_transfer` ✍️ | solo el dueño | Resuelve origen/destino + saldo y deja el traslado en `ai_pending_actions` |
+| `prepare_balance_correction` ✍️ | solo el dueño | Deja la corrección a un saldo final (con el saldo que vio el usuario) en `ai_pending_actions` |
+| `confirm_treasury_action` ✍️ | solo el dueño | Ejecuta con `TransferAction` / `TransferCashAction` / ajustes de banco, billetera o caja (`runInTransaction`) |
 
 `search_suppliers` entrega la información completa de uno o varios proveedores y
 sus compras: datos de contacto y cuentas para consignar, cuánto se le debe hoy
@@ -277,6 +281,53 @@ interpretación, tamaños, precio manual/margen, confirmación, exactly-once con
 carreras, cambios entre vista previa y "sí", aislamiento por tenant y sucursal
 con catálogo compartido).
 
+## Mover y corregir saldos (escritura, 21 oct 2026)
+
+"Mueve 100.000 de Nequi a Efectivo" y "Corrige el saldo de Nequi a 10.000".
+Mismo patrón de dos turnos que gastos y pedidos: preparar → pendiente en BD →
+"sí" en una petición posterior (`checkPendingConfirmation`). Vocabulario por
+tipo: traslado "sí"/"muévelo"/"trasládalo", corrección "sí"/"corrígelo"/
+"ajústalo"; órdenes como "corrige el saldo" o "sí pero de 50 mil" NO confirman.
+
+- **Solo el dueño** (owner/superadmin): `requires_owner` en el catálogo + chequeo
+  en la acción. Ni el rol Administrador: espejo de `POST /accounts/transfer` y
+  de los ajustes de saldo, que la API ya restringe al dueño. Siempre en el
+  negocio de la sesión (`business_id` se rechaza).
+- **Cuentas** (`TREASURY_ACCOUNTS_SQL`, un viaje, índices `company_*`): cajas de
+  los usuarios de la company (la del owner en sucursal incluida), bancos y
+  billeteras activos. `resolveTreasuryAccount` (puro): exacta por nombre →
+  tipo dicho ("banco Nequi", "billetera Efectivo", "caja de Ana") → "caja"/"mi
+  caja" = caja propia → "efectivo" = caja propia SOLO si ninguna otra cuenta lo
+  lleva en el nombre → parcial (el nombre CONTIENE lo dicho, nunca al revés) con
+  un único candidato. Dos coincidencias → pregunta. Nunca fabrica una caja.
+- **Rutas** (`classifyTransferRoute`), siempre con la acción de la app:
+  banco/billetera → banco/billetera y billetera → caja de OTRO usuario por
+  `TransferAction`; caja (propia o de un empleado) → banco/billetera por
+  `TransferCashAction` (`register_user_id`; la caja ajena debe existir). Se
+  rechazan, con la alternativa, las que la app no permite: banco → caja,
+  billetera → caja propia, caja → caja y misma cuenta.
+- **Saldo**: el traslado se rechaza al preparar si el origen no alcanza, y la
+  acción canónica lo re-valida con lock al confirmar (rollback total).
+- **Corrección**: guarda el saldo que vio el usuario; al confirmar bloquea la
+  fila y si cambió (venta, otro traslado) NO corrige (`changed`) — la diferencia
+  confirmada ya no es la real. Banco/billetera: ajuste `INCOME`/`EXPENSE` por la
+  diferencia ("Corrección de caja: <motivo> (con Place)"); caja:
+  `AdjustCashRegisterAction` al valor final (log `ADMIN_ADJUSTMENT`).
+- **Exactly-once**: confirmación en `SERIALIZABLE` (como "Mover saldo") con la
+  pendiente `FOR UPDATE`; un 40001 reintenta todo. `result_ref` queda NULL: las
+  cuentas viven en el `payload`.
+- **Tarjetas**: `treasury_preview` / `treasury_done` por SSE (`tool-cards.ts`);
+  el modelo no repite cifras. placepos (`TreasuryCard`) y la PWA las dibujan e
+  invalidan bancos, billeteras, movimientos y la caja del POS al ejecutarse.
+
+Costo: ~540 tokens de entrada más por pregunta, solo para el dueño (reglas +
+3 declaraciones). Migración `1747012930000`. Pruebas:
+`treasury-tool-helpers.spec.ts`, `run-ai-tool-treasury-gate.spec.ts`,
+`pending-confirmation.spec.ts`, `tool-catalog.spec.ts` y
+`test/ai-treasury-tools.e2e-spec.ts` (BD real: todas las rutas, saldo
+insuficiente al preparar y al confirmar, "sí" simultáneos, saldo cambiado,
+aislamiento por tenant, rol Administrador bloqueado).
+
 ## Créditos diarios y consumo de tokens (17 oct 2026)
 
 **Créditos** (`companies.ai_daily_credits`, migración `1747012920000`): preguntas
@@ -380,6 +431,7 @@ modules/ai/
 │   ├── run-ai-tool.action.ts     # ejecuta las herramientas contra la BD
 │   ├── run-ai-expense-tool.action.ts # registrar/archivar gastos (preparar + confirmar)
 │   ├── run-ai-sale-tool.action.ts # pedidos por cobrar (preparar + confirmar)
+│   ├── run-ai-treasury-tool.action.ts # mover / corregir saldos (preparar + confirmar)
 │   ├── generate-ai-greeting.action.ts # saludo de bienvenida (+ caché 30 min)
 │   └── resolve-ai-actor.action.ts# permisos efectivos + contexto del negocio
 └── internal/
@@ -393,13 +445,15 @@ modules/ai/
     ├── tool-args.ts              # lectura defensiva de argumentos (puro)
     ├── expense-tool-helpers.ts   # monto, concepto, fuente, "sí" explícito (puro)
     ├── expense-tool-sql.ts       # SQL de las herramientas de gastos
-    ├── pending-confirmation.ts   # guard del "sí" (gastos y pedidos) (puro)
+    ├── pending-confirmation.ts   # guard del "sí" (gastos, pedidos, tesorería) (puro)
     ├── sale-product-matching.ts  # interpretar productos y tamaños (puro)
     ├── sale-tool-helpers.ts      # cantidades, precio, totales del POS (puro)
     ├── sale-tool-sql.ts          # SQL de la herramienta de pedidos
+    ├── treasury-tool-helpers.ts  # resolver cuentas y rutas de traslado (puro)
+    ├── treasury-tool-sql.ts      # SQL de las herramientas de tesorería
     └── sse-writer.ts             # escritura SSE + heartbeat
 ```
 
-Sin entidades. La única tabla propia es `ai_pending_actions` (gastos y pedidos
-esperando el "sí"), manejada con SQL plano; el historial del chat sigue
+Sin entidades. La única tabla propia es `ai_pending_actions` (gastos, pedidos y
+movimientos de saldo esperando el "sí"), manejada con SQL plano; el historial del chat sigue
 viviendo en el cliente.

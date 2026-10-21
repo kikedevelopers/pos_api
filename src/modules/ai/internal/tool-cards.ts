@@ -1,7 +1,8 @@
 /**
  * Tarjetas que el chat dibuja TAL CUAL las produce el servidor.
  *
- * La vista previa de un pedido no puede depender del texto del modelo: si el
+ * La vista previa de un pedido (o de un movimiento de saldo) no puede depender
+ * del texto del modelo: si el
  * modelo copiara mal una cantidad o un precio, el usuario confirmaría algo
  * distinto de lo que se crea. Por eso el resultado de la herramienta viaja al
  * cliente como un evento SSE `card` aparte, con los datos exactos del snapshot
@@ -13,7 +14,9 @@
 
 export type AiToolCard =
   | { kind: 'sale_preview'; data: Record<string, unknown> }
-  | { kind: 'sale_created'; data: Record<string, unknown> };
+  | { kind: 'sale_created'; data: Record<string, unknown> }
+  | { kind: 'treasury_preview'; data: Record<string, unknown> }
+  | { kind: 'treasury_done'; data: Record<string, unknown> };
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -31,6 +34,17 @@ export const cardForToolResult = (
   if (name === 'confirm_sale' && response.status === 'executed') {
     const order = asRecord(response.order);
     return order ? { kind: 'sale_created', data: order } : null;
+  }
+  if (
+    (name === 'prepare_treasury_transfer' || name === 'prepare_balance_correction') &&
+    response.status === 'confirmation_required'
+  ) {
+    const summary = asRecord(response.summary);
+    return summary ? { kind: 'treasury_preview', data: summary } : null;
+  }
+  if (name === 'confirm_treasury_action' && response.status === 'executed') {
+    const result = asRecord(response.result);
+    return result ? { kind: 'treasury_done', data: result } : null;
   }
   return null;
 };

@@ -20,7 +20,11 @@ import {
   MARK_PENDING_EXPIRED_SQL,
   UPSERT_PENDING_ACTION_SQL,
 } from '../internal/expense-tool-sql';
-import { checkPendingConfirmation, type PendingActionType } from '../internal/pending-confirmation';
+import {
+  checkPendingConfirmation,
+  type PendingActionType,
+  wrongOperationResult,
+} from '../internal/pending-confirmation';
 import { OfferedReferences } from '../internal/offered-references';
 import {
   buildCandidatePatterns,
@@ -423,11 +427,7 @@ export class RunAiSaleToolAction {
           };
         }
         if (pending.action_type !== 'CREATE_SALE') {
-          return {
-            status: 'wrong_operation',
-            message:
-              'La operación pendiente NO es un pedido (es un gasto). NO se creó nada con esta herramienta: confírmala con la herramienta de gastos.',
-          };
+          return wrongOperationResult(pending.action_type);
         }
 
         const expire = (): Promise<unknown> =>

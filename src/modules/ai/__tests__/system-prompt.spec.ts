@@ -157,6 +157,33 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('VENTAS: REGISTRAR UN PEDIDO POR COBRAR');
   });
 
+  it('sin las herramientas de tesorería no menciona sus reglas y prohíbe mover/ajustar saldos', () => {
+    const prompt = buildSystemPrompt(
+      context({ availableTools: [{ name: 'register_expense', description: 'x' }] }),
+    );
+    expect(prompt).not.toContain('TESORERÍA: MOVER Y CORREGIR SALDOS');
+    expect(prompt).toContain('mover o ajustar saldos');
+  });
+
+  it('con tesorería (dueño) explica mover vs. corregir al saldo FINAL y la tarjeta', () => {
+    const prompt = buildSystemPrompt(
+      context({
+        availableTools: [
+          { name: 'prepare_treasury_transfer', description: 'x' },
+          { name: 'prepare_balance_correction', description: 'x' },
+          { name: 'confirm_treasury_action', description: 'x' },
+        ],
+      }),
+    );
+    expect(prompt).toContain('TESORERÍA: MOVER Y CORREGIR SALDOS');
+    expect(prompt).toContain('X es el saldo FINAL, no la diferencia');
+    expect(prompt).toContain('Nunca supongas cuenta ni valor');
+    expect(prompt).toContain('NO la repitas');
+    expect(prompt).toContain('MOVER y CORREGIR saldos de cajas, bancos y billeteras');
+    expect(prompt).not.toContain('mover o ajustar saldos');
+    expect(prompt).not.toContain('solo puedes leer información, nunca modificarla');
+  });
+
   it('recuerda las reglas financieras del negocio', () => {
     const prompt = buildSystemPrompt(context());
     expect(prompt).toContain('Los gastos se restan de la ganancia');

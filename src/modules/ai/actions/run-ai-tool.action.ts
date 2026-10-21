@@ -35,6 +35,7 @@ import {
 
 import { RunAiExpenseToolAction } from './run-ai-expense-tool.action';
 import { RunAiSaleToolAction } from './run-ai-sale-tool.action';
+import { RunAiTreasuryToolAction } from './run-ai-treasury-tool.action';
 
 /** Resultado de ejecutar una herramienta pedida por el modelo. */
 export interface AiToolExecution {
@@ -84,6 +85,7 @@ export class RunAiToolAction {
     private readonly treasuryService: TreasuryService,
     private readonly expenseTools: RunAiExpenseToolAction,
     private readonly saleTools: RunAiSaleToolAction,
+    private readonly treasuryTools: RunAiTreasuryToolAction,
   ) {}
 
   /**
@@ -213,6 +215,12 @@ export class RunAiToolAction {
         return this.saleTools.prepareSale(companyId, actor, args, context);
       case 'confirm_sale':
         return this.saleTools.confirmSale(companyId, actor, context);
+      case 'prepare_treasury_transfer':
+        return this.treasuryTools.prepareTransfer(companyId, actor, args, context);
+      case 'prepare_balance_correction':
+        return this.treasuryTools.prepareCorrection(companyId, actor, args, context);
+      case 'confirm_treasury_action':
+        return this.treasuryTools.confirm(companyId, actor, context);
       default:
         return Promise.resolve({ error: `La herramienta "${name}" no está implementada.` });
     }

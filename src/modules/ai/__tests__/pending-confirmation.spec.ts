@@ -7,6 +7,8 @@ import {
   checkPendingConfirmation,
   EXPENSE_ACTION_TYPES,
   type PendingConfirmationRow,
+  TREASURY_ACTION_TYPES,
+  wrongOperationResult,
 } from '../internal/pending-confirmation';
 
 /**
@@ -117,5 +119,80 @@ describe('checkPendingConfirmation', () => {
     expect(EXPENSE_ACTION_TYPES.has('REGISTER_EXPENSE')).toBe(true);
     expect(EXPENSE_ACTION_TYPES.has('VOID_EXPENSE')).toBe(true);
     expect(EXPENSE_ACTION_TYPES.has('CREATE_SALE')).toBe(false);
+  });
+});
+
+describe('pendientes de TESORERÍA', () => {
+  const TRIGGER = 'mueve 100 mil de Nequi a Efectivo';
+  const pending = (action_type: PendingConfirmationRow['action_type']): PendingConfirmationRow => ({
+    action_type,
+    request_id: 'req-prepare',
+    trigger_message_hash: hashMessage(TRIGGER),
+    is_expired: false,
+  });
+  const context = (current: string): AiToolRequestContext => ({
+    request_id: 'req-confirm',
+    current_user_message: current,
+    previous_user_message: TRIGGER,
+  });
+
+  it('los tipos de tesorería no se confunden con los de gastos', () => {
+    expect([...TREASURY_ACTION_TYPES]).toEqual(['TRANSFER_FUNDS', 'ADJUST_BALANCE']);
+    for (const type of TREASURY_ACTION_TYPES) {
+      expect(EXPENSE_ACTION_TYPES.has(type)).toBe(false);
+    }
+  });
+
+  it('un traslado se confirma con "sí" o con "muévelo"/"trasládalo"', () => {
+    for (const reply of ['sí', 'Sí, muévelo', 'dale, trasládalo por favor', 'ok, el traslado']) {
+      expect(checkPendingConfirmation(pending('TRANSFER_FUNDS'), context(reply))).toBeNull();
+    }
+  });
+
+  it('una corrección se confirma con "sí" o con "corrígelo"/"ajústalo"', () => {
+    for (const reply of ['sí', 'dale, corrígelo por favor', 'ajústalo', 'ok, la corrección']) {
+      expect(checkPendingConfirmation(pending('ADJUST_BALANCE'), context(reply))).toBeNull();
+    }
+  });
+
+  it.each([
+    'sí, pero de 50 mil',
+    'sí pero a Bancolombia',
+    'no',
+    'mejor no',
+    '¿cuánto queda en Nequi?',
+    'muévelo a la caja chica',
+    // Órdenes nuevas, no aceptación del resumen.
+    'corrige el saldo',
+    'ajusta el saldo',
+    'mueve',
+    'corrígelo',
+  ])('"%s" NO confirma un traslado (vence la pendiente)', (reply) => {
+    expect(checkPendingConfirmation(pending('TRANSFER_FUNDS'), context(reply))).toMatchObject({
+      status: 'confirmation_not_explicit',
+      expire: true,
+    });
+  });
+
+  it('"muévelo" no confirma una corrección', () => {
+    expect(checkPendingConfirmation(pending('ADJUST_BALANCE'), context('muévelo'))).toMatchObject({
+      status: 'confirmation_not_explicit',
+    });
+  });
+
+  it('el verbo de otra operación no confirma ("archívalo", "factúralo")', () => {
+    expect(isExplicitConfirmation('archívalo', 'transfer')).toBe(false);
+    expect(isExplicitConfirmation('factúralo', 'adjust')).toBe(false);
+    expect(isExplicitConfirmation('muévelo', 'expense')).toBe(false);
+    expect(isExplicitConfirmation('corrígelo', 'sale')).toBe(false);
+  });
+
+  it('wrongOperationResult nombra la operación pendiente y su herramienta', () => {
+    expect(wrongOperationResult('TRANSFER_FUNDS').status).toBe('wrong_operation');
+    expect(wrongOperationResult('TRANSFER_FUNDS').message).toContain('confirm_treasury_action');
+    expect(wrongOperationResult('TRANSFER_FUNDS').message).toContain('un movimiento de saldo');
+    expect(wrongOperationResult('ADJUST_BALANCE').message).toContain('una corrección de saldo');
+    expect(wrongOperationResult('CREATE_SALE').message).toContain('confirm_sale');
+    expect(wrongOperationResult('VOID_EXPENSE').message).toContain('confirm_expense_action');
   });
 });

@@ -33,6 +33,7 @@ import {
   checkPendingConfirmation,
   EXPENSE_ACTION_TYPES,
   type PendingActionType,
+  wrongOperationResult,
 } from '../internal/pending-confirmation';
 import { readDate, readString } from '../internal/tool-args';
 import type { AiToolActor } from '../internal/tool-catalog';
@@ -440,13 +441,9 @@ export class RunAiExpenseToolAction {
           };
         }
 
-        // La pendiente vigente es de otro tipo (un pedido): este tool no la toca.
+        // La pendiente vigente es de otro tipo (pedido, tesorería): este tool no la toca.
         if (!EXPENSE_ACTION_TYPES.has(pending.action_type)) {
-          return {
-            status: 'wrong_operation',
-            message:
-              'La operación pendiente NO es un gasto (es un pedido). NO se ejecutó nada con esta herramienta: confírmala con la herramienta de pedidos.',
-          };
+          return wrongOperationResult(pending.action_type);
         }
 
         const rejection = checkPendingConfirmation(pending, context);
@@ -656,7 +653,7 @@ export class RunAiExpenseToolAction {
   private async savePending(
     company_id: number,
     user_id: number,
-    action_type: Exclude<PendingActionType, 'CREATE_SALE'>,
+    action_type: 'REGISTER_EXPENSE' | 'VOID_EXPENSE',
     payload: RegisterPayload | VoidPayload,
     context: AiToolRequestContext,
   ): Promise<'saved' | 'one_at_a_time' | 'concurrent'> {
