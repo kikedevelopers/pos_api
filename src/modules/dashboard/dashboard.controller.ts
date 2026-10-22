@@ -12,6 +12,7 @@ import type {
   BranchesSummaryResult,
   BreakEvenProgressResult,
   ExpenseImpactResult,
+  PayablesResult,
   PerformanceResult,
   TodayByCashierResult,
   TodayResult,
@@ -19,6 +20,7 @@ import type {
 } from './dashboard.service';
 import {
   DashboardDateQueryDto,
+  DashboardPayablesQueryDto,
   DashboardRangeQueryDto,
   DashboardTopProductsQueryDto,
 } from './dto/dashboard-query.dto';
@@ -88,6 +90,25 @@ export class DashboardController {
     @CurrentCompany() companyId: number,
   ): Promise<TopProductItem[]> {
     return this.dashboardService.topProducts(companyId, query.limit);
+  }
+
+  @Get('payables')
+  @Roles('owner', 'manager')
+  // Override por método: el detalle por compra (proveedor, factura, saldo) es
+  // de quien puede abrir y abonar compras, no de cualquiera con dashboard.
+  @RequirePermission('canAccessPurchase')
+  @ApiOperation({
+    summary:
+      'Compras por pagar a proveedores, de la que vence primero a la última, con totales por tramo de vencimiento.',
+    description:
+      'Universo = purchase_credits no PAID con saldo. `items` acotado por `limit` (default 10); `totals` cubre todo: vencidas, vencen en los próximos `due_soon_days` días, posteriores y sin plazo.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  payables(
+    @Query() query: DashboardPayablesQueryDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<PayablesResult> {
+    return this.dashboardService.payables(companyId, query.limit);
   }
 
   @Get('break-even-progress')
