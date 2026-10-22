@@ -428,4 +428,66 @@ describe('CreatePurchaseAction', () => {
     // Sin Big.js: 0.30000000000000004. Con Big.js: 0.30 redondeado a 2 dec.
     expect(purchaseCreate?.input.subtotal).toBe(0.3);
   });
+  describe('plazo de pago (payment_due_date)', () => {
+    const line = {
+      product_id: 10,
+      packaging_qty: 1,
+      unit_qty: 1,
+      unit_price: 100,
+      packaging_price: 100,
+    };
+
+    it('sin plazo → payment_due_at = null', async () => {
+      seedSupplier(1, 42);
+      seedProduct(10, 42);
+
+      await action.execute({ supplier_id: 1, lines: [line] }, 42, { id: 1, fullName: 'O' });
+
+      const purchaseCreate = createdEntities.find((c) => c.entity === 'Purchase');
+      expect(purchaseCreate?.input.payment_due_at).toBeNull();
+    });
+
+    it('con plazo → vence al final de ese día en Bogotá (23:59:59.999)', async () => {
+      seedSupplier(1, 42);
+      seedProduct(10, 42);
+
+      const result = await action.execute(
+        { supplier_id: 1, lines: [line], payment_due_date: '2099-12-31' },
+        42,
+        { id: 1, fullName: 'O' },
+      );
+
+      const purchaseCreate = createdEntities.find((c) => c.entity === 'Purchase');
+      const due = purchaseCreate?.input.payment_due_at as Date;
+      expect(due.toISOString()).toBe('2100-01-01T04:59:59.999Z');
+      expect(result.purchase.payment_due_at?.toISOString()).toBe('2100-01-01T04:59:59.999Z');
+    });
+
+    it('rechaza un plazo en el pasado con 422 SIN abrir transacción', async () => {
+      seedSupplier(1, 42);
+      seedProduct(10, 42);
+
+      await expect(
+        action.execute({ supplier_id: 1, lines: [line], payment_due_date: '2000-01-01' }, 42, {
+          id: 1,
+          fullName: 'O',
+        }),
+      ).rejects.toThrow('El plazo de pago no puede ser una fecha anterior a hoy');
+      expect(transactionSpy).not.toHaveBeenCalled();
+      expect(createdEntities).toHaveLength(0);
+    });
+
+    it('rechaza una fecha imposible con 422', async () => {
+      seedSupplier(1, 42);
+      seedProduct(10, 42);
+
+      await expect(
+        action.execute({ supplier_id: 1, lines: [line], payment_due_date: '2099-02-30' }, 42, {
+          id: 1,
+          fullName: 'O',
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(transactionSpy).not.toHaveBeenCalled();
+    });
+  });
 });

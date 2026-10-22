@@ -46,3 +46,17 @@ export class DashboardTopProductsQueryDto {
   @Max(100)
   limit?: number;
 }
+
+/**
+ * Query del endpoint `GET /dashboard/payables`. `limit` acota solo las filas;
+ * los totales siempre cubren todas las compras por pagar.
+ */
+export class DashboardPayablesQueryDto {
+  @ApiPropertyOptional({ example: 10, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}

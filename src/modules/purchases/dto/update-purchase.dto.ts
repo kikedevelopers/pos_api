@@ -11,6 +11,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   ValidateIf,
@@ -59,6 +60,18 @@ export class UpdatePurchaseDto {
   @IsString()
   @MaxLength(64)
   invoice_number?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-11-06',
+    nullable: true,
+    description:
+      'Plazo de pago (YYYY-MM-DD, vence al final del día en Bogotá). OMITIRLO conserva el actual; null lo quita. No puede ser anterior a hoy.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsString({ message: 'payment_due_date debe ser texto' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'payment_due_date debe tener formato YYYY-MM-DD' })
+  payment_due_date?: string | null;
 
   @ApiPropertyOptional({
     type: [CreatePurchaseLineDto],

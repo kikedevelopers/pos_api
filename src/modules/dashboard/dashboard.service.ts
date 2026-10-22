@@ -8,6 +8,7 @@ import {
   GetExpenseImpactAction,
   type ExpenseImpactResult,
 } from './actions/get-expense-impact.action';
+import { GetPayablesAction, type PayablesResult } from './actions/get-payables.action';
 import { GetPerformanceAction, type PerformanceResult } from './actions/get-performance.action';
 import {
   GetBranchesSummaryAction,
@@ -24,6 +25,7 @@ export type {
   BranchesSummaryResult,
   BreakEvenProgressResult,
   ExpenseImpactResult,
+  PayablesResult,
   PerformanceResult,
   TodayByCashierResult,
   TodayResult,
@@ -44,6 +46,7 @@ export class DashboardService {
     private readonly getBreakEvenProgress: GetBreakEvenProgressAction,
     private readonly getTodayByCashier: GetTodayByCashierAction,
     private readonly getBranchesSummary: GetBranchesSummaryAction,
+    private readonly getPayables: GetPayablesAction,
   ) {}
 
   performance(companyId: number, from?: string, to?: string): Promise<PerformanceResult> {
@@ -76,5 +79,10 @@ export class DashboardService {
    */
   branchesSummary(userId: number, date?: string): Promise<BranchesSummaryResult> {
     return this.getBranchesSummary.execute(userId, date);
+  }
+
+  /** Compras por pagar, de la que vence primero a la última. */
+  payables(companyId: number, limit?: number): Promise<PayablesResult> {
+    return this.getPayables.execute(companyId, limit);
   }
 }

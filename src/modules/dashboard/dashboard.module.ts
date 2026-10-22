@@ -7,6 +7,7 @@ import { Company } from '@/modules/companies/entities/company.entity';
 import { GetBranchesSummaryAction } from './actions/get-branches-summary.action';
 import { GetBreakEvenProgressAction } from './actions/get-break-even-progress.action';
 import { GetExpenseImpactAction } from './actions/get-expense-impact.action';
+import { GetPayablesAction } from './actions/get-payables.action';
 import { GetPerformanceAction } from './actions/get-performance.action';
 import { GetTodayAction } from './actions/get-today.action';
 import { GetTodayByCashierAction } from './actions/get-today-by-cashier.action';
@@ -36,6 +37,7 @@ import { DashboardService } from './dashboard.service';
     GetBreakEvenProgressAction,
     GetTodayByCashierAction,
     GetBranchesSummaryAction,
+    GetPayablesAction,
   ],
   exports: [DashboardService],
 })

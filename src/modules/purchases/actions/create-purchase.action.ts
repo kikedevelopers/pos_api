@@ -27,6 +27,7 @@ import {
   findPurchaseLines,
   findPurchasePayments,
 } from '../internal/purchase-lookups';
+import { resolvePaymentDueAt } from '../internal/payment-due';
 import { nextPurchaseNumber } from '../internal/purchase-number';
 import type { PurchaseAggregate } from './find-purchase.action';
 
@@ -123,6 +124,10 @@ export class CreatePurchaseAction {
         'Debe seleccionarse un transportista para registrar costo de flete',
       );
     }
+
+    // Plazo de pago: se valida ANTES de abrir la transacción (fecha pasada o
+    // inválida → 422) y se fija al final del día elegido en Bogotá.
+    const paymentDueAt = resolvePaymentDueAt(dto.payment_due_date);
 
     const operationId = dto.client_operation_id?.trim() || null;
 
@@ -322,6 +327,7 @@ export class CreatePurchaseAction {
           total_kilos: totalKilosRounded,
           invoice_date: invoiceDate,
           invoice_number: invoiceNumber,
+          payment_due_at: paymentDueAt,
           client_operation_id: operationId,
           received_by: null,
           received_at: null,
