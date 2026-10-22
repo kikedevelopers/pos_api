@@ -91,6 +91,15 @@ export enum PurchaseStatus {
 )
 @Check('chk_purchases_transport_cost_non_negative', 'transport_cost >= 0')
 @Check('chk_purchases_total_kilos_non_negative', 'total_kilos IS NULL OR total_kilos >= 0')
+// Plazo de pago: vence al final de un día >= el de la creación (nunca antes).
+@Check(
+  'chk_purchases_payment_due_after_creation',
+  'payment_due_at IS NULL OR payment_due_at >= created_at',
+)
+// Consultas futuras de "compras por vencer / vencidas" por company.
+@Index('idx_purchases_company_payment_due', ['company_id', 'payment_due_at'], {
+  where: '"payment_due_at" IS NOT NULL',
+})
 @Check(
   'chk_purchases_carrier_required_when_transport',
   `transport_cost = 0 OR carrier_id IS NOT NULL`,
@@ -244,6 +253,15 @@ export class Purchase {
    */
   @Column({ type: 'varchar', length: 64, nullable: true })
   invoice_number!: string | null;
+
+  /**
+   * Plazo de pago de la compra: instante en que vence el pago al proveedor.
+   * Siempre es el FINAL del día elegido en Bogotá (23:59:59.999), así que una
+   * compra "vence el 6 de nov" sigue al día durante todo ese día. NULL = sin
+   * plazo. Lo calcula `resolvePaymentDueAt` — el cliente solo manda el día.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  payment_due_at!: Date | null;
 
   /**
    * UUID v4 generado por el cliente para deduplicar la creación de la compra.

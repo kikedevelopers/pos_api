@@ -23,6 +23,7 @@ import { FindPurchasesBySupplierAction } from './actions/find-purchases-by-suppl
 import { MarkPurchaseReceivedAction } from './actions/mark-purchase-received.action';
 import { ProcessBulkPurchasePaymentsAction } from './actions/process-bulk-purchase-payments.action';
 import { RegisterPurchasePaymentAction } from './actions/register-purchase-payment.action';
+import { UpdatePurchasePaymentDueAction } from './actions/update-purchase-payment-due.action';
 import { UpdatePurchaseAction } from './actions/update-purchase.action';
 import { PurchaseCredit } from './entities/purchase-credit.entity';
 import { PurchaseLine } from './entities/purchase-line.entity';
@@ -83,6 +84,7 @@ import { PurchasesService } from './purchases.service';
     ArchivePurchaseAction,
     RegisterPurchasePaymentAction,
     ProcessBulkPurchasePaymentsAction,
+    UpdatePurchasePaymentDueAction,
   ],
   exports: [PurchasesService, TypeOrmModule],
 })

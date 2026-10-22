@@ -203,6 +203,14 @@ export class PurchaseResponseDto {
   })
   invoice_number!: string | null;
 
+  @ApiPropertyOptional({
+    example: '2026-11-07T04:59:59.999Z',
+    nullable: true,
+    description:
+      'Plazo de pago: instante en que vence (final del día elegido en Bogotá). NULL = sin plazo.',
+  })
+  payment_due_at!: string | null;
+
   @ApiPropertyOptional({ example: 'Juan Pérez', nullable: true })
   received_by!: string | null;
 
@@ -403,6 +411,9 @@ export function toPurchaseResponseDto(
         : String(purchase.invoice_date)
       : null,
     invoice_number: purchase.invoice_number,
+    payment_due_at: purchase.payment_due_at
+      ? new Date(purchase.payment_due_at).toISOString()
+      : null,
     received_by: purchase.received_by,
     received_at: purchase.received_at ? purchase.received_at.toISOString() : null,
     created_by: purchase.created_by,

@@ -10,6 +10,7 @@ import {
   IsPositive,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   ValidateIf,
@@ -230,6 +231,18 @@ export class CreatePurchaseDto {
   @IsString()
   @MaxLength(64)
   invoice_number?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-11-06',
+    nullable: true,
+    description:
+      'Plazo de pago: día (YYYY-MM-DD, calendario de Colombia) en que vence el pago de la compra. Vence al FINAL de ese día (23:59:59 Bogotá). No puede ser anterior a hoy. NULL/ausente = sin plazo.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsString({ message: 'payment_due_date debe ser texto' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'payment_due_date debe tener formato YYYY-MM-DD' })
+  payment_due_date?: string | null;
 
   @ApiPropertyOptional({
     example: '550e8400-e29b-41d4-a716-446655440000',

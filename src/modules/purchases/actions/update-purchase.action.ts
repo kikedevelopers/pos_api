@@ -44,6 +44,7 @@ import { PurchaseCredit, PurchaseCreditStatus } from '../entities/purchase-credi
 import { PurchaseLine } from '../entities/purchase-line.entity';
 import { Purchase, PurchaseStatus } from '../entities/purchase.entity';
 import { translatePurchaseConstraintError } from '../internal/constraint-errors';
+import { resolvePaymentDueAt } from '../internal/payment-due';
 import {
   findPurchaseCarrier,
   findPurchaseCarrierCredit,
@@ -171,6 +172,12 @@ export class UpdatePurchaseAction {
       throw new BadRequestException('La fecha de factura es obligatoria');
     }
     const invoiceNumber = dto.invoice_number?.trim() ? dto.invoice_number.trim() : null;
+    // Plazo de pago: omitido = se conserva; null = se quita; día = vence al
+    // final de ese día (Bogotá). Un día anterior a hoy → 422 antes de la DB.
+    const paymentDuePatch =
+      dto.payment_due_date === undefined
+        ? {}
+        : { payment_due_at: resolvePaymentDueAt(dto.payment_due_date) };
 
     // 1.b Normalización temprana de los flags de carrier/transport — la
     //     validación cruzada `transport_cost > 0 ⇒ carrier_id` se hace antes
@@ -270,6 +277,7 @@ export class UpdatePurchaseAction {
             total_kilos: newTotalKilosRounded,
             ...(invoiceDate ? { invoice_date: invoiceDate } : {}),
             ...(dto.invoice_number !== undefined ? { invoice_number: invoiceNumber } : {}),
+            ...paymentDuePatch,
           },
         );
       } catch (error) {
@@ -523,6 +531,7 @@ export class UpdatePurchaseAction {
           carrier_name: newCarrierName,
           transport_cost: newTransportCostRounded,
           total_kilos: newTotalKilosRounded,
+          ...paymentDuePatch,
         },
       );
     } catch (error) {

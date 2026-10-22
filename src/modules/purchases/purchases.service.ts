@@ -18,12 +18,14 @@ import {
   type PurchasePaymentActor,
   type RegisterPurchasePaymentResult,
 } from './actions/register-purchase-payment.action';
+import { UpdatePurchasePaymentDueAction } from './actions/update-purchase-payment-due.action';
 import { UpdatePurchaseAction, type UpdatePurchaseActor } from './actions/update-purchase.action';
 import type { ArchivePurchaseDto } from './dto/archive-purchase.dto';
 import type { BulkPurchasePaymentsDto } from './dto/bulk-purchase-payments.dto';
 import type { CreatePurchasePaymentDto } from './dto/create-purchase-payment.dto';
 import type { CreatePurchaseDto } from './dto/create-purchase.dto';
 import type { ReceivePurchaseDto } from './dto/receive-purchase.dto';
+import type { UpdatePurchasePaymentDueDto } from './dto/update-purchase-payment-due.dto';
 import type { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import type { Purchase } from './entities/purchase.entity';
 
@@ -56,6 +58,7 @@ export class PurchasesService {
     private readonly archivePurchaseAction: ArchivePurchaseAction,
     private readonly registerPurchasePaymentAction: RegisterPurchasePaymentAction,
     private readonly processBulkPurchasePaymentsAction: ProcessBulkPurchasePaymentsAction,
+    private readonly updatePurchasePaymentDueAction: UpdatePurchasePaymentDueAction,
   ) {}
 
   findAll(companyId: number, showAll = false): Promise<PurchaseListItem[]> {
@@ -85,6 +88,14 @@ export class PurchasesService {
     actor: UpdatePurchaseActor,
   ): Promise<PurchaseAggregate> {
     return this.updatePurchaseAction.execute(id, dto, companyId, actor);
+  }
+
+  updatePaymentDue(
+    id: number,
+    dto: UpdatePurchasePaymentDueDto,
+    companyId: number,
+  ): Promise<PurchaseAggregate> {
+    return this.updatePurchasePaymentDueAction.execute(id, dto, companyId);
   }
 
   markReceived(

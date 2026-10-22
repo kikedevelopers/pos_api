@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -39,6 +40,7 @@ import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { ListPurchasesQueryDto } from './dto/list-purchases-query.dto';
 import { PurchaseResponseDto, toPurchaseResponseDto } from './dto/purchase-response.dto';
 import { ReceivePurchaseDto } from './dto/receive-purchase.dto';
+import { UpdatePurchasePaymentDueDto } from './dto/update-purchase-payment-due.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { PurchasesService } from './purchases.service';
 
@@ -235,6 +237,43 @@ export class PurchasesController {
       type: currentUser.type ?? null,
     });
     return { archived: true };
+  }
+
+  // --------------------------------------------------------------------------
+  // PATCH /purchases/:id/payment-due
+  // --------------------------------------------------------------------------
+
+  @Patch(':id/payment-due')
+  @HttpCode(HttpStatus.OK)
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary: 'Cambiar o quitar el plazo de pago de una compra.',
+    description:
+      'Solo actualiza payment_due_at (final del día elegido en Bogotá). No toca líneas, totales, inventario ni deuda. null quita el plazo.',
+  })
+  @ApiParam({ name: 'id', type: 'integer' })
+  @ApiBody({ type: UpdatePurchasePaymentDueDto })
+  @ApiResponse({ status: HttpStatus.OK, type: PurchaseResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Compra no encontrada o anulada' })
+  @ApiResponse({
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    description: 'Día anterior a hoy, fecha inválida o compra ya pagada.',
+  })
+  async updatePaymentDue(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchasePaymentDueDto,
+    @CurrentCompany() companyId: number,
+  ): Promise<PurchaseResponseDto> {
+    const { purchase, lines, credit, payments, carrier, carrierCredit } =
+      await this.purchasesService.updatePaymentDue(id, dto, companyId);
+    return toPurchaseResponseDto(
+      purchase,
+      lines,
+      credit,
+      payments,
+      carrier ?? null,
+      carrierCredit ?? null,
+    );
   }
 
   // --------------------------------------------------------------------------
