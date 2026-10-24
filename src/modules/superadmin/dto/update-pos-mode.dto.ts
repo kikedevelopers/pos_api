@@ -13,7 +13,8 @@ export class UpdatePosModeDto {
   @ApiProperty({
     enum: POS_MODES,
     example: 'restaurant',
-    description: 'Modo del POS del negocio: retail (POS de siempre) | restaurant (mesas/salones).',
+    description:
+      'Tipo de negocio: retail (POS de siempre) | restaurant (mesas/salones) | lender (prestamistas, sin POS).',
   })
   @IsIn(POS_MODES, { message: `pos_mode debe ser uno de: ${POS_MODES.join(', ')}` })
   pos_mode!: PosMode;

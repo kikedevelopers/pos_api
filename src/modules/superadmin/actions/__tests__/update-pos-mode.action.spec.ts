@@ -73,6 +73,24 @@ describe('UpdatePosModeAction', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: '8', pos_mode: 'retail' }));
   });
 
+  it('pasa el negocio a prestamista (lender)', async () => {
+    const { action, save } = build({ company: { ...PRINCIPAL } });
+
+    const result = await action.execute(8, { pos_mode: 'lender' });
+
+    expect(result).toEqual({ pos_mode: 'lender' });
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: '8', pos_mode: 'lender' }));
+  });
+
+  it('un prestamista puede volver a retail', async () => {
+    const { action, save } = build({ company: { ...PRINCIPAL, pos_mode: 'lender' } });
+
+    const result = await action.execute(8, { pos_mode: 'retail' });
+
+    expect(result).toEqual({ pos_mode: 'retail' });
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: '8', pos_mode: 'retail' }));
+  });
+
   it('una SUCURSAL también puede tener su propio modo', async () => {
     const { action, save } = build({ company: { ...SUCURSAL } });
 

@@ -8,11 +8,11 @@ import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { Company } from '@/modules/companies/entities/company.entity';
 
 /**
- * Inverso de `RestaurantModeGuard`: exige que la company opere en modo RETAIL
- * (`pos_mode = 'retail'`). Protege los flujos exclusivos de retail —p. ej.
- * "Compartir pedido para alistar"— que no aplican en restaurante (donde el
- * alistado se maneja por Comandas). En modo restaurante responde 403 para
- * cualquier usuario, no solo se oculta en la UI.
+ * Exige que la company opere en modo RETAIL (`pos_mode = 'retail'`). Protege
+ * los flujos exclusivos de retail —p. ej. "Compartir pedido para alistar"—: en
+ * restaurante el alistado se maneja por Comandas y un prestamista no tiene
+ * punto de venta. Fuera de retail responde 403 para cualquier usuario, no solo
+ * se oculta en la UI.
  *
  * Un `pos_mode` desconocido se normaliza a 'retail' (→ PASA): retail es el modo
  * por defecto, así que ante la duda el flujo retail queda disponible.
@@ -36,10 +36,14 @@ export class RetailModeGuard implements CanActivate {
       .getRepository(Company)
       .findOne({ where: { id: String(user.company_id) }, select: { id: true, pos_mode: true } });
 
-    if (company && resolvePosMode(company.pos_mode) === 'restaurant') {
+    const mode = company ? resolvePosMode(company.pos_mode) : 'retail';
+    if (mode === 'restaurant') {
       throw new ForbiddenException(
         'Compartir un pedido no está disponible en el modo restaurante (usa Comandas).',
       );
+    }
+    if (mode === 'lender') {
+      throw new ForbiddenException('Compartir un pedido no está disponible para prestamistas.');
     }
 
     return true;
