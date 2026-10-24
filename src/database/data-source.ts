@@ -24,7 +24,12 @@ export const dataSourceOptions: DataSourceOptions = {
   logging: process.env.DB_LOGGING === 'true',
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
   entities: [join(__dirname, '..', '**', '*.entity.{ts,js}')],
-  migrations: [join(__dirname, 'migrations', '*.{ts,js}')],
+  // Las migraciones de préstamos viven con su contexto (src/lending) para poder
+  // extraerlo como API aparte; TypeORM las ordena todas por timestamp.
+  migrations: [
+    join(__dirname, 'migrations', '*.{ts,js}'),
+    join(__dirname, '..', 'lending', 'database', 'migrations', '*.{ts,js}'),
+  ],
   migrationsTableName: 'migrations',
   migrationsRun: false,
   // 'each' permite que cada migración decida si corre en transacción.
