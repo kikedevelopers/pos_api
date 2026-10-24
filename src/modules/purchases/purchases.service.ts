@@ -6,6 +6,10 @@ import {
 } from './actions/archive-purchase.action';
 import { CreatePurchaseAction, type PurchaseCreator } from './actions/create-purchase.action';
 import { FindAllPurchasesAction, type PurchaseListItem } from './actions/find-all-purchases.action';
+import {
+  FindLastPurchaseCostsAction,
+  type LastPurchaseCost,
+} from './actions/find-last-purchase-costs.action';
 import { FindPurchaseAction, type PurchaseAggregate } from './actions/find-purchase.action';
 import { FindPurchasesBySupplierAction } from './actions/find-purchases-by-supplier.action';
 import { MarkPurchaseReceivedAction } from './actions/mark-purchase-received.action';
@@ -52,6 +56,7 @@ export class PurchasesService {
     private readonly findAllPurchasesAction: FindAllPurchasesAction,
     private readonly findPurchaseAction: FindPurchaseAction,
     private readonly findPurchasesBySupplierAction: FindPurchasesBySupplierAction,
+    private readonly findLastPurchaseCostsAction: FindLastPurchaseCostsAction,
     private readonly createPurchaseAction: CreatePurchaseAction,
     private readonly updatePurchaseAction: UpdatePurchaseAction,
     private readonly markPurchaseReceivedAction: MarkPurchaseReceivedAction,
@@ -71,6 +76,10 @@ export class PurchasesService {
 
   findBySupplier(supplierId: number, companyId: number): Promise<Purchase[]> {
     return this.findPurchasesBySupplierAction.execute(supplierId, companyId);
+  }
+
+  findLastCosts(companyId: number): Promise<LastPurchaseCost[]> {
+    return this.findLastPurchaseCostsAction.execute(companyId);
   }
 
   create(

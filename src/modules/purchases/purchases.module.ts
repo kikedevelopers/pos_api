@@ -18,6 +18,7 @@ import { WalletsModule } from '@/modules/wallets/wallets.module';
 import { ArchivePurchaseAction } from './actions/archive-purchase.action';
 import { CreatePurchaseAction } from './actions/create-purchase.action';
 import { FindAllPurchasesAction } from './actions/find-all-purchases.action';
+import { FindLastPurchaseCostsAction } from './actions/find-last-purchase-costs.action';
 import { FindPurchaseAction } from './actions/find-purchase.action';
 import { FindPurchasesBySupplierAction } from './actions/find-purchases-by-supplier.action';
 import { MarkPurchaseReceivedAction } from './actions/mark-purchase-received.action';
@@ -78,6 +79,7 @@ import { PurchasesService } from './purchases.service';
     FindAllPurchasesAction,
     FindPurchaseAction,
     FindPurchasesBySupplierAction,
+    FindLastPurchaseCostsAction,
     CreatePurchaseAction,
     UpdatePurchaseAction,
     MarkPurchaseReceivedAction,

@@ -29,6 +29,7 @@ import { RequirePermission } from '@/common/decorators/require-permission.decora
 import { Roles } from '@/common/decorators/roles.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import type { LastPurchaseCost } from './actions/find-last-purchase-costs.action';
 import { ArchivePurchaseDto } from './dto/archive-purchase.dto';
 import { BulkPurchasePaymentsDto } from './dto/bulk-purchase-payments.dto';
 import {
@@ -106,6 +107,21 @@ export class PurchasesController {
   ): Promise<PurchaseResponseDto[]> {
     const purchases = await this.purchasesService.findBySupplier(supplierId, companyId);
     return purchases.map((p) => toPurchaseResponseDto(p, [], null, []));
+  }
+
+  // --------------------------------------------------------------------------
+  // GET /purchases/last-costs  (antes de `:id` para que no lo capture)
+  // --------------------------------------------------------------------------
+
+  @Get('last-costs')
+  @Roles('owner', 'manager', 'employee')
+  @ApiOperation({
+    summary:
+      'Último costo BRUTO de compra por producto (antes de flete, sin IVA). Sugerencia del configurador de compras.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  async findLastCosts(@CurrentCompany() companyId: number): Promise<LastPurchaseCost[]> {
+    return this.purchasesService.findLastCosts(companyId);
   }
 
   // --------------------------------------------------------------------------
