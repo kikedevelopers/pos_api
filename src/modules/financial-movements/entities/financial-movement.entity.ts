@@ -74,6 +74,12 @@ export enum MovementConcept {
    * Añadido por la migración `1747012660000-add-branch-transfer-movement-concept`.
    */
   BRANCH_TRANSFER = 'BRANCH_TRANSFER',
+  /**
+   * Desembolso de un préstamo (modo prestamista): egreso del dinero prestado.
+   * NO es un gasto. Añadido por la migración
+   * `1747012970000-add-loan-disbursement-concepts`.
+   */
+  LOAN_DISBURSEMENT = 'LOAN_DISBURSEMENT',
 }
 
 /**

@@ -42,6 +42,8 @@ import { CreditsModule } from './modules/credits/credits.module';
 import { CustomerCategoriesModule } from './modules/customer-categories/customer-categories.module';
 import { ComandasModule } from './modules/comandas/comandas.module';
 import { SalonsModule } from './modules/salons/salons.module';
+import { LoanPlansModule } from './modules/loan-plans/loan-plans.module';
+import { LoansModule } from './modules/loans/loans.module';
 import { RestaurantTablesModule } from './modules/restaurant-tables/restaurant-tables.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
@@ -226,6 +228,8 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     CustomersModule,
     CustomerCategoriesModule,
     SalonsModule,
+    LoanPlansModule,
+    LoansModule,
     ComandasModule,
     RestaurantTablesModule,
     SuppliersModule,
