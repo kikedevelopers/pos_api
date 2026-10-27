@@ -1,15 +1,17 @@
 /**
- * Modo del Punto de Venta de un negocio.
+ * Tipo de negocio (modo de operación) de una company. El nombre `pos_mode` es
+ * histórico: nació eligiendo la ventana de POS, pero hoy decide la app entera.
  *
  *   - `retail`: el POS de siempre (búsqueda de productos + carrito). Default.
  *   - `restaurant`: POS dedicado a restaurantes y bares (mesas / salones).
+ *   - `lender`: prestamistas. Sin punto de venta: la app se reduce a Inicio,
+ *     Clientes, Tesorería y la cartera de dinero prestado.
  *
  * Se elige por negocio desde el panel superadmin (kdevs-admin) y viaja en el
- * perfil del login: el cliente Electron lo usa para decidir QUÉ ventana de POS
- * abre. No cambia reglas de negocio del backend — es solo el selector de la
- * experiencia de venta.
+ * perfil del login: el cliente Electron decide con él qué ventanas, rutas y
+ * opciones del dashboard ofrece.
  */
-export const POS_MODES = ['retail', 'restaurant'] as const;
+export const POS_MODES = ['retail', 'restaurant', 'lender'] as const;
 
 export type PosMode = (typeof POS_MODES)[number];
 

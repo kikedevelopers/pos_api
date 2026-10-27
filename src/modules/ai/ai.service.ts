@@ -5,6 +5,11 @@ import { Repository } from 'typeorm';
 import { Company } from '@/modules/companies/entities/company.entity';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import {
+  AiAttachmentsAction,
+  type AiAttachmentView,
+  type UploadedAttachmentFile,
+} from './actions/ai-attachments.action';
 import { AiCreditsAction, type CreditReservation } from './actions/ai-credits.action';
 import { GenerateAiGreetingAction, type AiGreeting } from './actions/generate-ai-greeting.action';
 import { ResolveAiActorAction } from './actions/resolve-ai-actor.action';
@@ -48,6 +53,7 @@ export class AiService {
     private readonly resolveActor: ResolveAiActorAction,
     private readonly geminiClient: GeminiClient,
     private readonly credits: AiCreditsAction,
+    private readonly attachments: AiAttachmentsAction,
     @InjectRepository(Company)
     private readonly companiesRepo: Repository<Company>,
   ) {}
@@ -129,6 +135,19 @@ export class AiService {
     // Sin preguntas disponibles hoy, el saludo es el fijo: no se gasta un token.
     const credits = await this.credits.status(companyId);
     return this.generateGreeting.execute(user, companyId, Date.now(), credits.remaining > 0);
+  }
+
+  /**
+   * Sube una foto o un PDF para el chat. Exige que Place esté habilitado, pero
+   * no gasta consultas: el crédito se cobra al preguntar.
+   */
+  async uploadAttachment(
+    user: AuthUser,
+    companyId: number,
+    file: UploadedAttachmentFile | undefined,
+  ): Promise<AiAttachmentView> {
+    await this.assertAvailableFor(companyId);
+    return this.attachments.upload({ company_id: companyId, user_id: user.user_id, file });
   }
 
   async chat(params: StreamAiChatParams): Promise<void> {

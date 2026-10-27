@@ -44,6 +44,12 @@ export enum CashRegisterLogType {
    * `1747011800000-add-sale-payment-reversal`.
    */
   PAYMENT_REVERSAL = 'PAYMENT_REVERSAL',
+  /**
+   * Desembolso de un préstamo (modo prestamista): egreso del dinero prestado.
+   * NO es un gasto. Añadido por la migración
+   * `1747012970000-add-loan-disbursement-concepts`.
+   */
+  LOAN_DISBURSEMENT = 'LOAN_DISBURSEMENT',
 }
 
 /**

@@ -15,7 +15,8 @@ import type { GeminiFunctionDeclaration } from './gemini.types';
  * pedidos (`prepare_sale`, `confirm_sale`), que exigen además ser
  * administrador (`requires_administrator`), y las de tesorería
  * (`prepare_treasury_transfer`, `prepare_balance_correction`,
- * `confirm_treasury_action`), solo del dueño (`requires_owner`). Ninguna
+ * `confirm_treasury_action`), solo del dueño (`requires_owner`), y las de
+ * compras (`prepare_purchase`, `confirm_purchase`), del administrador. Ninguna
  * escribe sin la confirmación explícita del usuario en un mensaje posterior.
  *
  * Cada herramienta declara el permiso del catálogo que exige. Si el actor no lo
@@ -45,6 +46,9 @@ export const AI_TOOL_NAMES = [
   'prepare_treasury_transfer',
   'prepare_balance_correction',
   'confirm_treasury_action',
+  'match_document_products',
+  'prepare_purchase',
+  'confirm_purchase',
 ] as const;
 
 export type AiToolName = (typeof AI_TOOL_NAMES)[number];
@@ -594,6 +598,152 @@ export const AI_TOOLS: readonly AiToolDefinition[] = [
       name: 'confirm_treasury_action',
       description:
         'EJECUTA el movimiento o corrección preparado antes, SOLO si el último mensaje del usuario es un "sí" a ese resumen.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    name: 'match_document_products',
+    label: 'Cruce con inventario',
+    summary:
+      'Cruza los productos de una factura o lista adjunta con tu inventario: existencias, costo y precio.',
+    permission: 'canAccessInventory',
+    exposesProfit: true,
+    declaration: {
+      name: 'match_document_products',
+      description:
+        'Cruza en UNA llamada TODOS los ítems de un documento adjunto (factura, remisión, lista, cotización) con el inventario: dice cuáles existen ("found"), cuáles se PARECEN a uno del inventario ("possible_match", hay que preguntarle al usuario si es el mismo) y cuáles no existen ("not_found"), con existencias, empaque, costo y precio. Úsala para "qué stock tengo de lo de esta factura" o "cuáles de estos productos tengo" en vez de search_products uno por uno. NO crea nada.',
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            description: 'Los ítems del documento (máximo 60).',
+            items: {
+              type: 'object',
+              properties: {
+                description: {
+                  type: 'string',
+                  description:
+                    'Descripción del producto TAL CUAL la imprime el documento, sin la cantidad.',
+                },
+                code: {
+                  type: 'string',
+                  description:
+                    'Código, referencia o código de barras del ítem si el documento lo trae.',
+                },
+                alternatives: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'Hasta 4 nombres genéricos o sin abreviar del mismo producto ("ACE GIRAS 1LT" → "aceite de girasol 1 litro"). Muy recomendado: las facturas abrevian.',
+                },
+              },
+              required: ['description'],
+            },
+          },
+        },
+        required: ['items'],
+      },
+    },
+  },
+  {
+    name: 'prepare_purchase',
+    label: 'Preparando compra',
+    summary:
+      'Registra una compra a proveedor a partir de una factura (foto o PDF), con tu confirmación.',
+    permission: 'canAccessPurchase',
+    exposesProfit: false,
+    requires_administrator: true,
+    declaration: {
+      name: 'prepare_purchase',
+      description:
+        'PREPARA (no crea) una compra a proveedor a partir de una factura adjunta. Verifica el proveedor y que cada producto exista en el inventario: lo parecido lo devuelve como "possible_match" para que le preguntes al usuario si es el mismo, y lo que no existe lo excluye. Si todo cuadra devuelve "confirmation_required" y el usuario ve la vista previa. Manda en UNA llamada el proveedor y TODAS las líneas.',
+      parameters: {
+        type: 'object',
+        properties: {
+          supplier: {
+            type: 'string',
+            description:
+              'Proveedor tal como aparece en la factura (o el nombre exacto que eligió el usuario).',
+          },
+          supplier_document: {
+            type: 'string',
+            description: 'NIT o documento del proveedor si la factura lo trae.',
+          },
+          invoice_number: { type: 'string', description: 'Número de la factura del proveedor.' },
+          invoice_date: dateParam('Fecha de la factura.'),
+          document_total: {
+            type: 'number',
+            description: 'Total a pagar que imprime la factura (para verificar la lectura).',
+          },
+          lines: {
+            type: 'array',
+            description: 'TODAS las líneas de la factura (máximo 60).',
+            items: {
+              type: 'object',
+              properties: {
+                description: {
+                  type: 'string',
+                  description:
+                    'Descripción del producto TAL CUAL la imprime el documento, sin la cantidad.',
+                },
+                code: {
+                  type: 'string',
+                  description:
+                    'Código, referencia o código de barras del ítem si el documento lo trae.',
+                },
+                alternatives: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'Hasta 4 nombres genéricos o sin abreviar del mismo producto ("ACE GIRAS 1LT" → "aceite de girasol 1 litro"). Muy recomendado: las facturas abrevian.',
+                },
+                quantity: {
+                  type: 'number',
+                  description:
+                    'Cantidad facturada, en la MISMA unidad del producto del inventario (su empaque, ej. cajas). Número limpio.',
+                },
+                unit_cost: {
+                  type: 'number',
+                  description:
+                    'Costo por esa unidad SIN IVA, como número sin separadores (ej. 36000). Si la factura solo trae el valor con IVA, descuéntalo.',
+                },
+                iva_rate: {
+                  type: 'number',
+                  description:
+                    'Porcentaje de IVA de la línea (0, 5 o 19). Omítelo si la factura no lo discrimina.',
+                },
+                product: {
+                  type: 'string',
+                  description:
+                    'Solo después de que el usuario confirme una posible coincidencia: el NOMBRE EXACTO del producto del inventario que eligió.',
+                },
+                skip: {
+                  type: 'boolean',
+                  description:
+                    'true si el usuario dijo que este ítem NO es ninguno de su inventario: se excluye de la compra.',
+                },
+              },
+              required: ['description', 'quantity', 'unit_cost'],
+            },
+          },
+        },
+        required: ['supplier', 'lines'],
+      },
+    },
+  },
+  {
+    name: 'confirm_purchase',
+    label: 'Creando compra',
+    summary: 'Crea la compra que acabas de confirmar.',
+    permission: 'canAccessPurchase',
+    exposesProfit: false,
+    requires_administrator: true,
+    is_listed: false,
+    declaration: {
+      name: 'confirm_purchase',
+      description:
+        'CREA la compra preparada antes con prepare_purchase, SOLO si el último mensaje del usuario es un "sí" a esa vista previa. Sin argumentos.',
       parameters: { type: 'object', properties: {} },
     },
   },

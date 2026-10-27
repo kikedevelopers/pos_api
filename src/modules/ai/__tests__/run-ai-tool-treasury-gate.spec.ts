@@ -49,6 +49,7 @@ describe('RunAiToolAction · gate de las herramientas de tesorería', () => {
       {} as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
       treasuryTools as unknown as RunAiTreasuryToolAction,
+      {} as never,
     );
     return { action, treasuryTools, query };
   };

@@ -8,6 +8,11 @@ import type { AiConfig } from '@/config/ai.config';
 import { todayUtcDate } from '@/modules/reports/internal/range';
 
 import { addUsage, EMPTY_USAGE } from '../internal/ai-usage';
+import {
+  buildAttachmentPartsResolver,
+  collectAttachmentIds,
+  normalizeAttachmentTurns,
+} from '../internal/attachments';
 import { extractRequestContext } from '../internal/expense-tool-helpers';
 import { GeminiClient } from '../internal/gemini-client';
 import { buildGeminiRequest, hasSendableContent } from '../internal/gemini-request';
@@ -17,6 +22,7 @@ import { buildSystemPrompt } from '../internal/system-prompt';
 import { AI_TOOLS, declarationsFor, isToolAllowed } from '../internal/tool-catalog';
 import type { AiToolCard } from '../internal/tool-cards';
 
+import { AiAttachmentsAction } from './ai-attachments.action';
 import { AiCreditsAction } from './ai-credits.action';
 import { ResolveAiActorAction } from './resolve-ai-actor.action';
 import { RunAiToolAction } from './run-ai-tool.action';
@@ -76,6 +82,7 @@ export class StreamAiChatAction {
     private readonly resolveActor: ResolveAiActorAction,
     private readonly runTool: RunAiToolAction,
     private readonly credits: AiCreditsAction,
+    private readonly attachments: AiAttachmentsAction,
   ) {}
 
   async execute(params: StreamAiChatParams): Promise<void> {
@@ -103,7 +110,7 @@ export class StreamAiChatAction {
   }
 
   private async run(
-    { user, companyId, turns, model, emit, signal }: StreamAiChatParams,
+    { user, companyId, turns: raw_turns, model, emit, signal }: StreamAiChatParams,
     tracker: UsageTracker,
   ): Promise<void> {
     const config = this.configService.getOrThrow<AiConfig>('ai');
@@ -116,7 +123,17 @@ export class StreamAiChatAction {
       return;
     }
 
-    const actor = await this.resolveActor.execute(user, companyId);
+    // Un mensaje con solo archivos se vuelve "(Adjunté un archivo)": el
+    // historial y las confirmaciones trabajan con texto.
+    const turns = normalizeAttachmentTurns(raw_turns);
+    const attachment_ids = collectAttachmentIds(turns);
+
+    const [actor, resolved_attachments] = await Promise.all([
+      this.resolveActor.execute(user, companyId),
+      // Solo los del MISMO usuario y company y vigentes: el id ajeno o vencido
+      // se le presenta al modelo como "ya no disponible".
+      this.attachments.resolve(companyId, user.user_id, attachment_ids.all),
+    ]);
     const resolvedModel = this.geminiClient.resolveModel(model);
 
     const availableTools = AI_TOOLS.filter((tool) => isToolAllowed(tool, actor)).map((tool) => ({
@@ -141,6 +158,7 @@ export class StreamAiChatAction {
       temperature: config.temperature,
       maxOutputTokens: config.maxOutputTokens,
       tools: declarationsFor(actor),
+      attachmentParts: buildAttachmentPartsResolver(resolved_attachments, attachment_ids.included),
     });
 
     if (!hasSendableContent(body)) {

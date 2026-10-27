@@ -32,6 +32,11 @@ describe('RestaurantModeGuard', () => {
     await expect(guard.canActivate(buildContext(USER))).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('403 si la company es prestamista (lender)', async () => {
+    const { guard } = buildGuard({ id: '42', pos_mode: 'lender' });
+    await expect(guard.canActivate(buildContext(USER))).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('403 ante un pos_mode desconocido (se normaliza a retail)', async () => {
     const { guard } = buildGuard({ id: '42', pos_mode: 'bar' });
     await expect(guard.canActivate(buildContext(USER))).rejects.toBeInstanceOf(ForbiddenException);

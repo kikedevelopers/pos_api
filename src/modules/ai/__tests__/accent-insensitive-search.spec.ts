@@ -38,6 +38,7 @@ describe('RunAiToolAction · búsqueda insensible a acentos', () => {
       {} as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
       {} as unknown as RunAiTreasuryToolAction,
+      {} as never,
     );
   };
 

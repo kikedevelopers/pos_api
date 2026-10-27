@@ -40,6 +40,7 @@ describe('RunAiToolAction · gate de las herramientas de pedidos', () => {
       {} as unknown as RunAiExpenseToolAction,
       saleTools as unknown as RunAiSaleToolAction,
       {} as unknown as RunAiTreasuryToolAction,
+      {} as never,
     );
     return { action, saleTools, query };
   };

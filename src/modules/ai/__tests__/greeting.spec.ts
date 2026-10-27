@@ -15,11 +15,9 @@ describe('describeTopics', () => {
   });
 
   it('mantiene un orden fijo aunque las herramientas lleguen desordenadas', () => {
-    expect(describeTopics(['get_expenses_summary', 'get_treasury_accounts', 'list_sales'])).toEqual([
-      'ventas',
-      'caja',
-      'gastos',
-    ]);
+    expect(describeTopics(['get_expenses_summary', 'get_treasury_accounts', 'list_sales'])).toEqual(
+      ['ventas', 'caja', 'gastos'],
+    );
   });
 
   it('registrar/archivar gastos cuentan como el área "gastos"; confirmar no suma área', () => {
@@ -104,9 +102,9 @@ describe('sanitizeGreeting', () => {
   });
 
   it('aplana saltos de línea y espacios repetidos', () => {
-    expect(sanitizeGreeting('Soy Place,\n  el asistente de Esencia & Grano: pregúntame.', business)).toBe(
-      'Soy Place, el asistente de Esencia & Grano: pregúntame.',
-    );
+    expect(
+      sanitizeGreeting('Soy Place,\n  el asistente de Esencia & Grano: pregúntame.', business),
+    ).toBe('Soy Place, el asistente de Esencia & Grano: pregúntame.');
   });
 
   it('quita el markdown que el modelo cuela', () => {
@@ -121,13 +119,19 @@ describe('sanitizeGreeting', () => {
   it('RECHAZA un saludo que no nombra al negocio', () => {
     // La condición innegociable: si no lo nombra, no se muestra.
     expect(
-      sanitizeGreeting('Soy Place, tu asistente de negocio. Pregúntame lo que necesites.', business),
+      sanitizeGreeting(
+        'Soy Place, tu asistente de negocio. Pregúntame lo que necesites.',
+        business,
+      ),
     ).toBeNull();
   });
 
   it('acepta el nombre del negocio con otra capitalización', () => {
     expect(
-      sanitizeGreeting('Soy Place, el asistente de ESENCIA & GRANO: pregúntame lo que sea.', business),
+      sanitizeGreeting(
+        'Soy Place, el asistente de ESENCIA & GRANO: pregúntame lo que sea.',
+        business,
+      ),
     ).not.toBeNull();
   });
 

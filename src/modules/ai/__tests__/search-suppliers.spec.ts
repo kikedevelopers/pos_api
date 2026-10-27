@@ -37,6 +37,7 @@ describe('RunAiToolAction · search_suppliers', () => {
       {} as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
       {} as unknown as RunAiTreasuryToolAction,
+      {} as never,
     );
   };
 

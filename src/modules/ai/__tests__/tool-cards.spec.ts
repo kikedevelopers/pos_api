@@ -48,6 +48,26 @@ describe('cardForToolResult', () => {
     ).toBeNull();
   });
 
+  it('prepare_purchase con vista previa → tarjeta de compra; needs_input → sin tarjeta', () => {
+    const preview = { supplier: { name: 'La Economía', document: null }, total: 490400, lines: [] };
+    expect(
+      cardForToolResult('prepare_purchase', { status: 'confirmation_required', summary: preview }),
+    ).toEqual({ kind: 'purchase_preview', data: preview });
+    expect(
+      cardForToolResult('prepare_purchase', { status: 'needs_input', summary: preview }),
+    ).toBeNull();
+    expect(cardForToolResult('prepare_purchase', { status: 'confirmation_required' })).toBeNull();
+  });
+
+  it('confirm_purchase ejecutado → tarjeta de compra creada; rechazado → sin tarjeta', () => {
+    const purchase = { purchase_id: 5, purchase_number: 'C-5', total: 1000, status: 'PENDING' };
+    expect(cardForToolResult('confirm_purchase', { status: 'executed', purchase })).toEqual({
+      kind: 'purchase_created',
+      data: purchase,
+    });
+    expect(cardForToolResult('confirm_purchase', { status: 'changed', purchase })).toBeNull();
+  });
+
   it('confirm_sale ejecutado → tarjeta del pedido creado', () => {
     const order = { ticket_number: 'PED-001', total: 15500 };
     expect(cardForToolResult('confirm_sale', { status: 'executed', order })).toEqual({
@@ -70,6 +90,8 @@ describe('cardForToolResult', () => {
 });
 
 const usageCredits = { recordUsage: jest.fn().mockResolvedValue(undefined) };
+/** Sin adjuntos en estas conversaciones: el resolver no encuentra ninguno. */
+const noAttachments = { resolve: jest.fn().mockResolvedValue(new Map()) } as never;
 
 describe('StreamAiChatAction · evento card', () => {
   const round = (over: Partial<GeminiRoundResult>): GeminiRoundResult => ({
@@ -126,7 +148,14 @@ describe('StreamAiChatAction · evento card', () => {
     } as unknown as RunAiToolAction;
 
     const events: AiStreamEvent[] = [];
-    await new StreamAiChatAction(config, gemini, resolver, runTool, usageCredits as never).execute({
+    await new StreamAiChatAction(
+      config,
+      gemini,
+      resolver,
+      runTool,
+      usageCredits as never,
+      noAttachments,
+    ).execute({
       user: { user_id: 1 } as AuthUser,
       companyId: 1,
       turns: [{ role: 'user', content: 'véndele a María' }],
@@ -192,7 +221,14 @@ describe('StreamAiChatAction · evento card', () => {
         }),
     } as unknown as RunAiToolAction;
 
-    await new StreamAiChatAction(config, gemini, resolver, runTool, usageCredits as never).execute({
+    await new StreamAiChatAction(
+      config,
+      gemini,
+      resolver,
+      runTool,
+      usageCredits as never,
+      noAttachments,
+    ).execute({
       user: { user_id: 1 } as AuthUser,
       companyId: 1,
       turns: [{ role: 'user', content: 'véndele' }],

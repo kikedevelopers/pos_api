@@ -267,7 +267,7 @@ export const resolveExpenseSource = (
 // ──────────────────────────────────────────────────────────────────────────
 
 /** Operación que se está confirmando: cada una suma su propio vocabulario. */
-export type ConfirmationKind = 'expense' | 'sale' | 'transfer' | 'adjust';
+export type ConfirmationKind = 'expense' | 'sale' | 'transfer' | 'adjust' | 'purchase';
 
 /** Palabras que, por sí solas, significan "sí, hazlo" en cualquier operación. */
 const AFFIRMATIVE_WORDS = new Set([
@@ -347,6 +347,18 @@ const AFFIRMATIVE_BY_KIND: Record<ConfirmationKind, ReadonlySet<string>> = {
     'paselo',
   ]),
   adjust: new Set(['corrigelo', 'corrijalo', 'ajustalo', 'ajustelo']),
+  purchase: new Set([
+    'crealo',
+    'creelo',
+    'creala',
+    'creela',
+    'ingresala',
+    'ingresela',
+    'registrala',
+    'registrela',
+    'guardala',
+    'guardela',
+  ]),
 };
 
 /** Relleno permitido junto a una afirmación ("sí, por favor", "de acuerdo"). */
@@ -384,6 +396,7 @@ const FILLER_BY_KIND: Record<ConfirmationKind, ReadonlySet<string>> = {
   sale: new Set(['pedido', 'venta']),
   transfer: new Set(['movimiento', 'traslado', 'transferencia']),
   adjust: new Set(['correccion', 'ajuste']),
+  purchase: new Set(['compra', 'factura']),
 };
 
 const MAX_CONFIRMATION_WORDS = 8;

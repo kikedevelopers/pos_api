@@ -2,6 +2,7 @@ import type {
   ChatTurn,
   GeminiContent,
   GeminiFunctionDeclaration,
+  GeminiPart,
   GeminiRequestBody,
 } from './gemini.types';
 
@@ -23,6 +24,11 @@ interface BuildParams {
   maxOutputTokens: number;
   tools?: GeminiFunctionDeclaration[];
   maxHistoryTurns?: number;
+  /**
+   * Partes que van ANTES del texto de un turno (los archivos que adjuntó el
+   * usuario). Sin él, el historial es solo texto.
+   */
+  attachmentParts?: (turn: ChatTurn) => GeminiPart[];
 }
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -37,7 +43,8 @@ const clamp = (value: number, min: number, max: number): number =>
  *   - la conversación DEBE empezar con `user`: si tras recortar quedan turnos
  *     del modelo al principio, se eliminan;
  *   - turnos consecutivos del mismo rol se fusionan (la API espera alternancia);
- *   - cada turno se trunca a `MAX_TURN_CHARS`.
+ *   - cada turno se trunca a `MAX_TURN_CHARS`;
+ *   - los archivos adjuntos de un turno van antes de su texto.
  */
 export const buildGeminiRequest = ({
   turns,
@@ -46,12 +53,14 @@ export const buildGeminiRequest = ({
   maxOutputTokens,
   tools,
   maxHistoryTurns = MAX_HISTORY_TURNS,
+  attachmentParts,
 }: BuildParams): GeminiRequestBody => {
   const usable = (Array.isArray(turns) ? turns : [])
     .filter((turn) => turn?.role === 'user' || turn?.role === 'assistant')
     .map((turn) => ({
       role: turn.role,
       content: (turn.content ?? '').trim().slice(0, MAX_TURN_CHARS),
+      files: attachmentParts ? attachmentParts(turn) : [],
     }))
     .filter((turn) => turn.content.length > 0);
 
@@ -67,10 +76,15 @@ export const buildGeminiRequest = ({
     const role = turn.role === 'assistant' ? 'model' : 'user';
     const previous = contents[contents.length - 1];
     if (previous && previous.role === role) {
-      previous.parts[0].text = `${previous.parts[0].text ?? ''}\n\n${turn.content}`;
+      const last = previous.parts[previous.parts.length - 1];
+      if (turn.files.length === 0 && last?.text !== undefined && !last.fileData) {
+        last.text = `${last.text}\n\n${turn.content}`;
+      } else {
+        previous.parts.push(...turn.files, { text: turn.content });
+      }
       continue;
     }
-    contents.push({ role, parts: [{ text: turn.content }] });
+    contents.push({ role, parts: [...turn.files, { text: turn.content }] });
   }
 
   const body: GeminiRequestBody = {
@@ -94,10 +108,12 @@ export const buildGeminiRequest = ({
   return body;
 };
 
-/** El body solo es enviable si hay al menos un turno del usuario con texto. */
+/** El body solo es enviable si hay al menos un turno del usuario con texto o un archivo. */
 export const hasSendableContent = (body: GeminiRequestBody): boolean =>
   body.contents.some(
-    (content) => content.role === 'user' && (content.parts[0]?.text?.length ?? 0) > 0,
+    (content) =>
+      content.role === 'user' &&
+      content.parts.some((part) => (part.text?.length ?? 0) > 0 || part.fileData !== undefined),
   );
 
 /** URL del endpoint de streaming (SSE) para el modelo pedido. */
