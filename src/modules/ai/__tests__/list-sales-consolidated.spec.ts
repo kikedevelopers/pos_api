@@ -40,6 +40,7 @@ describe('RunAiToolAction · list_sales consolida como los informes', () => {
       {} as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
       {} as unknown as RunAiTreasuryToolAction,
+      {} as never,
     );
   };
 

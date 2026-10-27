@@ -88,6 +88,7 @@ import { PurchasesService } from './purchases.service';
     ProcessBulkPurchasePaymentsAction,
     UpdatePurchasePaymentDueAction,
   ],
-  exports: [PurchasesService, TypeOrmModule],
+  // CreatePurchaseAction: Place (asistente IA) crea compras con la misma lógica.
+  exports: [PurchasesService, CreatePurchaseAction, TypeOrmModule],
 })
 export class PurchasesModule {}

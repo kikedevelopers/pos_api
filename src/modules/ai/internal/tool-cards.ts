@@ -16,7 +16,9 @@ export type AiToolCard =
   | { kind: 'sale_preview'; data: Record<string, unknown> }
   | { kind: 'sale_created'; data: Record<string, unknown> }
   | { kind: 'treasury_preview'; data: Record<string, unknown> }
-  | { kind: 'treasury_done'; data: Record<string, unknown> };
+  | { kind: 'treasury_done'; data: Record<string, unknown> }
+  | { kind: 'purchase_preview'; data: Record<string, unknown> }
+  | { kind: 'purchase_created'; data: Record<string, unknown> };
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -41,6 +43,14 @@ export const cardForToolResult = (
   ) {
     const summary = asRecord(response.summary);
     return summary ? { kind: 'treasury_preview', data: summary } : null;
+  }
+  if (name === 'prepare_purchase' && response.status === 'confirmation_required') {
+    const summary = asRecord(response.summary);
+    return summary ? { kind: 'purchase_preview', data: summary } : null;
+  }
+  if (name === 'confirm_purchase' && response.status === 'executed') {
+    const purchase = asRecord(response.purchase);
+    return purchase ? { kind: 'purchase_created', data: purchase } : null;
   }
   if (name === 'confirm_treasury_action' && response.status === 'executed') {
     const result = asRecord(response.result);

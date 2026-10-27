@@ -8,16 +8,28 @@ import {
   Post,
   Req,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
 
+import type { AiAttachmentView } from './actions/ai-attachments.action';
 import { AiService, type AiGreeting, type AiStatus } from './ai.service';
 import { AiChatRequestDto } from './dto/ai-chat.dto';
+import { MAX_ATTACHMENT_BYTES } from './internal/attachments';
 import { SseWriter } from './internal/sse-writer';
 
 /**
@@ -26,6 +38,9 @@ import { SseWriter } from './internal/sse-writer';
  * `POST /ai/chat` NO devuelve JSON: abre un stream SSE porque la respuesta se
  * escribe token a token. Por eso usa `@Res()` crudo (sin `passthrough`), lo que
  * lo deja fuera del `ResponseWrapperInterceptor` a propósito.
+ *
+ * `POST /ai/attachments` sube una foto o un PDF (una vez, al Files API de
+ * Google) y devuelve su id; el chat lo referencia en `turns[].attachment_ids`.
  *
  * Eventos del stream:
  *   - `delta` → `{ text }` — pedazo de la respuesta.
@@ -61,6 +76,39 @@ export class AiController {
     @CurrentCompany() companyId: number,
   ): Promise<AiGreeting> {
     return this.aiService.greeting(user, companyId);
+  }
+
+  @Post('attachments')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      // Un byte de holgura: el action da el mensaje exacto del límite.
+      limits: { fileSize: MAX_ATTACHMENT_BYTES + 1, files: 1 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Adjuntar una foto o un PDF para que Place lo analice.',
+    description:
+      'Multipart con el campo `file` (JPG, PNG, WebP, HEIC o PDF; validado por los bytes reales). ' +
+      'No gasta consultas. El archivo vence a las 47 horas.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+      required: ['file'],
+    },
+  })
+  @ApiResponse({ status: HttpStatus.CREATED })
+  @ApiResponse({ status: HttpStatus.UNPROCESSABLE_ENTITY, description: 'No es foto ni PDF' })
+  @ApiResponse({ status: HttpStatus.PAYLOAD_TOO_LARGE, description: 'Supera el límite' })
+  uploadAttachment(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: AuthUser,
+    @CurrentCompany() companyId: number,
+  ): Promise<AiAttachmentView> {
+    return this.aiService.uploadAttachment(user, companyId, file);
   }
 
   @Post('chat')

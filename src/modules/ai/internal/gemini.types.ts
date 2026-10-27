@@ -2,7 +2,8 @@
  * Tipos del protocolo de Google Gemini (`generateContent` / `streamGenerateContent`)
  * y del contrato interno del módulo `ai`.
  *
- * Solo modelamos lo que realmente usamos: texto y function calling. Las partes
+ * Solo modelamos lo que realmente usamos: texto, archivos del Files API
+ * (`fileData`: fotos y PDF que adjunta el usuario) y function calling. Las partes
  * desconocidas (p.ej. `thoughtSignature` de los modelos con razonamiento) se
  * preservan tal cual porque hay que devolvérselas al modelo en la siguiente
  * ronda; por eso `GeminiPart` es abierto.
@@ -14,6 +15,8 @@ export type ChatRole = 'user' | 'assistant';
 export interface ChatTurn {
   role: ChatRole;
   content: string;
+  /** Adjuntos del turno (ids de `ai_attachments`); solo en turnos del usuario. */
+  attachment_ids?: string[];
 }
 
 export interface GeminiFunctionCall {
@@ -26,8 +29,15 @@ export interface GeminiFunctionResponse {
   response: Record<string, unknown>;
 }
 
+/** Archivo ya subido al Files API de Google, referenciado por su URI. */
+export interface GeminiFileData {
+  mimeType: string;
+  fileUri: string;
+}
+
 export interface GeminiPart {
   text?: string;
+  fileData?: GeminiFileData;
   functionCall?: GeminiFunctionCall;
   functionResponse?: GeminiFunctionResponse;
   /** Marca las partes de "razonamiento": no se muestran al usuario. */

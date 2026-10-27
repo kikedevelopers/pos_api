@@ -51,6 +51,7 @@ function build(opts: {
     { execute: resolveExecute } as never,
     geminiClient as never,
     credits as never,
+    { upload: jest.fn() } as never,
     companiesRepo as never,
   );
 

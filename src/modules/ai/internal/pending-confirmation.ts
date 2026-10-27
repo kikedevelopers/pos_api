@@ -7,7 +7,7 @@ import {
 
 /**
  * Reglas COMPARTIDAS para ejecutar una operación que Place dejó pendiente
- * (gastos, pedidos y movimientos de tesorería). Puras: deciden con la fila pendiente y el contexto de la
+ * (gastos, pedidos, movimientos de tesorería y compras). Puras: deciden con la fila pendiente y el contexto de la
  * petición, sin BD, para que gastos y ventas no puedan divergir en lo único que
  * no admite matices — que nada se ejecute sin el "sí" del usuario.
  */
@@ -18,7 +18,8 @@ export type PendingActionType =
   | 'VOID_EXPENSE'
   | 'CREATE_SALE'
   | 'TRANSFER_FUNDS'
-  | 'ADJUST_BALANCE';
+  | 'ADJUST_BALANCE'
+  | 'CREATE_PURCHASE';
 
 export const EXPENSE_ACTION_TYPES: ReadonlySet<PendingActionType> = new Set([
   'REGISTER_EXPENSE',
@@ -37,6 +38,7 @@ const CONFIRMATION_KIND: Record<PendingActionType, ConfirmationKind> = {
   CREATE_SALE: 'sale',
   TRANSFER_FUNDS: 'transfer',
   ADJUST_BALANCE: 'adjust',
+  CREATE_PURCHASE: 'purchase',
 };
 
 /** Qué es la pendiente y con qué herramienta se confirma. */
@@ -45,6 +47,7 @@ const PENDING_OWNER: Record<ConfirmationKind, { label: string; tool: string }> =
   sale: { label: 'un pedido', tool: 'confirm_sale' },
   transfer: { label: 'un movimiento de saldo', tool: 'confirm_treasury_action' },
   adjust: { label: 'una corrección de saldo', tool: 'confirm_treasury_action' },
+  purchase: { label: 'una compra a proveedor', tool: 'confirm_purchase' },
 };
 
 /**

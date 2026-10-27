@@ -97,6 +97,7 @@ describe('RunAiToolAction · alcance por negocio (sucursales del owner)', () => 
       expenseTools as unknown as RunAiExpenseToolAction,
       {} as unknown as RunAiSaleToolAction,
       {} as unknown as RunAiTreasuryToolAction,
+      {} as never,
     );
     return { action, todayFn, accountsFn, query, expenseTools };
   };

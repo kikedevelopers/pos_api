@@ -34,6 +34,7 @@ import {
 } from '../internal/tool-catalog';
 
 import { RunAiExpenseToolAction } from './run-ai-expense-tool.action';
+import { RunAiPurchaseToolAction } from './run-ai-purchase-tool.action';
 import { RunAiSaleToolAction } from './run-ai-sale-tool.action';
 import { RunAiTreasuryToolAction } from './run-ai-treasury-tool.action';
 
@@ -86,6 +87,7 @@ export class RunAiToolAction {
     private readonly expenseTools: RunAiExpenseToolAction,
     private readonly saleTools: RunAiSaleToolAction,
     private readonly treasuryTools: RunAiTreasuryToolAction,
+    private readonly purchaseTools: RunAiPurchaseToolAction,
   ) {}
 
   /**
@@ -221,6 +223,12 @@ export class RunAiToolAction {
         return this.treasuryTools.prepareCorrection(companyId, actor, args, context);
       case 'confirm_treasury_action':
         return this.treasuryTools.confirm(companyId, actor, context);
+      case 'match_document_products':
+        return this.purchaseTools.matchDocumentProducts(companyId, args);
+      case 'prepare_purchase':
+        return this.purchaseTools.preparePurchase(companyId, actor, args, context);
+      case 'confirm_purchase':
+        return this.purchaseTools.confirmPurchase(companyId, actor, context);
       default:
         return Promise.resolve({ error: `La herramienta "${name}" no está implementada.` });
     }
