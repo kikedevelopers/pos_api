@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import { SubscriptionResponseDto } from '@/modules/subscriptions/dto/subscription-response.dto';
+import type { SubscriptionPlan } from '@/modules/subscriptions/entities/subscription.entity';
 
 /** Datos del dueño tal como los pinta el portal. Sin password ni flags internos. */
 export class PortalUserDto {
@@ -46,6 +47,21 @@ export class PortalCompanyDto {
   branches_count!: number;
 }
 
+/**
+ * Período YA PAGADO que todavía no empieza (renovación anticipada). Con cambio
+ * de plan, el plan vigente se respeta hasta `starts_at` y ahí pasa a `plan`.
+ */
+export class PortalUpcomingPeriodDto {
+  @ApiProperty({ example: 'monthly', enum: ['monthly', 'annual'] })
+  plan!: SubscriptionPlan;
+
+  @ApiProperty({ example: '2027-12-31T10:00:00.000Z' })
+  starts_at!: string;
+
+  @ApiProperty({ example: '2028-01-30T10:00:00.000Z' })
+  ends_at!: string;
+}
+
 /** Respuesta de `GET /portal/account`. */
 export class PortalAccountResponseDto {
   @ApiProperty({ type: PortalUserDto })
@@ -61,4 +77,11 @@ export class PortalAccountResponseDto {
       'La suscripción aplicable. `null` solo si la cuenta no tiene (dato inconsistente).',
   })
   subscription!: SubscriptionResponseDto | null;
+
+  @ApiPropertyOptional({
+    type: PortalUpcomingPeriodDto,
+    nullable: true,
+    description: 'Siguiente período ya pagado que aún no empieza. `null` si no hay.',
+  })
+  upcoming_period!: PortalUpcomingPeriodDto | null;
 }

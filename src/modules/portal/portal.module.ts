@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuthModule } from '@/modules/auth/auth.module';
+import { SubscriptionPayment } from '@/modules/billing/entities/subscription-payment.entity';
 import { CompanyMember } from '@/modules/companies/entities/company-member.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { Subscription } from '@/modules/subscriptions/entities/subscription.entity';
@@ -25,7 +26,7 @@ import { PortalController } from './portal.controller';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Subscription, Company, CompanyMember]),
+    TypeOrmModule.forFeature([Subscription, Company, CompanyMember, SubscriptionPayment]),
     AuthModule,
     UsersModule,
     SubscriptionsModule,

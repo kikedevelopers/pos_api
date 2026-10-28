@@ -17,9 +17,10 @@ import { resolvePlanTransition } from '../internal/plan-transition';
 /**
  * Cambio de plan desde el portal.
  *
- * Guarda la INTENCIÓN, nunca el privilegio: un plan de pago queda
- * `payment_pending` hasta que un pago confirmado lo promueva. Ni `plan` ni
- * `expires_at` se tocan aquí.
+ * Guarda la INTENCIÓN, nunca el privilegio: sin plan de pago vigente, un plan
+ * de pago queda `payment_pending` hasta que un pago confirmado lo promueva;
+ * con plan de pago vigente, el otro plan queda PROGRAMADO para el corte. Ni
+ * `plan` ni `expires_at` se tocan aquí.
  *
  * Volver a `free` sí es inmediato (retira la solicitud pendiente o marca la
  * no-renovación): cancelar no le regala nada a nadie.
@@ -54,38 +55,58 @@ export class ChangePlanAction {
       });
     }
 
-    const transition = resolvePlanTransition({
-      current_plan: subscription.plan,
-      current_status: subscription.status,
-      current_requested_plan: subscription.requested_plan,
-      target_plan: targetPlan,
-      now: new Date(),
-    });
+    // Bajo bloqueo de la fila: un pago que se aplica al mismo tiempo también
+    // escribe estos campos, y el último en escribir no puede pisar al otro
+    // con una foto vieja.
+    const { locked, transition } = await this.repo.manager.transaction(async (manager) => {
+      const row = await manager
+        .getRepository(Subscription)
+        .createQueryBuilder('s')
+        .setLock('pessimistic_write')
+        .where('s.id = :id', { id: subscription.id })
+        .getOneOrFail();
 
-    // Se escribe siempre (aunque `changed` sea false): la transición es
-    // idempotente y así una fila con un `plan_requested_at` colgado de una
-    // solicitud ya retirada queda limpia.
-    await this.repo.update(subscription.id, {
-      status: transition.status,
-      requested_plan: transition.requested_plan,
-      plan_requested_at: transition.plan_requested_at,
+      const next = resolvePlanTransition({
+        current_plan: row.plan,
+        current_status: row.status,
+        current_requested_plan: row.requested_plan,
+        current_scheduled_plan: row.scheduled_plan ?? null,
+        current_expires_at: row.expires_at,
+        target_plan: targetPlan,
+        now: new Date(),
+      });
+
+      // Se escribe siempre (aunque `changed` sea false): la transición es
+      // idempotente y así una fila con un `plan_requested_at` colgado de una
+      // solicitud ya retirada queda limpia.
+      await manager.update(Subscription, row.id, {
+        status: next.status,
+        requested_plan: next.requested_plan,
+        plan_requested_at: next.plan_requested_at,
+        scheduled_plan: next.scheduled_plan,
+        plan_scheduled_at: next.plan_scheduled_at,
+      });
+      return { locked: row, transition: next };
     });
 
     this.logger.log({
       event: 'portal.plan_change_requested',
       userId,
       companyId,
-      currentPlan: subscription.plan,
+      currentPlan: locked.plan,
       targetPlan,
       status: transition.status,
+      scheduledPlan: transition.scheduled_plan,
       changed: transition.changed,
     });
 
     return toSubscriptionResponseDto({
-      ...subscription,
+      ...locked,
       status: transition.status,
       requested_plan: transition.requested_plan,
       plan_requested_at: transition.plan_requested_at,
+      scheduled_plan: transition.scheduled_plan,
+      plan_scheduled_at: transition.plan_scheduled_at,
     });
   }
 }

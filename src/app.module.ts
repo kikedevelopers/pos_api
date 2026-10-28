@@ -29,6 +29,7 @@ import { AgreementsModule } from './modules/agreements/agreements.module';
 import { AiModule } from './modules/ai/ai.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { BackupRestoreModule } from './modules/backup-restore/backup-restore.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { BanksModule } from './modules/banks/banks.module';
 import { CarrierPaymentsModule } from './modules/carrier-payments/carrier-payments.module';
 import { CarriersModule } from './modules/carriers/carriers.module';
@@ -311,6 +312,7 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     // Portal de facturación de la landing. Después de AuthModule porque lo
     // importa (reutiliza su emisor de JWT y su hash dummy).
     PortalModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [
