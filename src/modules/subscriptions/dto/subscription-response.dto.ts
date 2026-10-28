@@ -2,6 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import type { Subscription, SubscriptionPlan } from '../entities/subscription.entity';
 import {
+  hasRunningPaidPeriod,
+  renewalOpensAt,
+  resolveCheckoutDecision,
+} from '../internal/plan-policy';
+import {
   resolveEffectiveStatus,
   type EffectiveSubscriptionStatus,
 } from '../internal/subscription-state';
@@ -70,6 +75,32 @@ export class SubscriptionResponseDto {
 
   @ApiPropertyOptional({ example: '2026-08-15T10:00:00.000Z', nullable: true })
   plan_requested_at!: string | null;
+
+  @ApiPropertyOptional({
+    example: 'monthly',
+    nullable: true,
+    description:
+      'Cambio de plan programado: arranca al terminar el período pagado vigente. `null` si no hay.',
+  })
+  scheduled_plan!: SubscriptionPlan | null;
+
+  @ApiPropertyOptional({ example: '2026-08-15T10:00:00.000Z', nullable: true })
+  plan_scheduled_at!: string | null;
+
+  @ApiPropertyOptional({
+    example: '2027-11-30T10:00:00.000Z',
+    nullable: true,
+    description:
+      'Con un plan de pago vigente: desde cuándo se puede pagar el siguiente período. `null` sin plan de pago vigente (se puede pagar ya).',
+  })
+  renewal_opens_at!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Se puede abrir un pago ahora mismo (sin plan pagado vigente o en la ventana de renovación).',
+  })
+  can_pay_now!: boolean;
 }
 
 /**
@@ -92,6 +123,9 @@ export function toSubscriptionResponseDto(
   const totalMs = subscription.expires_at.getTime() - subscription.started_at.getTime();
   const daysTotal = Math.max(0, Math.round(totalMs / MS_PER_DAY));
   const daysUsed = Math.max(0, daysTotal - daysRemaining);
+  const policyInput = { plan: subscription.plan, expires_at: subscription.expires_at, now };
+  const running = hasRunningPaidPeriod(policyInput);
+  const opensAt = renewalOpensAt(subscription.expires_at);
   const progress =
     daysTotal > 0 ? Math.min(1, Math.max(0, daysUsed / daysTotal)) : isExpired ? 1 : 0;
 
@@ -111,5 +145,9 @@ export function toSubscriptionResponseDto(
     }),
     requested_plan: subscription.requested_plan ?? null,
     plan_requested_at: subscription.plan_requested_at?.toISOString() ?? null,
+    scheduled_plan: subscription.scheduled_plan ?? null,
+    plan_scheduled_at: subscription.plan_scheduled_at?.toISOString() ?? null,
+    renewal_opens_at: running ? opensAt.toISOString() : null,
+    can_pay_now: resolveCheckoutDecision(policyInput).allowed,
   };
 }

@@ -14,17 +14,23 @@ import { resolvePlanTransition } from '../plan-transition';
 // ---------------------------------------------------------------------------
 
 const NOW = new Date('2026-08-15T12:00:00.000Z');
+const FUTURE = new Date('2027-08-15T12:00:00.000Z');
+const PAST = new Date('2026-08-01T12:00:00.000Z');
 
 const transition = (input: {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
   requested?: SubscriptionPlan | null;
+  scheduled?: SubscriptionPlan | null;
+  expires_at?: Date;
   target: SubscriptionPlan;
 }) =>
   resolvePlanTransition({
     current_plan: input.plan,
     current_status: input.status,
     current_requested_plan: input.requested ?? null,
+    current_scheduled_plan: input.scheduled ?? null,
+    current_expires_at: input.expires_at ?? FUTURE,
     target_plan: input.target,
     now: NOW,
   });
@@ -45,27 +51,30 @@ describe('pedir un plan de pago', () => {
     expect(result).not.toHaveProperty('plan');
   });
 
-  it('cambiar de mensual a anual también queda pendiente de pago', () => {
+  it('con el plan de pago VENCIDO, pedir otro queda pendiente de pago', () => {
     const result = transition({
       plan: SubscriptionPlan.MONTHLY,
       status: SubscriptionStatus.ACTIVE,
+      expires_at: PAST,
       target: SubscriptionPlan.ANNUAL,
     });
 
     expect(result.status).toBe(SubscriptionStatus.PAYMENT_PENDING);
     expect(result.requested_plan).toBe(SubscriptionPlan.ANNUAL);
+    expect(result.scheduled_plan).toBeNull();
     expect(result.changed).toBe(true);
   });
 
-  it('bajar de anual a mensual sigue el mismo camino: se pide, no se aplica', () => {
+  it('vencido en el MISMO plan, pedirlo de nuevo también queda pendiente de pago', () => {
     const result = transition({
       plan: SubscriptionPlan.ANNUAL,
       status: SubscriptionStatus.ACTIVE,
-      target: SubscriptionPlan.MONTHLY,
+      expires_at: PAST,
+      target: SubscriptionPlan.ANNUAL,
     });
 
     expect(result.status).toBe(SubscriptionStatus.PAYMENT_PENDING);
-    expect(result.requested_plan).toBe(SubscriptionPlan.MONTHLY);
+    expect(result.requested_plan).toBe(SubscriptionPlan.ANNUAL);
   });
 
   it('tras un pago rebotado, volver a pedir el mismo plan es un reintento', () => {
@@ -93,8 +102,37 @@ describe('pedir un plan de pago', () => {
     expect(result.status).toBe(SubscriptionStatus.PAYMENT_PENDING);
     expect(result.requested_plan).toBe(SubscriptionPlan.ANNUAL);
   });
+});
 
-  it('pedir el plan que ya se tiene pagado no abre una solicitud de cobro', () => {
+describe('con un plan de pago vigente: el cambio se PROGRAMA, no se cobra', () => {
+  it('de anual a mensual queda programado para el corte y nada queda pendiente de pago', () => {
+    const result = transition({
+      plan: SubscriptionPlan.ANNUAL,
+      status: SubscriptionStatus.ACTIVE,
+      target: SubscriptionPlan.MONTHLY,
+    });
+
+    expect(result.scheduled_plan).toBe(SubscriptionPlan.MONTHLY);
+    expect(result.plan_scheduled_at).toEqual(NOW);
+    expect(result.status).toBe(SubscriptionStatus.ACTIVE);
+    expect(result.requested_plan).toBeNull();
+    expect(result.plan_requested_at).toBeNull();
+    expect(result.changed).toBe(true);
+    expect(result).not.toHaveProperty('plan');
+  });
+
+  it('de mensual a anual sigue el mismo camino', () => {
+    const result = transition({
+      plan: SubscriptionPlan.MONTHLY,
+      status: SubscriptionStatus.ACTIVE,
+      target: SubscriptionPlan.ANNUAL,
+    });
+
+    expect(result.scheduled_plan).toBe(SubscriptionPlan.ANNUAL);
+    expect(result.status).toBe(SubscriptionStatus.ACTIVE);
+  });
+
+  it('pedir el plan que ya se tiene no abre nada', () => {
     const result = transition({
       plan: SubscriptionPlan.ANNUAL,
       status: SubscriptionStatus.ACTIVE,
@@ -104,17 +142,57 @@ describe('pedir un plan de pago', () => {
     expect(result.changed).toBe(false);
     expect(result.status).toBe(SubscriptionStatus.ACTIVE);
     expect(result.requested_plan).toBeNull();
+    expect(result.scheduled_plan).toBeNull();
   });
 
-  it('si el plan pagado estaba cancelado, volver a pedirlo lo reactiva como pendiente', () => {
+  it('volver a elegir el plan actual retira el cambio programado', () => {
+    const result = transition({
+      plan: SubscriptionPlan.ANNUAL,
+      status: SubscriptionStatus.ACTIVE,
+      scheduled: SubscriptionPlan.MONTHLY,
+      target: SubscriptionPlan.ANNUAL,
+    });
+
+    expect(result.scheduled_plan).toBeNull();
+    expect(result.plan_scheduled_at).toBeNull();
+    expect(result.changed).toBe(true);
+  });
+
+  it('programar dos veces el mismo cambio no cuenta como cambio', () => {
+    const result = transition({
+      plan: SubscriptionPlan.ANNUAL,
+      status: SubscriptionStatus.ACTIVE,
+      scheduled: SubscriptionPlan.MONTHLY,
+      target: SubscriptionPlan.MONTHLY,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.scheduled_plan).toBe(SubscriptionPlan.MONTHLY);
+  });
+
+  it('con la renovación cancelada, elegir un plan la reactiva sin cobrar nada aún', () => {
     const result = transition({
       plan: SubscriptionPlan.ANNUAL,
       status: SubscriptionStatus.CANCELED,
       target: SubscriptionPlan.ANNUAL,
     });
 
-    expect(result.status).toBe(SubscriptionStatus.PAYMENT_PENDING);
-    expect(result.requested_plan).toBe(SubscriptionPlan.ANNUAL);
+    expect(result.status).toBe(SubscriptionStatus.ACTIVE);
+    expect(result.requested_plan).toBeNull();
+    expect(result.scheduled_plan).toBeNull();
+    expect(result.changed).toBe(true);
+  });
+
+  it('limpia una solicitud "pendiente de pago" vieja: el plan vigente ya está pagado', () => {
+    const result = transition({
+      plan: SubscriptionPlan.ANNUAL,
+      status: SubscriptionStatus.PAYMENT_PENDING,
+      requested: SubscriptionPlan.ANNUAL,
+      target: SubscriptionPlan.ANNUAL,
+    });
+
+    expect(result.status).toBe(SubscriptionStatus.ACTIVE);
+    expect(result.requested_plan).toBeNull();
     expect(result.changed).toBe(true);
   });
 });
@@ -145,6 +223,20 @@ describe('volver a free', () => {
     // vigencia (`expires_at`) ni se menciona aquí — esta función no la toca.
     expect(result.status).toBe(SubscriptionStatus.CANCELED);
     expect(result.requested_plan).toBeNull();
+    expect(result.changed).toBe(true);
+  });
+
+  it('cancelar retira también el cambio programado', () => {
+    const result = transition({
+      plan: SubscriptionPlan.ANNUAL,
+      status: SubscriptionStatus.ACTIVE,
+      scheduled: SubscriptionPlan.MONTHLY,
+      target: SubscriptionPlan.FREE,
+    });
+
+    expect(result.status).toBe(SubscriptionStatus.CANCELED);
+    expect(result.scheduled_plan).toBeNull();
+    expect(result.plan_scheduled_at).toBeNull();
     expect(result.changed).toBe(true);
   });
 

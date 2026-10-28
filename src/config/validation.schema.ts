@@ -175,4 +175,15 @@ export const validationSchema = Joi.object({
   FE_API_BASE_URL: Joi.string().allow('').default('http://127.0.0.1:8081/api'),
   FE_API_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(10000),
   FE_CATALOG_CACHE_TTL_S: Joi.number().integer().min(60).max(604800).default(86400),
+
+  // Cobro de la suscripción con Wompi (módulo `billing`). Sin llaves el API
+  // arranca igual y el portal responde "pagos no disponibles": no se bloquea
+  // el resto del sistema por la pasarela.
+  WOMPI_ENVIRONMENT: Joi.string().valid('sandbox', 'production').default('sandbox'),
+  WOMPI_PRIVATE_KEY: Joi.string().allow('').default(''),
+  WOMPI_EVENTS_SECRET: Joi.string().allow('').default(''),
+  WOMPI_API_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(15000),
+  BILLING_RETURN_URL: Joi.string().allow('').default(''),
+  BILLING_ALERT_EMAILS: Joi.string().allow('').default(''),
+  BILLING_RECONCILE_ENABLED: Joi.boolean().default(true),
 });

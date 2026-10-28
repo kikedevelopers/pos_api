@@ -53,7 +53,7 @@ export enum SubscriptionStatus {
  *     lectura ni escritura. El bloqueo lo aplica `SubscriptionGuard` (rutas
  *     protegidas) y `LoginAction` (login).
  *   - Superadmin (`company_id` null) NUNCA se bloquea.
- *   - NO se implementa renovación todavía.
+ *   - La renovación y el cambio de plan siguen `internal/plan-policy.ts`.
  *
  * --------------------------------------------------------------------------
  * Invariantes
@@ -145,6 +145,26 @@ export class Subscription {
   /** Cuándo se pidió `requested_plan`. Sirve para caducar solicitudes viejas. */
   @Column({ type: 'timestamptz', nullable: true })
   plan_requested_at!: Date | null;
+
+  /**
+   * Cambio de plan PROGRAMADO: el dueño con un plan de pago vigente eligió
+   * otro, que arranca al terminar el período pagado. `null` = sin cambio.
+   *
+   * Distinto de `requested_plan` (pedido y sin pagar, sin plan vigente): aquí
+   * el plan actual ya está pagado y se respeta hasta su corte. Nunca `free`
+   * (CHECK en la BD): volver a gratis es cancelar.
+   */
+  @Column({
+    type: 'enum',
+    enum: SubscriptionPlan,
+    enumName: 'subscription_plan',
+    nullable: true,
+  })
+  scheduled_plan!: SubscriptionPlan | null;
+
+  /** Cuándo se programó `scheduled_plan`. */
+  @Column({ type: 'timestamptz', nullable: true })
+  plan_scheduled_at!: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

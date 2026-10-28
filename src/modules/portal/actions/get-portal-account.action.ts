@@ -1,15 +1,19 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Repository } from 'typeorm';
+import { MoreThan, type Repository } from 'typeorm';
 
 import { bigintToNumber } from '@/modules/auth/internal/bigint-to-number';
+import {
+  SubscriptionPayment,
+  SubscriptionPaymentStatus,
+} from '@/modules/billing/entities/subscription-payment.entity';
 import { CompanyMember } from '@/modules/companies/entities/company-member.entity';
 import { Company } from '@/modules/companies/entities/company.entity';
 import { toSubscriptionResponseDto } from '@/modules/subscriptions/dto/subscription-response.dto';
 import { SubscriptionsService } from '@/modules/subscriptions/subscriptions.service';
 import { UsersService } from '@/modules/users/users.service';
 
-import type { PortalAccountResponseDto } from '../dto/portal-account.dto';
+import type { PortalAccountResponseDto, PortalUpcomingPeriodDto } from '../dto/portal-account.dto';
 
 /**
  * Lo que ve el dueño al entrar al portal: quién es, qué negocio tiene y en qué
@@ -28,6 +32,8 @@ export class GetPortalAccountAction {
     private readonly companiesRepo: Repository<Company>,
     @InjectRepository(CompanyMember)
     private readonly membersRepo: Repository<CompanyMember>,
+    @InjectRepository(SubscriptionPayment)
+    private readonly paymentsRepo: Repository<SubscriptionPayment>,
   ) {}
 
   async execute(userId: number, companyId: number): Promise<PortalAccountResponseDto> {
@@ -52,6 +58,17 @@ export class GetPortalAccountAction {
       .getCount();
 
     const subscription = await this.subscriptionsService.findApplicable(companyId);
+    const now = new Date();
+    const upcoming = subscription
+      ? await this.paymentsRepo.findOne({
+          where: {
+            subscription_id: subscription.id,
+            status: SubscriptionPaymentStatus.APPROVED,
+            period_starts_at: MoreThan(now),
+          },
+          order: { period_starts_at: 'ASC' },
+        })
+      : null;
 
     return {
       user: {
@@ -71,7 +88,19 @@ export class GetPortalAccountAction {
       },
       // `null` solo si la fila no existe (dato inconsistente): el portal lo
       // pinta como "no pudimos leer tu suscripción" en vez de reventar.
-      subscription: subscription ? toSubscriptionResponseDto(subscription) : null,
+      subscription: subscription ? toSubscriptionResponseDto(subscription, now) : null,
+      upcoming_period: toUpcomingPeriod(upcoming),
     };
   }
+}
+
+function toUpcomingPeriod(payment: SubscriptionPayment | null): PortalUpcomingPeriodDto | null {
+  if (!payment?.period_starts_at || !payment.period_ends_at) {
+    return null;
+  }
+  return {
+    plan: payment.plan,
+    starts_at: payment.period_starts_at.toISOString(),
+    ends_at: payment.period_ends_at.toISOString(),
+  };
 }

@@ -53,6 +53,8 @@ export class CreateSubscriptionAction {
       status: SubscriptionStatus.TRIALING,
       requested_plan: null,
       plan_requested_at: null,
+      scheduled_plan: null,
+      plan_scheduled_at: null,
     });
     const saved = await repo.save(subscription);
 
