@@ -55,6 +55,7 @@ function liveLine(item_id: number, price: number, quantity: number): Consolidate
     margin: 0,
     price_mode: 'fixed',
     price_position: null,
+    note: null,
     packaging_value: 1,
     combo_recipe: null,
   };

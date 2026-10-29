@@ -31,6 +31,8 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
     packaging_value: number | null;
     /** FIX #3: opcional para no tocar los casos existentes (legacy = null). */
     combo_recipe?: Array<{ component_product_id: number; quantity: number }> | null;
+    /** Nota por línea; opcional para no tocar los casos existentes. */
+    note?: string | null;
   }
   interface SeedNote {
     id: number;
@@ -86,6 +88,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
               total: l.total,
               profit: l.profit ?? 0,
               margin: l.margin ?? 0,
+              note: l.note ?? null,
               packaging_value: l.packaging_value,
               combo_recipe: l.combo_recipe ?? null,
             })),
@@ -279,6 +282,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
           margin: 50,
           price_mode: 'fixed',
           price_position: null,
+          note: null,
           packaging_value: 10,
         },
       ],
@@ -462,6 +466,7 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
             margin: 50,
             price_mode: 'fixed' as const,
             price_position: null,
+            note: null,
             packaging_value: null,
             combo_recipe: RECIPE,
           },
@@ -690,6 +695,137 @@ describe('consolidate-invoice — threading de packaging_value (FIX #2)', () => 
 
       expect(result!.lines).toHaveLength(0);
       expect(result!.total).toBe(0);
+    });
+  });
+
+  // La nota por línea DEBE viajar al cliente: el flujo de edición la rehidrata en
+  // el carrito para no obligar a reescribir todas las notas (bug reportado: al
+  // editar un pedido cloud, las notas por producto desaparecían).
+  describe('note por línea (rehidratación al editar)', () => {
+    it('mapInvoiceLine cuelga la nota de la línea original (y null si no tiene)', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'A',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 1,
+            total: 2,
+            packaging_value: null,
+            note: 'sin cebolla',
+          },
+          {
+            product_id: 101,
+            description: 'B',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 1,
+            total: 2,
+            packaging_value: null,
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      const byId = new Map(result!.lines.map((l) => [l.item_id, l]));
+      expect(byId.get(100)?.note).toBe('sin cebolla');
+      expect(byId.get(101)?.note).toBeNull();
+    });
+
+    it('al consolidar 2 líneas del mismo producto conserva la nota de la primera', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'Dup',
+            unit_cost: 4,
+            unit_price: 10,
+            quantity: 2,
+            total: 20,
+            profit: 12,
+            packaging_value: 10,
+            note: 'talla M',
+          },
+          {
+            product_id: 100,
+            description: 'Dup',
+            unit_cost: 4,
+            unit_price: 10,
+            quantity: 3,
+            total: 30,
+            profit: 18,
+            packaging_value: null,
+            note: 'talla L',
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      expect(result!.lines).toHaveLength(1);
+      expect(result!.lines[0].note).toBe('talla M');
+    });
+
+    it('una línea nacida de una ND no tiene nota (null)', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'A',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 1,
+            total: 2,
+            packaging_value: null,
+            note: 'con nota',
+          },
+        ],
+        notes: [
+          {
+            id: 1,
+            note_type: NoteType.DEBIT,
+            lines: [
+              {
+                product_id: 200,
+                description: 'Nuevo por ND',
+                unit_cost: 1,
+                unit_price: 5,
+                quantity: 1,
+                total: 5,
+                packaging_value: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      const byId = new Map(result!.lines.map((l) => [l.item_id, l]));
+      expect(byId.get(100)?.note).toBe('con nota');
+      expect(byId.get(200)?.note).toBeNull();
+    });
+
+    it('stripConsolidatedInternalFields NO elimina la nota (sí va al cliente)', async () => {
+      const manager = buildManager({
+        invoiceLines: [
+          {
+            product_id: 100,
+            description: 'A',
+            unit_cost: 1,
+            unit_price: 2,
+            quantity: 1,
+            total: 2,
+            packaging_value: 10,
+            note: 'importante',
+          },
+        ],
+      });
+
+      const result = await getConsolidatedInvoice(manager, 1, 1);
+      const stripped = stripConsolidatedInternalFields(result!);
+      expect(stripped.lines[0].note).toBe('importante');
+      // Los internos sí se eliminan; la nota no.
+      expect(stripped.lines[0]).not.toHaveProperty('packaging_value');
     });
   });
 });
