@@ -54,12 +54,14 @@ const makeHandler = (tenantRow: SalesBotConfigEntity | null): Harness => {
   const agent = {
     isReady: jest.fn().mockReturnValue(true),
     handleMessage,
+    greeting: jest.fn().mockResolvedValue('Buenos días, soy Diana de Granero La 21. ¿Qué necesitas?'),
   } as unknown as SalesAgentService;
 
   const sessionReset = jest.fn();
   const sessions = {
     append: jest.fn((_key: string, turn: unknown) => [turn]),
     reset: sessionReset,
+    markDay: jest.fn().mockReturnValue(true),
     rememberOrder: jest.fn().mockReturnValue(true),
     pruneExpired: jest.fn(),
   } as unknown as SellerSessionStore;
@@ -119,12 +121,23 @@ describe('WhatsappHandlerService.process', () => {
     expect(h.handleMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('un comando de reinicio resetea la sesión y saluda, sin llamar al agente', async () => {
+  it('un comando de reinicio resetea la sesión y envía el saludo del bot, sin IA', async () => {
     const h = makeHandler(tenant());
     await h.handler.process([message({ text: '/start', messageId: 'wamid.reset' })]);
     expect(h.sessionReset).toHaveBeenCalledTimes(1);
     expect(h.handleMessage).not.toHaveBeenCalled();
     expect(h.sendText).toHaveBeenCalledTimes(1);
+    expect(h.sendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Buenos días, soy Diana de Granero La 21. ¿Qué necesitas?',
+      }),
+    );
+  });
+
+  it('pasa al agente la marca de primer mensaje del día', async () => {
+    const h = makeHandler(tenant());
+    await h.handler.process([message()]);
+    expect(h.handleMessage.mock.calls[0][2]).toEqual({ firstMessageOfDay: true });
   });
 
   it('no responde si no hay token (ni propio ni compartido)', async () => {

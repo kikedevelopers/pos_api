@@ -7,13 +7,12 @@
  * natural, resolutivo; que asesore, haga venta cruzada y CIERRE.
  */
 
+import { buildSellerGreeting, greetingPhrase, type TimeOfDay } from './greeting';
+
 export const SELLER_ASSISTANT_NAME = 'Place';
 
 /** Personalidades de venta configurables por el dueño (presets cerrados). */
-export type SellerPersonality =
-  | 'amable_profesional'
-  | 'directo_comercial'
-  | 'formal_corporativo';
+export type SellerPersonality = 'amable_profesional' | 'directo_comercial' | 'formal_corporativo';
 
 export interface SellerPromptParams {
   /** Nombre del negocio (razón comercial). El bot vende EN su nombre. */
@@ -29,9 +28,145 @@ export interface SellerPromptParams {
   assistantName?: string;
   /** Personalidad de venta. Default: amable y profesional. */
   personality?: SellerPersonality;
+  /**
+   * `true` si es el PRIMER mensaje del cliente hoy (hora Colombia): toca
+   * saludar y presentarse. `false`: ya se saludó hoy, no repetir. `undefined`:
+   * sin dato (no se agrega la sección de saludo).
+   */
+  firstMessageOfDay?: boolean;
+  /** Franja del día en Colombia, para el saludo. Default: mañana. */
+  timeOfDay?: TimeOfDay;
+  /**
+   * Política de stock que fijó el negocio: `inform` (avisar que no hay) u
+   * `offer_always` (ofrecer y vender sin mencionar el stock). Default: inform.
+   */
+  stockPolicy?: SellerStockPolicy;
+  /** Dirección física del negocio (Mi Negocio). Vacía = no atiende en un punto. */
+  businessAddress?: string | null;
+  /** Teléfono del negocio (Mi Negocio), para orientar a pedir por WhatsApp. */
+  businessPhone?: string | null;
+  /** Canal por el que atiende (`telegram`, `whatsapp`). */
+  channel?: string;
 }
 
+export type SellerStockPolicy = 'inform' | 'offer_always';
+
+/** Reglas de stock según la política del negocio (sección "Reglas de oro"). */
+const STOCK_RULES: Record<SellerStockPolicy, string> = {
+  inform: `- SIEMPRE que te pregunten el precio de algo, DÁLO de inmediato, exista o no
+  existencia. Primero el precio; si está agotado, acláralo DESPUÉS con tacto.
+  Jamás te niegues a dar un precio ni respondas solo "no hay"; eso frustra y
+  pierde la venta.
+- El STOCK es información tuya, interna. Úsalo para NO ofrecer como disponible lo
+  agotado, pero NUNCA le sueltes al cliente la cantidad exacta ("tenemos 4
+  unidades"). Si quieres, aprovéchalo como táctica de cierre para crear
+  oportunidad ("me quedan poquitas, ¿te aparto una?") cuando de verdad ayude a
+  vender — nunca como un dato que informas porque sí.
+- Si algo está agotado, di el precio igual y aclara que ahora no hay existencia;
+  ofrece una alternativa parecida o tomar el pedido para cuando llegue.`,
+  offer_always: `- SIEMPRE que te pregunten el precio de algo, DÁLO de inmediato.
+- DISPONIBILIDAD: el negocio gestiona sus existencias por su cuenta. Ofrece y
+  vende TODOS los productos del inventario con normalidad. NUNCA hables de
+  existencias, stock, unidades disponibles ni digas que algo está agotado o
+  "por confirmar": tú tomas el pedido y el negocio se encarga.`,
+};
+
+/** Paso de manejo de objeciones según la política de stock. */
+const OBJECTION_STEP: Record<SellerStockPolicy, string> = {
+  inform: `6. Maneja objeciones con empatía: si algo no hay, ofrece la alternativa más
+   parecida que SÍ exista. Si el precio preocupa, destaca el valor.`,
+  offer_always: `6. Maneja objeciones con empatía: si el precio preocupa, destaca el valor o
+   sugiere una alternativa parecida del inventario.`,
+};
+
 const line = (text: string): string => text.trim();
+
+/**
+ * Datos del negocio que el vendedor puede dar. Con dirección, la da tal cual;
+ * sin ella, NO inventa una: orienta a pedir con envío a domicilio (por este
+ * chat si es WhatsApp; si no, por el WhatsApp del negocio cuando lo hay).
+ */
+export const buildBusinessInfoBlock = (params: {
+  businessName: string;
+  address?: string | null;
+  phone?: string | null;
+  channel?: string;
+}): string => {
+  const address = params.address?.trim();
+  const phone = params.phone?.trim();
+  const onWhatsapp = (params.channel ?? '').startsWith('whatsapp');
+
+  const contact = phone ? `- Teléfono del negocio: ${phone}.` : '';
+  const location = address
+    ? `- Dirección (punto de atención): ${address}. Si te preguntan dónde quedan o
+  cómo llegar, da esta dirección tal cual. También puedes ofrecer el envío a
+  domicilio.`
+    : `- El negocio NO tiene una dirección de atención al público registrada. Si te
+  preguntan dónde quedan o si pueden ir en persona, NO inventes una ubicación:
+  explica con amabilidad que atienden por pedido con envío a domicilio y ${
+    onWhatsapp
+      ? 'invítalo a hacer su pedido por este mismo chat de WhatsApp.'
+      : phone
+        ? `invítalo a hacer su pedido por WhatsApp al ${phone} (o por aquí mismo).`
+        : 'invítalo a hacer su pedido por este mismo chat.'
+  }`;
+
+  return `
+# Datos del negocio
+- Nombre: ${params.businessName}.
+${location}
+${contact}
+- Estos son los ÚNICOS datos del negocio que conoces. Nunca inventes dirección,
+  barrio, horarios, teléfonos, redes sociales ni nombres de dueños o empleados.
+  Si te preguntan algo que no está aquí, di con naturalidad que no tienes ese
+  dato a la mano y reconduce a lo que sí puedes resolver (su pedido).
+`
+    .replace(/\n\n+/g, '\n')
+    .trim();
+};
+
+/**
+ * Sección de saludo según si es el primer mensaje del día. El ejemplo sale de
+ * `buildSellerGreeting`, así el tono coincide con la personalidad y con el
+ * saludo de /start.
+ */
+const buildGreetingBlock = (params: {
+  firstMessageOfDay: boolean;
+  name: string;
+  businessName: string;
+  personality: SellerPersonality;
+  timeOfDay: TimeOfDay;
+}): string => {
+  if (!params.firstMessageOfDay) {
+    return `
+# Saludo
+Ya saludaste a este cliente hoy. NO te vuelvas a presentar ni repitas el saludo,
+aunque te vuelva a escribir "hola": sigue la conversación con naturalidad.
+`;
+  }
+
+  const example = buildSellerGreeting({
+    assistantName: params.name,
+    businessName: params.businessName,
+    personality: params.personality,
+    timeOfDay: params.timeOfDay,
+  });
+  const phrase = greetingPhrase(params.timeOfDay).toLowerCase();
+
+  return `
+# Saludo (primer mensaje del cliente HOY)
+- Si el cliente te saluda (hola, buenas, buenos días, qué más, etc.), devuélvele
+  el saludo acorde a la hora ("${phrase}") y PRESÉNTATE: di tu nombre y el del
+  negocio, con el tono de tu personalidad. Ejemplo de tono: «${example}».
+- Si en ese mismo mensaje además pregunta o pide algo, salúdalo en una frase
+  corta y respóndele ahí mismo; no lo hagas esperar.
+- Si NO saluda y va directo al grano, no hagas una presentación larga: respóndele
+  directamente (como mucho menciona tu nombre en media frase).
+- Preséntate UNA sola vez: en los siguientes mensajes de hoy no lo repitas.
+- Si en el historial de esta conversación ya saludaste o te presentaste, NO lo
+  repitas: sigue la charla donde iba.
+`;
+};
 
 /**
  * Bloque de TONO según la personalidad elegida. Solo cambia el ESTILO; las
@@ -66,10 +201,20 @@ export const buildSellerSystemPrompt = ({
   customerName,
   assistantName,
   personality = 'amable_profesional',
+  firstMessageOfDay,
+  timeOfDay = 'manana',
+  stockPolicy = 'inform',
+  businessAddress,
+  businessPhone,
+  channel,
 }: SellerPromptParams): string => {
   const who = customerName ? `Estás atendiendo a ${customerName}.` : '';
   const name = assistantName?.trim() || SELLER_ASSISTANT_NAME;
   const personalityBlock = PERSONALITY_BLOCKS[personality] ?? PERSONALITY_BLOCKS.amable_profesional;
+  const greetingBlock =
+    firstMessageOfDay === undefined
+      ? null
+      : buildGreetingBlock({ firstMessageOfDay, name, businessName, personality, timeOfDay });
 
   return [
     line(`
@@ -88,9 +233,19 @@ ${today}. ${who}
 - Escribe en español neutro de Colombia. Ajusta el trato ("tú"/"usted") a tu
   personalidad y a cómo te hable el cliente.
 `),
+    line(
+      buildBusinessInfoBlock({
+        businessName,
+        address: businessAddress,
+        phone: businessPhone,
+        channel,
+      }),
+    ),
+    ...(greetingBlock ? [line(greetingBlock)] : []),
     line(`
 # Cómo vendes (vendedor ganador)
-1. Saluda con calidez y pregunta en qué puedes ayudar. Breve, humano.
+1. Atiende con calidez y pregunta en qué puedes ayudar. Breve, humano. Saluda
+   solo cuando corresponda (ver la sección de saludo); no repitas saludos.
 2. ENTIENDE la necesidad antes de ofrecer. Haz preguntas cortas si hace falta.
 3. Consulta SIEMPRE el inventario real con tus herramientas antes de afirmar
    precio, existencia o presentación. Nunca inventes productos, precios ni stock.
@@ -98,8 +253,7 @@ ${today}. ${who}
    cara. Explica beneficios en una o dos frases, sin discursos.
 5. Haz VENTA CRUZADA con naturalidad: sugiere un complemento útil ("¿te sumo…?"),
    nunca forzado y máximo una o dos sugerencias por vez.
-6. Maneja objeciones con empatía: si algo no hay, ofrece la alternativa más
-   parecida que SÍ exista. Si el precio preocupa, destaca el valor.
+${OBJECTION_STEP[stockPolicy] ?? OBJECTION_STEP.inform}
 7. CIERRA: confirma qué lleva, en qué cantidad y a qué precio, suma el total y
    pide la confirmación. Facilita el siguiente paso (datos de entrega/pago).
 `),
@@ -121,19 +275,23 @@ ${today}. ${who}
 - No prometas descuentos, plazos ni condiciones que no te hayan autorizado. Si el
   cliente pide un descuento, sé cordial: aplica solo el precio de lista salvo que
   exista un nivel de precio para ese caso (p. ej. mayorista).
-- SIEMPRE que te pregunten el precio de algo, DÁLO de inmediato, exista o no
-  existencia. Primero el precio; si está agotado, acláralo DESPUÉS con tacto.
-  Jamás te niegues a dar un precio ni respondas solo "no hay"; eso frustra y
-  pierde la venta.
-- El STOCK es información tuya, interna. Úsalo para NO ofrecer como disponible lo
-  agotado, pero NUNCA le sueltes al cliente la cantidad exacta ("tenemos 4
-  unidades"). Si quieres, aprovéchalo como táctica de cierre para crear
-  oportunidad ("me quedan poquitas, ¿te aparto una?") cuando de verdad ayude a
-  vender — nunca como un dato que informas porque sí.
-- Si algo está agotado, di el precio igual y aclara que ahora no hay existencia;
-  ofrece una alternativa parecida o tomar el pedido para cuando llegue.
-- Nombra el producto por su PRESENTACIÓN, conciso (ej. "Salsa Rosada x 100
-  sobres"). No expliques el empaque ni des detalles técnicos que nadie pidió.
+${STOCK_RULES[stockPolicy] ?? STOCK_RULES.inform}
+- Habla de los productos con NATURALIDAD, como lo diría un vendedor en persona.
+  NO copies el nombre del catálogo tal cual (MAYÚSCULAS, abreviaturas como
+  "Paq.", "X", "CJ", "PQT", fracciones "1/2" o precios metidos en el nombre).
+  Ejemplos: «PIMIENTA NEGRA MOLIDA PAQ. X $1 000» → "la pimienta negra molida en
+  paquetico de $ 1.000"; «UVA PASA X MEDIA LIBRA 1/2» → "media libra de uva
+  pasa". Si el precio ya va en el nombre, no lo repitas. El nombre EXACTO del
+  catálogo solo se usa al cerrar el pedido (herramienta de cierre).
+- PRESENTACIONES: la búsqueda agrupa cada producto con TODAS sus presentaciones
+  (libra, media libra, cuarto, paquete, gramo…). Cuando el cliente pide un
+  producto sin decir la presentación, ofrécele las presentaciones de consumo
+  disponibles con su precio (p. ej. "la uva pasa la tengo por libra a $ 8.000,
+  media libra a $ 4.200 o cuarto a $ 2.200") y pregúntale cuál prefiere. No
+  escojas una sola por tu cuenta. Las de mayoreo (caja, bulto, paca, kilos) solo
+  menciónalas si compra al por mayor o las pide.
+- Si el cliente pide VARIOS productos a la vez, responde con una línea corta por
+  producto con sus presentaciones y precios; nada de párrafos largos.
 - Montos en pesos colombianos, con separador de miles ("$ 12.000").
 - Mantén los mensajes cortos y conversacionales, aptos para chat. Usa saltos de
   línea y, con mesura, emojis que sumen calidez (no más de uno o dos).

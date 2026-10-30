@@ -7,6 +7,15 @@ export const formatCop = (value: number): string => {
   return `$ ${withSep}`;
 };
 
+/** Firma estable de un pedido (líneas + total) para detectar un doble cierre. */
+export const orderSignature = (order: ClosedOrder): string => {
+  const lines = order.items
+    .map((item) => `${item.name}|${item.quantity}|${item.unit_price}`)
+    .sort()
+    .join(';');
+  return `${lines}#${order.total}`;
+};
+
 /**
  * Mensaje que recibe el DUEÑO cuando el vendedor cierra un pedido. Pensado para
  * leerse de un vistazo en el chat: qué pidieron, cuánto, y cómo ubicar al cliente.

@@ -8,6 +8,7 @@ import type { SalesAgentService } from '../seller-agent.service';
 import type { SalesBotConfigService } from '../sales-bot-config.service';
 import type { SellerSessionStore } from '../internal/session-store';
 import type { SalesBotConfigEntity } from '../entities/sales-bot-config.entity';
+import type { SalesBotTakeoverService } from '../sales-bot-takeover.service';
 
 const envConfig = (overrides: Partial<SalesBotConfig> = {}): SalesBotConfig => ({
   enabled: false,
@@ -66,7 +67,9 @@ const makeManager = (env: SalesBotConfig): Harness => {
     .spyOn(TelegramBotWorker.prototype, 'stop')
     .mockResolvedValue(undefined);
 
-  const manager = new TelegramBotManager(configService, agent, sessions, botConfig);
+  const takeovers = {} as unknown as SalesBotTakeoverService;
+
+  const manager = new TelegramBotManager(configService, agent, sessions, botConfig, takeovers);
   return { manager, startSpy, stopSpy, listRunnable, getEntity, isReady };
 };
 

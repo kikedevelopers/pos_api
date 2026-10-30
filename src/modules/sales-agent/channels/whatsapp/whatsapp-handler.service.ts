@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { WhatsappConfig } from '@/config/whatsapp.config';
+import { todayUtcDate } from '@/modules/reports/internal/range';
 
 import { formatOrderForOwner } from '../../internal/order-format';
 import { SellerSessionStore } from '../../internal/session-store';
@@ -91,18 +92,20 @@ export class WhatsappHandlerService {
       messageId: message.messageId,
     });
 
-    const sessionKey = SellerSessionStore.key(`${CHANNEL}:${companyId}`, message.from);
+    const sessionKey = SellerSessionStore.key(companyId, CHANNEL, message.from);
+
+    const today = todayUtcDate();
 
     if (RESET_COMMANDS.has(message.text.toLowerCase())) {
-      this.sessions.reset(sessionKey);
-      await this.client.sendText({
-        ...send,
-        text: '¡Hola! 👋 Soy tu asesor. ¿En qué te puedo ayudar hoy?',
-      });
+      await this.sessions.reset(sessionKey);
+      const greeting = await this.agent.greeting(companyId);
+      await this.sessions.markDay(sessionKey, today);
+      await this.client.sendText({ ...send, text: greeting });
       return;
     }
 
-    const turns = this.sessions.append(sessionKey, { role: 'user', content: message.text });
+    const firstMessageOfDay = await this.sessions.markDay(sessionKey, today);
+    const turns = await this.sessions.append(sessionKey, { role: 'user', content: message.text });
 
     const result = await this.agent.handleMessage(
       {
@@ -112,16 +115,17 @@ export class WhatsappHandlerService {
         chatDisplayName: message.senderName,
       },
       turns,
+      { firstMessageOfDay },
     );
 
-    this.sessions.append(sessionKey, { role: 'assistant', content: result.reply });
+    await this.sessions.append(sessionKey, { role: 'assistant', content: result.reply });
     await this.client.sendText({ ...send, text: result.reply });
 
     // Avisa al dueño de cada pedido cerrado (dedupe por sesión).
     const ownerChatId = tenant.owner_chat_id?.trim();
     for (const order of result.orders) {
       const signature = orderSignature(order);
-      if (!this.sessions.rememberOrder(sessionKey, signature)) continue;
+      if (!(await this.sessions.rememberOrder(sessionKey, signature))) continue;
       if (ownerChatId) {
         await this.client.sendText({
           phoneNumberId: message.phoneNumberId,
@@ -136,8 +140,6 @@ export class WhatsappHandlerService {
         );
       }
     }
-
-    this.sessions.pruneExpired();
   }
 
   private remember(messageId: string): void {

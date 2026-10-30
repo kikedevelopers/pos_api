@@ -7,7 +7,6 @@ import {
   SALES_BOT_CHANNELS,
   SALES_BOT_PERSONALITIES,
   SalesBotConfigEntity,
-  isSalesBotPersonality,
   type SalesBotChannel,
   type SalesBotPersonality,
 } from './entities/sales-bot-config.entity';
@@ -16,7 +15,9 @@ import {
 export interface SalesBotPublicConfig {
   channel: 'telegram';
   enabled: boolean;
+  /** @deprecated Legado de clientes viejos; la persona vive en `sales_bot_settings`. */
   bot_name: string;
+  /** @deprecated Legado de clientes viejos; la persona vive en `sales_bot_settings`. */
   personality: SalesBotPersonality;
   /** `true` si hay un token guardado (el valor nunca se expone). */
   has_token: boolean;
@@ -28,8 +29,6 @@ export interface SalesBotPublicConfig {
 
 /** Entrada para guardar la config desde el menú del dueño. */
 export interface UpdateSalesBotConfigInput {
-  bot_name: string;
-  personality: SalesBotPersonality;
   enabled: boolean;
   /**
    * Token de @BotFather. `undefined`/`''` = conservar el que ya haya guardado
@@ -40,17 +39,13 @@ export interface UpdateSalesBotConfigInput {
   owner_chat_id?: string | null;
 }
 
-/** Persona del bot que consume el prompt del vendedor. */
-export interface SalesBotPersona {
-  botName: string;
-  personality: SalesBotPersonality;
-}
-
 /** Vista PÚBLICA de la config de WhatsApp (sin el token). */
 export interface SalesBotWhatsappPublicConfig {
   channel: 'whatsapp';
   enabled: boolean;
+  /** @deprecated Legado de clientes viejos; la persona vive en `sales_bot_settings`. */
   bot_name: string;
+  /** @deprecated Legado de clientes viejos; la persona vive en `sales_bot_settings`. */
   personality: SalesBotPersonality;
   /** `true` si el negocio guardó un token propio (el valor nunca se expone). */
   has_token: boolean;
@@ -62,8 +57,6 @@ export interface SalesBotWhatsappPublicConfig {
 
 /** Entrada para guardar la config de WhatsApp (modo manual). */
 export interface UpdateWhatsappConfigInput {
-  bot_name: string;
-  personality: SalesBotPersonality;
   enabled: boolean;
   phone_number_id?: string | null;
   /** Token propio del negocio. `''`/`undefined` = conservar el guardado. */
@@ -78,8 +71,6 @@ export interface TokenValidationResult {
   bot_username: string | null;
   bot_name: string | null;
 }
-
-const MAX_BOT_NAME_LEN = 60;
 
 /**
  * Acceso a la configuración del bot vendedor por negocio. Única fuente de la
@@ -116,28 +107,6 @@ export class SalesBotConfigService {
     return toPublicConfig(entity);
   }
 
-  /**
-   * Nombre + personalidad para el prompt, del canal indicado. Defaults si no hay
-   * config. Si el canal no es Telegram y su fila no tiene nombre, cae al de
-   * Telegram (para no obligar a reconfigurar la persona en cada canal).
-   */
-  async getPersona(
-    companyId: number,
-    channel: SalesBotChannel = SALES_BOT_CHANNELS.TELEGRAM,
-  ): Promise<SalesBotPersona> {
-    const entity = await this.getEntity(companyId, channel);
-    let botName = entity?.bot_name?.trim() || '';
-    let personality = entity?.personality ?? SALES_BOT_PERSONALITIES.AMABLE_PROFESIONAL;
-
-    if (!botName && channel !== SALES_BOT_CHANNELS.TELEGRAM) {
-      const telegram = await this.getTelegramEntity(companyId);
-      botName = telegram?.bot_name?.trim() || '';
-      if (!entity) personality = telegram?.personality ?? personality;
-    }
-
-    return { botName, personality };
-  }
-
   /** Todas las configs de Telegram habilitadas y con token (para el manager). */
   listRunnableTelegram(): Promise<SalesBotConfigEntity[]> {
     return this.repo
@@ -163,24 +132,15 @@ export class SalesBotConfigService {
   }
 
   /**
-   * Crea o actualiza la config de Telegram del negocio. Valida nombre,
-   * personalidad y, si llega un token nuevo, lo verifica con getMe antes de
-   * guardarlo. No permite habilitar el bot sin un token válido.
+   * Crea o actualiza la config de Telegram del negocio. Si llega un token
+   * nuevo, lo verifica con getMe antes de guardarlo. No permite habilitar el bot
+   * sin un token válido. La persona (nombre/personalidad) NO se toca aquí: es de
+   * los ajustes del agente (`SalesBotSettingsService`).
    */
   async upsertTelegram(
     companyId: number,
     input: UpdateSalesBotConfigInput,
   ): Promise<SalesBotPublicConfig> {
-    const botName = (input.bot_name ?? '').trim();
-    if (botName.length > MAX_BOT_NAME_LEN) {
-      throw new BadRequestException(
-        `El nombre del bot no puede superar ${MAX_BOT_NAME_LEN} caracteres.`,
-      );
-    }
-    if (!isSalesBotPersonality(input.personality)) {
-      throw new BadRequestException('Personalidad del bot no válida.');
-    }
-
     const existing = await this.getTelegramEntity(companyId);
     const entity =
       existing ??
@@ -189,8 +149,6 @@ export class SalesBotConfigService {
         channel: SALES_BOT_CHANNELS.TELEGRAM,
       });
 
-    entity.bot_name = botName;
-    entity.personality = input.personality;
     entity.owner_chat_id = normalizeNullable(input.owner_chat_id);
 
     // Token nuevo → validar y adoptar identidad. Token vacío → conservar el actual.
@@ -244,24 +202,14 @@ export class SalesBotConfigService {
   }
 
   /**
-   * Crea o actualiza la config de WhatsApp del negocio (modo manual). No valida
-   * contra Meta (el token/numero se prueban al enviar); sí exige un
-   * `phone_number_id` para poder activar, y que no lo use otro negocio.
+   * Crea o actualiza la config de WhatsApp del negocio (número de avisos y
+   * encendido; la persona es de los ajustes del agente). No valida contra Meta. Si llega un
+   * `phone_number_id` (Cloud API), exige que no lo use otro negocio.
    */
   async upsertWhatsapp(
     companyId: number,
     input: UpdateWhatsappConfigInput,
   ): Promise<SalesBotWhatsappPublicConfig> {
-    const botName = (input.bot_name ?? '').trim();
-    if (botName.length > MAX_BOT_NAME_LEN) {
-      throw new BadRequestException(
-        `El nombre del bot no puede superar ${MAX_BOT_NAME_LEN} caracteres.`,
-      );
-    }
-    if (!isSalesBotPersonality(input.personality)) {
-      throw new BadRequestException('Personalidad del bot no válida.');
-    }
-
     const existing = await this.getEntity(companyId, SALES_BOT_CHANNELS.WHATSAPP);
     const entity =
       existing ??
@@ -270,11 +218,17 @@ export class SalesBotConfigService {
         channel: SALES_BOT_CHANNELS.WHATSAPP,
       });
 
-    entity.bot_name = botName;
-    entity.personality = input.personality;
     entity.owner_chat_id = normalizeNullable(input.owner_chat_id);
-    entity.whatsapp_phone_number_id = normalizeNullable(input.phone_number_id);
-    entity.whatsapp_waba_id = normalizeNullable(input.waba_id);
+
+    // Campos de la Cloud API de Meta: solo se tocan si vienen en el payload. El
+    // MVP conecta WhatsApp por QR desde el escritorio y no los envía, así que no
+    // deben borrarse por omisión.
+    if (input.phone_number_id !== undefined) {
+      entity.whatsapp_phone_number_id = normalizeNullable(input.phone_number_id);
+    }
+    if (input.waba_id !== undefined) {
+      entity.whatsapp_waba_id = normalizeNullable(input.waba_id);
+    }
 
     // Token propio opcional: solo se reemplaza si mandan uno nuevo no vacío.
     const newToken = (input.token ?? '').trim();
@@ -282,11 +236,8 @@ export class SalesBotConfigService {
       entity.whatsapp_access_token = newToken;
     }
 
-    if (input.enabled && !entity.whatsapp_phone_number_id) {
-      throw new BadRequestException(
-        'Para activar WhatsApp primero guarda el Phone number ID de tu número.',
-      );
-    }
+    // Activar no exige Phone number ID: con la conexión por QR el número lo
+    // aporta la sesión del escritorio, no la config.
     entity.enabled = Boolean(input.enabled);
 
     try {

@@ -8,11 +8,48 @@ import { buildGeminiRequest, hasSendableContent } from '@/modules/ai/internal/ge
 import type { ChatTurn, GeminiContent, GeminiPart } from '@/modules/ai/internal/gemini.types';
 import { todayUtcDate } from '@/modules/reports/internal/range';
 
-import { buildSellerSystemPrompt } from './internal/seller-prompt';
+import { nowBogota } from '@/common/utils/dayjs';
+
+import { buildSellerGreeting, timeOfDayFromHour } from './internal/greeting';
+import { buildSellerSystemPrompt, SELLER_ASSISTANT_NAME } from './internal/seller-prompt';
 import { SELLER_TOOLS } from './internal/seller-tools';
 import { SellerToolRunner, type SellerToolContext } from './internal/seller-tool-runner';
 import type { ClosedOrder, SellerReply } from './internal/types';
-import { SalesBotConfigService } from './sales-bot-config.service';
+import { SalesBotSettingsService } from './sales-bot-settings.service';
+
+/** Opciones por mensaje que el canal le pasa al vendedor. */
+export interface SellerMessageOptions {
+  /** `true` si es el primer mensaje del cliente hoy (hora Colombia). */
+  firstMessageOfDay?: boolean;
+}
+
+/** Datos públicos del negocio para el vendedor. */
+interface BusinessProfile {
+  name: string;
+  address: string | null;
+  phone: string | null;
+}
+
+/** Vigencia de la caché de datos del negocio (5 min). */
+const BUSINESS_PROFILE_TTL_MS = 5 * 60 * 1000;
+
+/** Nota de voz del cliente (base64) que el canal descargó. */
+export interface SellerAudioInput {
+  /** Contenido del audio en base64 (sin prefijo `data:`). */
+  data: string;
+  /** Tipo MIME (`audio/ogg; codecs=opus` en WhatsApp/Telegram). */
+  mime_type: string;
+}
+
+/** Tope del audio en base64 (~12 MB): notas de voz de varios minutos caben. */
+export const MAX_AUDIO_BASE64_LENGTH = 16 * 1024 * 1024;
+
+/** Respuesta cuando no se pudo entender (o procesar) una nota de voz. */
+export const AUDIO_NOT_UNDERSTOOD_REPLY =
+  'Uy, no logré escuchar bien tu audio 🙈 ¿Me lo escribes o me mandas otro, por favor?';
+
+const TRANSCRIBE_INSTRUCTION =
+  'Transcribe literalmente lo que dice esta nota de voz (español de Colombia). Devuelve SOLO el texto dicho, sin comillas, etiquetas ni comentarios. Si no hay voz o no se entiende nada, responde exactamente: [inaudible]';
 
 /** Último recurso cuando el servidor no tiene IA o algo falla feo. */
 const FALLBACK_REPLY =
@@ -27,14 +64,14 @@ const FALLBACK_REPLY =
 @Injectable()
 export class SalesAgentService {
   private readonly logger = new Logger(SalesAgentService.name);
-  private readonly businessNameCache = new Map<number, string>();
+  private readonly profileCache = new Map<number, { profile: BusinessProfile; at: number }>();
 
   constructor(
     private readonly configService: ConfigService,
     private readonly gemini: GeminiClient,
     private readonly toolRunner: SellerToolRunner,
     private readonly dataSource: DataSource,
-    private readonly botConfig: SalesBotConfigService,
+    private readonly botSettings: SalesBotSettingsService,
   ) {}
 
   private get config(): SalesBotConfig {
@@ -51,13 +88,17 @@ export class SalesAgentService {
    * Nunca lanza: cualquier fallo se traduce en una respuesta cordial para no
    * dejar al cliente en visto.
    */
-  async handleMessage(context: SellerToolContext, turns: ChatTurn[]): Promise<SellerReply> {
+  async handleMessage(
+    context: SellerToolContext,
+    turns: ChatTurn[],
+    options: SellerMessageOptions = {},
+  ): Promise<SellerReply> {
     if (!this.gemini.isEnabled()) {
       return { reply: FALLBACK_REPLY, orders: [] };
     }
 
     try {
-      return await this.run(context, turns);
+      return await this.run(context, turns, options);
     } catch (error) {
       this.logger.error(
         { err: error, companyId: context.companyId, channel: context.channel },
@@ -67,22 +108,92 @@ export class SalesAgentService {
     }
   }
 
-  private async run(context: SellerToolContext, turns: ChatTurn[]): Promise<SellerReply> {
+  /**
+   * Transcribe una nota de voz del cliente a texto, para atenderla como un
+   * mensaje escrito (misma memoria, mismo flujo en todos los canales). Devuelve
+   * `null` si no hay IA, el audio no es válido o no se entendió nada. Nunca lanza.
+   */
+  async transcribeAudio(audio: SellerAudioInput): Promise<string | null> {
+    const data = audio.data?.trim() ?? '';
+    const mimeType = audio.mime_type?.split(';')[0]?.trim().toLowerCase() ?? '';
+    if (!this.gemini.isEnabled() || !data || !mimeType.startsWith('audio/')) {
+      return null;
+    }
+    if (data.length > MAX_AUDIO_BASE64_LENGTH) {
+      return null;
+    }
+
+    try {
+      const body = {
+        contents: [
+          {
+            role: 'user' as const,
+            parts: [{ inlineData: { mimeType, data } }, { text: TRANSCRIBE_INSTRUCTION }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0,
+          topP: 1,
+          maxOutputTokens: 2048,
+          thinkingConfig: { thinkingBudget: this.config.thinkingBudget },
+        },
+      };
+      const model = this.gemini.resolveModel(this.config.model);
+      const result = await this.streamRoundWithRetry(body, model);
+      const text = result.error ? '' : result.text.trim();
+      if (!text || /^\[?inaudible\]?\.?$/i.test(text)) {
+        return null;
+      }
+      return text;
+    } catch (error) {
+      this.logger.error({ err: error }, 'No se pudo transcribir la nota de voz');
+      return null;
+    }
+  }
+
+  /**
+   * Saludo + presentación del vendedor (nombre, negocio, tono de la
+   * personalidad y franja horaria de Colombia). Lo usan los canales cuando el
+   * cliente reinicia la conversación (/start). No llama a la IA.
+   */
+  async greeting(companyId: number): Promise<string> {
+    const { name: businessName } = await this.businessProfile(companyId);
+    // La persona es la misma en todos los canales (ajustes del agente).
+    const settings = await this.botSettings.get(companyId);
+    return buildSellerGreeting({
+      assistantName: settings.bot_name || SELLER_ASSISTANT_NAME,
+      businessName,
+      personality: settings.personality,
+      timeOfDay: timeOfDayFromHour(nowBogota().hour()),
+    });
+  }
+
+  private async run(
+    context: SellerToolContext,
+    turns: ChatTurn[],
+    options: SellerMessageOptions,
+  ): Promise<SellerReply> {
     const config = this.config;
-    const businessName = await this.businessName(context.companyId);
-    const persona = await this.botConfig.getPersona(
-      context.companyId,
-      context.channel as 'telegram' | 'whatsapp',
-    );
+    const business = await this.businessProfile(context.companyId);
+    const settings = await this.botSettings.get(context.companyId);
     const model = this.gemini.resolveModel(config.model);
 
     const systemPrompt = buildSellerSystemPrompt({
-      businessName,
+      businessName: business.name,
+      businessAddress: business.address,
+      businessPhone: business.phone,
+      channel: context.channel,
       today: todayUtcDate(),
       customerName: context.chatDisplayName,
-      assistantName: persona.botName,
-      personality: persona.personality,
+      assistantName: settings.bot_name,
+      personality: settings.personality,
+      firstMessageOfDay: options.firstMessageOfDay,
+      timeOfDay: timeOfDayFromHour(nowBogota().hour()),
+      stockPolicy: settings.stock_policy,
     });
+    // Las herramientas también obedecen la política de stock (ocultan el stock
+    // al modelo cuando el negocio pide ofrecer siempre).
+    const toolContext: SellerToolContext = { ...context, stockPolicy: settings.stock_policy };
 
     const body = buildGeminiRequest({
       turns,
@@ -96,9 +207,9 @@ export class SalesAgentService {
     // Con herramientas este modelo NO acepta thinkingBudget 0 (error 400), así que
     // se usa un presupuesto bajo configurable. `thinkingConfig` no está en el tipo
     // compartido (el chat del dueño razona a fondo), por eso se agrega solo aquí.
-    (
-      body.generationConfig as { thinkingConfig?: { thinkingBudget: number } }
-    ).thinkingConfig = { thinkingBudget: config.thinkingBudget };
+    (body.generationConfig as { thinkingConfig?: { thinkingBudget: number } }).thinkingConfig = {
+      thinkingBudget: config.thinkingBudget,
+    };
 
     if (!hasSendableContent(body)) {
       return { reply: '¿En qué te puedo ayudar? 😊', orders: [] };
@@ -138,7 +249,7 @@ export class SalesAgentService {
 
       const responseParts: GeminiPart[] = [];
       for (const call of result.functionCalls) {
-        const execution = await this.toolRunner.execute(call, context);
+        const execution = await this.toolRunner.execute(call, toolContext);
         if (execution.order) {
           orders.push(execution.order);
         }
@@ -169,25 +280,37 @@ export class SalesAgentService {
     model: string,
   ): Promise<Awaited<ReturnType<GeminiClient['streamRound']>>> {
     const first = await this.gemini.streamRound(body, { model, onText: () => undefined });
-    if (!first.error) return first;
+    if (!first.error) {
+      return first;
+    }
 
     await new Promise((resolve) => setTimeout(resolve, 500));
     const second = await this.gemini.streamRound(body, { model, onText: () => undefined });
     return second;
   }
 
-  /** Nombre comercial del negocio (cacheado): el vendedor vende EN su nombre. */
-  private async businessName(companyId: number): Promise<string> {
-    const cached = this.businessNameCache.get(companyId);
-    if (cached) return cached;
+  /**
+   * Datos públicos del negocio (nombre, dirección, teléfono) que el vendedor
+   * puede dar al cliente. Caché corta: si el dueño edita su dirección, el
+   * agente la toma en pocos minutos.
+   */
+  private async businessProfile(companyId: number): Promise<BusinessProfile> {
+    const cached = this.profileCache.get(companyId);
+    if (cached && Date.now() - cached.at < BUSINESS_PROFILE_TTL_MS) {
+      return cached.profile;
+    }
 
-    const rows = await this.dataSource.query<Array<{ name: string }>>(
-      'SELECT name FROM companies WHERE id = $1 LIMIT 1',
-      [companyId],
-    );
-    const name = rows[0]?.name?.trim() || 'nuestro negocio';
-    this.businessNameCache.set(companyId, name);
-    return name;
+    const rows = await this.dataSource.query<
+      Array<{ name: string | null; address: string | null; phone_number: string | null }>
+    >('SELECT name, address, phone_number FROM companies WHERE id = $1 LIMIT 1', [companyId]);
+    const row = rows[0];
+    const profile: BusinessProfile = {
+      name: row?.name?.trim() || 'nuestro negocio',
+      address: row?.address?.trim() || null,
+      phone: row?.phone_number?.trim() || null,
+    };
+    this.profileCache.set(companyId, { profile, at: Date.now() });
+    return profile;
   }
 }
 

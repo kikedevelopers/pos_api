@@ -11,24 +11,64 @@ import {
   SALES_BOT_PERSONALITY_VALUES,
   type SalesBotPersonality,
 } from '../entities/sales-bot-config.entity';
+import {
+  SALES_BOT_STOCK_POLICY_VALUES,
+  type SalesBotStockPolicy,
+} from '../entities/sales-bot-settings.entity';
+
+/**
+ * Payload de `PUT /sales-bot/settings` — ajustes del agente (iguales en todos
+ * los canales). Los campos omitidos conservan su valor.
+ */
+export class UpdateSalesBotSettingsDto {
+  @ApiPropertyOptional({
+    example: 'Andrea',
+    description: 'Nombre con el que el asistente se presenta. Máx. 60. Vacío = nombre por defecto.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  bot_name?: string;
+
+  @ApiPropertyOptional({
+    enum: SALES_BOT_PERSONALITY_VALUES,
+    example: 'amable_profesional',
+    description: 'Personalidad de venta (tono).',
+  })
+  @IsOptional()
+  @IsIn(SALES_BOT_PERSONALITY_VALUES as unknown as string[])
+  personality?: SalesBotPersonality;
+
+  @ApiPropertyOptional({
+    enum: SALES_BOT_STOCK_POLICY_VALUES,
+    example: 'inform',
+    description:
+      'inform = avisa cuando no hay existencias; offer_always = ofrece y vende sin mencionar el stock.',
+  })
+  @IsOptional()
+  @IsIn(SALES_BOT_STOCK_POLICY_VALUES as unknown as string[])
+  stock_policy?: SalesBotStockPolicy;
+}
 
 /** Payload de `PUT /sales-bot/config` — configura el bot de Telegram del negocio. */
 export class UpdateSalesBotConfigDto {
-  @ApiProperty({
-    example: 'Andrea',
-    description: 'Nombre con el que el bot se presenta en el chat. Máx. 60 caracteres.',
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Obsoleto: la persona vive en `PUT /sales-bot/settings`. Se ignora.',
   })
+  @IsOptional()
   @IsString()
   @MaxLength(60)
-  bot_name!: string;
+  bot_name?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    deprecated: true,
     enum: SALES_BOT_PERSONALITY_VALUES,
-    example: 'amable_profesional',
-    description: 'Personalidad de venta del bot (tono).',
+    description: 'Obsoleto: la persona vive en `PUT /sales-bot/settings`. Se ignora.',
   })
+  @IsOptional()
   @IsIn(SALES_BOT_PERSONALITY_VALUES as unknown as string[])
-  personality!: SalesBotPersonality;
+  personality?: SalesBotPersonality;
 
   @ApiProperty({ example: true, description: 'true = el bot atiende; false = apagado.' })
   @IsBoolean()
@@ -59,14 +99,23 @@ export class ValidateSalesBotTokenDto {
 
 /** Payload de `PUT /sales-bot/whatsapp/config` — configura WhatsApp (modo manual). */
 export class UpdateWhatsappConfigDto {
-  @ApiProperty({ example: 'Andrea', description: 'Nombre con el que el bot se presenta. Máx. 60.' })
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Obsoleto: la persona vive en `PUT /sales-bot/settings`. Se ignora.',
+  })
+  @IsOptional()
   @IsString()
   @MaxLength(60)
-  bot_name!: string;
+  bot_name?: string;
 
-  @ApiProperty({ enum: SALES_BOT_PERSONALITY_VALUES, example: 'amable_profesional' })
+  @ApiPropertyOptional({
+    deprecated: true,
+    enum: SALES_BOT_PERSONALITY_VALUES,
+    description: 'Obsoleto: la persona vive en `PUT /sales-bot/settings`. Se ignora.',
+  })
+  @IsOptional()
   @IsIn(SALES_BOT_PERSONALITY_VALUES as unknown as string[])
-  personality!: SalesBotPersonality;
+  personality?: SalesBotPersonality;
 
   @ApiProperty({ example: true, description: 'true = el bot atiende por WhatsApp.' })
   @IsBoolean()
