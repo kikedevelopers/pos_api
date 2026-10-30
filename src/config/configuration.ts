@@ -7,6 +7,8 @@ import emailAlertsConfig, { type EmailAlertsConfig } from './email-alerts.config
 import feConfig, { type FeConfig } from './fe.config';
 import mailConfig, { type MailConfig } from './mail.config';
 import productImagesConfig, { type ProductImagesConfig } from './product-images.config';
+import salesBotConfig, { type SalesBotConfig } from './sales-bot.config';
+import whatsappConfig, { type WhatsappConfig } from './whatsapp.config';
 
 /**
  * Configuración unificada — agrupa todos los namespaces.
@@ -22,6 +24,8 @@ export const configurationLoaders = [
   feConfig,
   emailAlertsConfig,
   billingConfig,
+  salesBotConfig,
+  whatsappConfig,
 ];
 
 export type AppConfiguration = {
@@ -34,6 +38,8 @@ export type AppConfiguration = {
   fe: FeConfig;
   emailAlerts: EmailAlertsConfig;
   billing: BillingConfig;
+  salesBot: SalesBotConfig;
+  whatsapp: WhatsappConfig;
 };
 
 export {
@@ -46,6 +52,8 @@ export {
   feConfig,
   emailAlertsConfig,
   billingConfig,
+  salesBotConfig,
+  whatsappConfig,
 };
 export type {
   AppConfig,
@@ -57,4 +65,6 @@ export type {
   FeConfig,
   EmailAlertsConfig,
   BillingConfig,
+  SalesBotConfig,
+  WhatsappConfig,
 };

@@ -139,6 +139,22 @@ export const validationSchema = Joi.object({
   GEMINI_REQUEST_TIMEOUT_MS: Joi.number().integer().min(5000).max(600000).default(120000),
   GEMINI_MAX_TOOL_ROUNDS: Joi.number().integer().min(0).max(10).default(4),
 
+  // Place como VENDEDOR en canales de chat (Telegram hoy). Módulo aislado del
+  // asistente del dueño. Sin `SALES_BOT_ENABLED=true` + token, el poller no
+  // arranca y el módulo queda inerte.
+  SALES_BOT_ENABLED: Joi.string().valid('true', 'false').default('false'),
+  SALES_BOT_COMPANY_ID: Joi.string().allow('').default(''),
+  SALES_BOT_MODEL: Joi.string().allow('').default(''),
+  SALES_BOT_TEMPERATURE: Joi.number().min(0).max(2).default(0.8),
+  SALES_BOT_MAX_OUTPUT_TOKENS: Joi.number().integer().min(256).max(32768).default(2048),
+  SALES_BOT_MAX_TOOL_ROUNDS: Joi.number().integer().min(0).max(10).default(4),
+  // Razonamiento BAJO del vendedor. Con tools el modelo rechaza 0 → mínimo 1.
+  SALES_BOT_THINKING_BUDGET: Joi.number().integer().min(0).max(24576).default(128),
+  SALES_BOT_TELEGRAM_TOKEN: Joi.string().allow('').default(''),
+  SALES_BOT_TELEGRAM_POLL_INTERVAL_MS: Joi.number().integer().min(300).max(60000).default(1500),
+  SALES_BOT_TELEGRAM_LONG_POLL_TIMEOUT_SEC: Joi.number().integer().min(0).max(50).default(30),
+  SALES_BOT_TELEGRAM_OWNER_CHAT_ID: Joi.string().allow('').default(''),
+
   // ---------------------------------------------------------------------------
   // Correo saliente (módulo `mail`)
   // ---------------------------------------------------------------------------

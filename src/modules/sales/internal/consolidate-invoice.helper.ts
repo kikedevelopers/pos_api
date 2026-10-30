@@ -31,6 +31,12 @@ export interface ConsolidatedLine {
   price_mode: 'fixed' | 'manual';
   price_position: number | null;
   /**
+   * Nota libre por línea (talla, color, diseño...). Se persiste en
+   * `sale_invoice_line.note` y DEBE viajar al cliente: el flujo de edición la
+   * rehidrata en el carrito para no obligar a reescribir todas las notas.
+   */
+  note: string | null;
+  /**
    * FIX #2 (INTERNO — NUNCA se serializa al cliente). Factor de empaque
    * CONGELADO de la línea viva: para una línea original viene de
    * `sale_invoice_line.packaging_value`; para una creada por una ND viene de
@@ -220,6 +226,8 @@ function applyDebitAdjustment(
     margin,
     price_mode: 'fixed',
     price_position: null,
+    // Una línea nacida de una ND no tiene nota de venta propia.
+    note: null,
     // FIX #2 / #3: la línea consolidada nace de una ND → hereda sus snapshots.
     packaging_value: noteLine.packaging_value,
     combo_recipe: noteLine.combo_recipe,
@@ -304,6 +312,8 @@ function mapInvoiceLine(l: SaleInvoiceLine): ConsolidatedLine {
     // permiten al renderer hidratar el cart sin lógica condicional extra.
     price_mode: 'fixed',
     price_position: null,
+    // Nota por línea persistida: se rehidrata en el carrito al editar.
+    note: l.note ?? null,
     // FIX #2 (interno): factor congelado de la línea original (null = legacy).
     packaging_value: l.packaging_value,
     // FIX #3 (interno): receta congelada de la línea original (null = legacy
