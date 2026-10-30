@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 
 import { CatalogSemanticService } from './catalog-semantic.service';
 
@@ -17,7 +17,7 @@ export const INDEX_TEXTS_PER_RUN = 60;
 
 /**
  * Mantiene al día los vectores de significado del catálogo de los negocios que
- * tienen asistente de ventas configurado. Incremental: solo recalcula lo que
+ * tienen el asistente de ventas HABILITADO (panel superadmin). Incremental: solo recalcula lo que
  * cambió (producto nuevo, nombre, presentaciones o ficha), así que una corrida
  * sin cambios no gasta IA. Nunca lanza.
  *
@@ -30,8 +30,7 @@ export class CatalogIndexScheduler {
   private running = false;
 
   constructor(
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly access: SalesAgentAccessService,
     private readonly semantic: CatalogSemanticService,
   ) {}
 
@@ -46,11 +45,10 @@ export class CatalogIndexScheduler {
     }
     this.running = true;
     try {
-      const companies = await this.dataSource.query<Array<{ company_id: string }>>(
-        'SELECT DISTINCT company_id FROM sales_bot_configs',
-      );
+      // Solo negocios con el asistente habilitado: los demás no gastan IA.
+      const companies = await this.access.enabledCompanyIds();
       let budget = INDEX_TEXTS_PER_RUN;
-      for (const { company_id } of companies) {
+      for (const company_id of companies) {
         if (budget <= 0) {
           break;
         }

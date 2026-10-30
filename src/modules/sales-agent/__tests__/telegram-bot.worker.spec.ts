@@ -226,7 +226,11 @@ describe('TelegramBotWorker.process — notas de voz', () => {
     await h.worker.process(voiceMessage());
 
     expect(h.downloadFile).toHaveBeenCalledWith('F1');
-    expect(h.transcribeAudio).toHaveBeenCalledWith({ data: 'T2dnUw==', mime_type: 'audio/ogg' });
+    expect(h.transcribeAudio).toHaveBeenCalledWith({
+      companyId: COMPANY_ID,
+      data: 'T2dnUw==',
+      mime_type: 'audio/ogg',
+    });
     const [, turns] = h.handleMessage.mock.calls[0];
     expect(turns[turns.length - 1]).toEqual({ role: 'user', content: '¿tienes maní dulce?' });
     expect(h.sendMessage).toHaveBeenCalledWith('900', 'Claro, ¿cuánto?', undefined);

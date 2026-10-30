@@ -8,6 +8,7 @@ import { SellerSessionStore } from '../../internal/session-store';
 import { AUDIO_NOT_UNDERSTOOD_REPLY, SalesAgentService } from '../../seller-agent.service';
 import { SalesBotConfigService } from '../../sales-bot-config.service';
 import { SalesBotTakeoverService } from '../../sales-bot-takeover.service';
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 
 const CHANNEL = 'whatsapp';
 
@@ -65,13 +66,15 @@ export class WhatsappWebRelayService {
     private readonly sessions: SellerSessionStore,
     private readonly botConfig: SalesBotConfigService,
     private readonly takeovers: SalesBotTakeoverService,
+    private readonly access: SalesAgentAccessService,
   ) {}
 
   /**
    * Un HUMANO respondió en este chat desde el teléfono/WhatsApp Web del
    * negocio: el agente se calla en ese chat hasta el inicio del día siguiente.
    */
-  takeover(companyId: number, chatId: string): Promise<{ paused_until: string }> {
+  async takeover(companyId: number, chatId: string): Promise<{ paused_until: string }> {
+    await this.access.assertEnabled(companyId);
     return this.takeovers.pause(companyId, CHANNEL, chatId.trim());
   }
 
@@ -89,6 +92,10 @@ export class WhatsappWebRelayService {
     }
     this.remember(messageKey);
 
+    // Agente inhabilitado para el negocio (panel superadmin): no responde nada.
+    if (!(await this.access.isEnabled(companyId))) {
+      return NO_REPLY;
+    }
     const config = await this.botConfig.getEntity(companyId, SALES_BOT_CHANNELS.WHATSAPP);
     if (!config?.enabled) {
       return NO_REPLY;
@@ -107,6 +114,7 @@ export class WhatsappWebRelayService {
     const text =
       typed ||
       (await this.agent.transcribeAudio({
+        companyId,
         data: audio,
         mime_type: input.audio_mime_type ?? '',
       })) ||

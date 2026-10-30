@@ -9,6 +9,7 @@ import type { SalesAgentService } from '../seller-agent.service';
 import type { SalesBotConfigService } from '../sales-bot-config.service';
 import { SellerSessionStore } from '../internal/session-store';
 import type { SalesBotConfigEntity } from '../entities/sales-bot-config.entity';
+import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 
 const waConfig: WhatsappConfig = {
   appSecret: 'secret',
@@ -43,6 +44,7 @@ interface Harness {
   findTenant: jest.Mock;
   sendText: jest.SpyInstance;
   sessionReset: jest.Mock;
+  isEnabled: jest.Mock;
 }
 
 const makeHandler = (tenantRow: SalesBotConfigEntity | null): Harness => {
@@ -74,13 +76,24 @@ const makeHandler = (tenantRow: SalesBotConfigEntity | null): Harness => {
   const sendText = jest.spyOn(WhatsappClient.prototype, 'sendText').mockResolvedValue(true);
   jest.spyOn(WhatsappClient.prototype, 'markRead').mockResolvedValue(undefined);
 
-  const handler = new WhatsappHandlerService(configService, agent, sessions, botConfig);
-  return { handler, handleMessage, findTenant, sendText, sessionReset };
+  const isEnabled = jest.fn().mockResolvedValue(true);
+  const access = { isEnabled } as unknown as SalesAgentAccessService;
+
+  const handler = new WhatsappHandlerService(configService, agent, sessions, botConfig, access);
+  return { handler, handleMessage, findTenant, sendText, sessionReset, isEnabled };
 };
 
 afterEach(() => jest.restoreAllMocks());
 
 describe('WhatsappHandlerService.process', () => {
+  it('con el agente inhabilitado desde el panel no responde ni llama a la IA', async () => {
+    const h = makeHandler(tenant());
+    h.isEnabled.mockResolvedValue(false);
+    await h.handler.process([message()]);
+    expect(h.handleMessage).not.toHaveBeenCalled();
+    expect(h.sendText).not.toHaveBeenCalled();
+  });
+
   it('ignora un mensaje cuyo número no pertenece a ningún negocio activo', async () => {
     const h = makeHandler(null);
     await h.handler.process([message()]);
@@ -158,7 +171,8 @@ describe('WhatsappHandlerService.process', () => {
     const sendText = jest.spyOn(WhatsappClient.prototype, 'sendText').mockResolvedValue(true);
     jest.spyOn(WhatsappClient.prototype, 'markRead').mockResolvedValue(undefined);
 
-    const handler = new WhatsappHandlerService(configService, agent, sessions, botConfig);
+    const access = { isEnabled: jest.fn().mockResolvedValue(true) } as unknown as SalesAgentAccessService;
+    const handler = new WhatsappHandlerService(configService, agent, sessions, botConfig, access);
     await handler.process([message()]);
 
     expect(handleMessage).not.toHaveBeenCalled();

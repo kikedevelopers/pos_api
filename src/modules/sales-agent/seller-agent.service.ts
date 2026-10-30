@@ -17,6 +17,8 @@ import { SellerToolRunner, type SellerToolContext } from './internal/seller-tool
 import type { ClosedOrder, SellerReply } from './internal/types';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
 import { SellerCartService } from './seller-cart.service';
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
+import { addUsage, EMPTY_USAGE } from '@/modules/ai/internal/ai-usage';
 import { describeCartForPrompt } from './internal/cart';
 
 /** Opciones por mensaje que el canal le pasa al vendedor. */
@@ -37,6 +39,8 @@ const BUSINESS_PROFILE_TTL_MS = 5 * 60 * 1000;
 
 /** Nota de voz del cliente (base64) que el canal descargó. */
 export interface SellerAudioInput {
+  /** Negocio que recibe la nota de voz (su consumo de IA suma a la cuenta). */
+  companyId: number;
   /** Contenido del audio en base64 (sin prefijo `data:`). */
   data: string;
   /** Tipo MIME (`audio/ogg; codecs=opus` en WhatsApp/Telegram). */
@@ -75,6 +79,7 @@ export class SalesAgentService {
     private readonly dataSource: DataSource,
     private readonly botSettings: SalesBotSettingsService,
     private readonly cart: SellerCartService,
+    private readonly access: SalesAgentAccessService,
   ) {}
 
   private get config(): SalesBotConfig {
@@ -143,6 +148,13 @@ export class SalesAgentService {
       };
       const model = this.gemini.resolveModel(this.config.model);
       const result = await this.streamRoundWithRetry(body, model);
+      await this.access.recordUsage({
+        companyId: audio.companyId,
+        kind: 'sales_agent_audio',
+        model,
+        usage: result.usage,
+        rounds: 1,
+      });
       const text = result.error ? '' : result.text.trim();
       if (!text || /^\[?inaudible\]?\.?$/i.test(text)) {
         return null;
@@ -230,55 +242,70 @@ export class SalesAgentService {
 
     const orders: ClosedOrder[] = [];
     const roundTexts: string[] = [];
+    // Consumo del mensaje: SUMA de todas sus rondas; suma a la IA de la cuenta.
+    let usage = EMPTY_USAGE;
+    let rounds = 0;
 
-    for (let round = 0; round <= config.maxToolRounds; round += 1) {
-      const isLastRound = round === config.maxToolRounds;
-      const roundBody = isLastRound ? { ...body, tools: undefined } : body;
+    try {
+      for (let round = 0; round <= config.maxToolRounds; round += 1) {
+        const isLastRound = round === config.maxToolRounds;
+        const roundBody = isLastRound ? { ...body, tools: undefined } : body;
 
-      const result = await this.streamRoundWithRetry(roundBody, model);
+        const result = await this.streamRoundWithRetry(roundBody, model);
+        usage = addUsage(usage, result.usage);
+        rounds += 1;
 
-      if (result.error) {
-        const partial = joinTexts(roundTexts);
-        return { reply: partial || FALLBACK_REPLY, orders };
-      }
-
-      if (result.text.trim().length > 0) {
-        roundTexts.push(result.text.trim());
-      }
-
-      // Sin llamadas a herramientas → el vendedor ya respondió.
-      if (result.functionCalls.length === 0) {
-        const reply = joinTexts(roundTexts);
-        return { reply: reply || '¿Te puedo ayudar con algo más? 😊', orders };
-      }
-
-      // Ronda de herramientas: se reenvían las partes del modelo tal cual
-      // (incluyen firmas de razonamiento que la API exige devolver intactas).
-      const modelContent: GeminiContent = {
-        role: 'model',
-        parts: result.parts.length > 0 ? result.parts : [{ text: result.text }],
-      };
-      body.contents.push(modelContent);
-
-      const responseParts: GeminiPart[] = [];
-      for (const call of result.functionCalls) {
-        const execution = await this.toolRunner.execute(call, toolContext);
-        if (execution.order) {
-          orders.push(execution.order);
+        if (result.error) {
+          const partial = joinTexts(roundTexts);
+          return { reply: partial || FALLBACK_REPLY, orders };
         }
-        responseParts.push({
-          functionResponse: { name: call.name, response: execution.response },
-        });
-      }
-      body.contents.push({ role: 'user', parts: responseParts });
-    }
 
-    // Se agotaron las rondas: devuelve lo que haya dicho, o un cierre cordial.
-    const reply = joinTexts(roundTexts);
-    return {
-      reply: reply || 'Dame un momento para confirmarte y seguimos. 🙏',
-      orders,
-    };
+        if (result.text.trim().length > 0) {
+          roundTexts.push(result.text.trim());
+        }
+
+        // Sin llamadas a herramientas → el vendedor ya respondió.
+        if (result.functionCalls.length === 0) {
+          const reply = joinTexts(roundTexts);
+          return { reply: reply || '¿Te puedo ayudar con algo más? 😊', orders };
+        }
+
+        // Ronda de herramientas: se reenvían las partes del modelo tal cual
+        // (incluyen firmas de razonamiento que la API exige devolver intactas).
+        const modelContent: GeminiContent = {
+          role: 'model',
+          parts: result.parts.length > 0 ? result.parts : [{ text: result.text }],
+        };
+        body.contents.push(modelContent);
+
+        const responseParts: GeminiPart[] = [];
+        for (const call of result.functionCalls) {
+          const execution = await this.toolRunner.execute(call, toolContext);
+          if (execution.order) {
+            orders.push(execution.order);
+          }
+          responseParts.push({
+            functionResponse: { name: call.name, response: execution.response },
+          });
+        }
+        body.contents.push({ role: 'user', parts: responseParts });
+      }
+
+      // Se agotaron las rondas: devuelve lo que haya dicho, o un cierre cordial.
+      const reply = joinTexts(roundTexts);
+      return {
+        reply: reply || 'Dame un momento para confirmarte y seguimos. 🙏',
+        orders,
+      };
+    } finally {
+      await this.access.recordUsage({
+        companyId: context.companyId,
+        kind: 'sales_agent',
+        model,
+        usage,
+        rounds,
+      });
+    }
   }
 
   /**

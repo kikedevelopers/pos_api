@@ -1,6 +1,8 @@
 import type { ConfigService } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 
+import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
+
 import { CatalogIndexScheduler, INDEX_TEXTS_PER_RUN } from '../catalog-index.scheduler';
 import { CatalogSemanticService, MIN_SEMANTIC_SCORE } from '../catalog-semantic.service';
 import {
@@ -254,19 +256,26 @@ describe('CatalogSemanticService.search', () => {
 
 describe('CatalogIndexScheduler', () => {
   const makeScheduler = (companies: string[]) => {
-    const dataSource = {
-      query: jest.fn().mockResolvedValue(companies.map((company_id) => ({ company_id }))),
-    } as unknown as DataSource;
+    // Solo los negocios con el asistente HABILITADO se indexan.
+    const enabledCompanyIds = jest.fn().mockResolvedValue(companies.map(Number));
+    const access = { enabledCompanyIds } as unknown as SalesAgentAccessService;
     const semantic = {
       isEnabled: jest.fn().mockReturnValue(true),
       indexCompany: jest.fn(),
     };
     const scheduler = new CatalogIndexScheduler(
-      dataSource,
+      access,
       semantic as unknown as CatalogSemanticService,
     );
-    return { scheduler, semantic };
+    return { scheduler, semantic, enabledCompanyIds };
   };
+
+  it('solo indexa negocios con el asistente habilitado (los demás no gastan IA)', async () => {
+    const h = makeScheduler([]);
+    await h.scheduler.run();
+    expect(h.enabledCompanyIds).toHaveBeenCalled();
+    expect(h.semantic.indexCompany).not.toHaveBeenCalled();
+  });
 
   it('reparte el presupuesto por minuto entre los negocios', async () => {
     const h = makeScheduler(['1', '2', '3']);

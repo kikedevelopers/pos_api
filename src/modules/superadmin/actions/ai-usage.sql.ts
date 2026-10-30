@@ -7,8 +7,23 @@
 /** Negocios que se listan en el ranking de consumo. */
 export const AI_USAGE_TOP_COMPANIES = 50;
 
+/** Tipos de consumo de Place (asistente del dueño). */
+export const PLACE_USAGE_KINDS = ['chat', 'greeting'] as const;
+
+/** Tipos de consumo del asistente de ventas (también suman a la cuenta). */
+export const SALES_AGENT_USAGE_KINDS = [
+  'sales_agent',
+  'sales_agent_audio',
+  'catalog_suggest',
+] as const;
+
+/**
+ * Rango [+ company] + tipos de consumo. Los tipos van en el ÚLTIMO parámetro:
+ * $3 sin company, $4 con company.
+ */
 const scope = (with_company: boolean): string =>
-  `e.created_at BETWEEN $1 AND $2${with_company ? ' AND e.company_id = $3' : ''}`;
+  `e.created_at BETWEEN $1 AND $2${with_company ? ' AND e.company_id = $3' : ''}` +
+  ` AND e.kind = ANY($${with_company ? 4 : 3}::text[])`;
 
 const TOKEN_SUMS = `
   COALESCE(SUM(e.prompt_tokens), 0)::bigint   AS prompt_tokens,
@@ -17,16 +32,19 @@ const TOKEN_SUMS = `
   COALESCE(SUM(e.cached_tokens), 0)::bigint   AS cached_tokens,
   COALESCE(SUM(e.total_tokens), 0)::bigint    AS total_tokens,
   COUNT(*) FILTER (WHERE e.kind = 'chat')::int     AS questions,
-  COUNT(*) FILTER (WHERE e.kind = 'greeting')::int AS greetings`;
+  COUNT(*) FILTER (WHERE e.kind = 'greeting')::int AS greetings,
+  COUNT(*) FILTER (WHERE e.kind = 'sales_agent')::int       AS agent_messages,
+  COUNT(*) FILTER (WHERE e.kind = 'sales_agent_audio')::int AS agent_audios,
+  COUNT(*) FILTER (WHERE e.kind = 'catalog_suggest')::int   AS catalog_suggestions`;
 
-/** Totales del rango. $1 desde, $2 hasta [, $3 company]. */
+/** Totales del rango. $1 desde, $2 hasta [, $3 company], último: tipos. */
 export const buildAiUsageTotalsSql = (with_company: boolean): string => `
   SELECT ${TOKEN_SUMS}
     FROM ai_usage_events e
    WHERE ${scope(with_company)}
 `;
 
-/** Serie por día de Colombia. $1 desde, $2 hasta [, $3 company]. */
+/** Serie por día de Colombia. $1 desde, $2 hasta [, $3 company], último: tipos. */
 export const buildAiUsageDailySql = (with_company: boolean): string => `
   SELECT to_char((e.created_at AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS day,
          ${TOKEN_SUMS}
@@ -36,7 +54,7 @@ export const buildAiUsageDailySql = (with_company: boolean): string => `
    ORDER BY 1
 `;
 
-/** Consumo por modelo. $1 desde, $2 hasta [, $3 company]. */
+/** Consumo por modelo. $1 desde, $2 hasta [, $3 company], último: tipos. */
 export const buildAiUsageByModelSql = (with_company: boolean): string => `
   SELECT e.model, ${TOKEN_SUMS}
     FROM ai_usage_events e
@@ -46,8 +64,8 @@ export const buildAiUsageByModelSql = (with_company: boolean): string => `
 `;
 
 /**
- * Ranking de negocios por tokens, con sus créditos del día. $1 desde, $2
- * hasta, $3 día de hoy (Colombia).
+ * Ranking de negocios por tokens de Place, con sus créditos del día. $1 desde,
+ * $2 hasta, $3 día de hoy (Colombia), $4 tipos de consumo.
  */
 export const AI_USAGE_BY_COMPANY_SQL = `
   SELECT c.id AS company_id, c.name AS company_name, c.ai_enabled,
@@ -57,6 +75,7 @@ export const AI_USAGE_BY_COMPANY_SQL = `
     JOIN companies c ON c.id = e.company_id
     LEFT JOIN ai_daily_credit_usage u ON u.company_id = c.id AND u.day = $3::date
    WHERE e.created_at BETWEEN $1 AND $2
+     AND e.kind = ANY($4::text[])
    GROUP BY c.id, c.name, c.ai_enabled, c.ai_daily_credits, u.messages
    ORDER BY total_tokens DESC, c.id
    LIMIT ${AI_USAGE_TOP_COMPANIES}

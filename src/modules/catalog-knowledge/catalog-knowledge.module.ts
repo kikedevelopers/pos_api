@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import { RolesModule } from '@/modules/roles/roles.module';
+import { SalesAgentAccessModule } from '@/modules/sales-agent-access/sales-agent-access.module';
 
 import { CatalogIndexScheduler } from './catalog-index.scheduler';
 import { CatalogKnowledgeController } from './catalog-knowledge.controller';
@@ -22,6 +23,7 @@ import { SuggestAssistantProfileAction } from './suggest-assistant-profile.actio
   imports: [
     TypeOrmModule.forFeature([ProductAssistantProfileEntity, ProductSearchEmbeddingEntity]),
     RolesModule,
+    SalesAgentAccessModule,
   ],
   controllers: [CatalogKnowledgeController],
   providers: [

@@ -238,6 +238,10 @@ export class SuperadminTenantDetailDto {
   @ApiProperty({ example: false, description: 'Acceso al asistente Place (IA) de la cuenta.' })
   aiEnabled!: boolean;
 
+  /** Asistente de ventas de ESTA company (cada sucursal el suyo). Apagado por defecto. */
+  @ApiProperty({ example: false, description: 'Asistente de ventas habilitado para esta company.' })
+  salesAgentEnabled!: boolean;
+
   /**
    * Modo del POS de ESTA company (`retail` | `restaurant`). A diferencia de la
    * FE, es propio de cada negocio: una sucursal reporta el suyo, no el del

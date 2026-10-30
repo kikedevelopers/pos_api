@@ -6,6 +6,7 @@ import type { SalesBotConfig } from '@/config/sales-bot.config';
 import { SalesAgentService } from '../../seller-agent.service';
 import { SalesBotConfigService } from '../../sales-bot-config.service';
 import { SalesBotTakeoverService } from '../../sales-bot-takeover.service';
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 import { SellerSessionStore } from '../../internal/session-store';
 import { TelegramBotWorker } from './telegram-bot.worker';
 
@@ -35,6 +36,7 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
     private readonly sessions: SellerSessionStore,
     private readonly botConfig: SalesBotConfigService,
     private readonly takeovers: SalesBotTakeoverService,
+    private readonly access: SalesAgentAccessService,
   ) {}
 
   private get envConfig(): SalesBotConfig {
@@ -49,17 +51,23 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
 
     // 1) Bots configurados por los dueños en la BD.
     let dbCompanyIds: Set<number>;
+    let enabledCompanies = new Set<number>();
     try {
+      // Solo negocios con el agente habilitado desde el panel superadmin.
+      enabledCompanies = new Set(await this.access.enabledCompanyIds());
       const configs = await this.botConfig.listRunnableTelegram();
       dbCompanyIds = new Set(configs.map((c) => Number(c.company_id)));
       for (const config of configs) {
+        if (!enabledCompanies.has(Number(config.company_id))) {
+          continue;
+        }
         this.startWorker({
           companyId: Number(config.company_id),
           token: config.telegram_token ?? '',
           ownerChatId: config.owner_chat_id,
         });
       }
-      this.logger.log({ count: configs.length }, 'Bots de Telegram activos desde BD.');
+      this.logger.log({ count: this.workers.size }, 'Bots de Telegram activos desde BD.');
     } catch (error) {
       this.logger.error({ err: error }, 'No pude cargar las configs de bots desde BD.');
       dbCompanyIds = new Set();
@@ -67,7 +75,13 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
 
     // 2) Bot legacy por env — solo si ese negocio no está ya en BD.
     const env = this.envConfig;
-    if (env.enabled && env.telegram.token && env.companyId && !dbCompanyIds.has(env.companyId)) {
+    if (
+      env.enabled &&
+      env.telegram.token &&
+      env.companyId &&
+      !dbCompanyIds.has(env.companyId) &&
+      enabledCompanies.has(env.companyId)
+    ) {
       this.startWorker({
         companyId: env.companyId,
         token: env.telegram.token,
@@ -91,6 +105,10 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
     await this.stopWorker(companyId);
 
     if (!this.agent.isReady()) {
+      return;
+    }
+    // Agente inhabilitado desde el panel superadmin: el bot queda detenido.
+    if (!(await this.access.isEnabled(companyId))) {
       return;
     }
 

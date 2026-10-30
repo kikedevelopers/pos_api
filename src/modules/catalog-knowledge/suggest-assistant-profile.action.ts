@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
 import { GeminiClient } from '@/modules/ai/internal/gemini-client';
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 
 import {
   parseProfileSuggestion,
@@ -33,6 +34,7 @@ export class SuggestAssistantProfileAction {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly gemini: GeminiClient,
+    private readonly access: SalesAgentAccessService,
   ) {}
 
   async execute(companyId: number, productId: number): Promise<ProfileSuggestion> {
@@ -89,6 +91,14 @@ export class SuggestAssistantProfileAction {
     };
     const model = this.gemini.resolveModel();
     const result = await this.gemini.streamRound(body, { model, onText: () => undefined });
+    // Suma a la IA de la cuenta (es parte del asistente de ventas).
+    await this.access.recordUsage({
+      companyId,
+      kind: 'catalog_suggest',
+      model,
+      usage: result.usage,
+      rounds: 1,
+    });
     const suggestion = result.error ? null : parseProfileSuggestion(result.text);
     if (!suggestion) {
       this.logger.warn({ productId, error: result.error }, 'La IA no devolvió una ficha válida');

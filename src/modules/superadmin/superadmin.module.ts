@@ -1,3 +1,5 @@
+import { SalesAgentModule } from '@/modules/sales-agent/sales-agent.module';
+import { SalesAgentTenantAction } from './actions/sales-agent-tenant.action';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -64,6 +66,8 @@ import { SuperadminAiController } from './superadmin-ai.controller';
   imports: [
     // Créditos y consumo de Place.
     AiModule,
+    // Interruptor del asistente de ventas (detiene/arranca su bot de Telegram).
+    SalesAgentModule,
     // Para limpiar del bucket las imágenes de un tenant que se borra.
     ProductImagesModule,
     UsersModule,
@@ -75,6 +79,7 @@ import { SuperadminAiController } from './superadmin-ai.controller';
   providers: [
     SuperadminSignatureGuard,
     GetAiUsageAction,
+    SalesAgentTenantAction,
     AdminSignatureGuard,
     MigrateCatalogAction,
     ListTenantsAction,

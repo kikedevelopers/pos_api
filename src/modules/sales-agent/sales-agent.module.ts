@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
 import { CatalogKnowledgeModule } from '@/modules/catalog-knowledge/catalog-knowledge.module';
+import { SalesAgentAccessModule } from '@/modules/sales-agent-access/sales-agent-access.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 
 import { TelegramBotManager } from './channels/telegram/telegram-bot.manager';
@@ -21,6 +22,7 @@ import { SalesBotTakeoverService } from './sales-bot-takeover.service';
 import { SellerSessionStore } from './internal/session-store';
 import { SellerToolRunner } from './internal/seller-tool-runner';
 import { SalesBotConfigService } from './sales-bot-config.service';
+import { SalesAgentAccessController } from './sales-agent-access.controller';
 import { SalesBotController } from './sales-bot.controller';
 import { SalesAgentService } from './seller-agent.service';
 
@@ -50,8 +52,14 @@ import { SalesAgentService } from './seller-agent.service';
     ]),
     RolesModule,
     CatalogKnowledgeModule,
+    SalesAgentAccessModule,
   ],
-  controllers: [SalesBotController, WhatsappWebhookController, WhatsappWebRelayController],
+  controllers: [
+    SalesBotController,
+    SalesAgentAccessController,
+    WhatsappWebhookController,
+    WhatsappWebRelayController,
+  ],
   providers: [
     SalesAgentService,
     SalesBotConfigService,
@@ -68,6 +76,6 @@ import { SalesAgentService } from './seller-agent.service';
     // del módulo `ai` sin importar todo ese módulo.
     GeminiClient,
   ],
-  exports: [SalesAgentService, SalesBotConfigService],
+  exports: [SalesAgentService, SalesBotConfigService, TelegramBotManager],
 })
 export class SalesAgentModule {}

@@ -6,6 +6,7 @@ import {
 import type { DataSource, Repository } from 'typeorm';
 
 import type { GeminiClient, GeminiRoundResult } from '@/modules/ai/internal/gemini-client';
+import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 
 import type { ProductAssistantProfileEntity } from '../entities/product-assistant-profile.entity';
 import { ProductAssistantProfileService } from '../product-assistant-profile.service';
@@ -189,7 +190,13 @@ describe('SuggestAssistantProfileAction', () => {
     const dataSource = {
       query: jest.fn().mockResolvedValue(row ? [row] : []),
     } as unknown as DataSource;
-    return { action: new SuggestAssistantProfileAction(dataSource, gemini), streamRound };
+    const recordUsage = jest.fn().mockResolvedValue(undefined);
+    const access = { recordUsage } as unknown as SalesAgentAccessService;
+    return {
+      action: new SuggestAssistantProfileAction(dataSource, gemini, access),
+      streamRound,
+      recordUsage,
+    };
   };
 
   it('propone la ficha (sin guardar) y pide JSON sin desactivar el razonamiento', async () => {
@@ -207,6 +214,19 @@ describe('SuggestAssistantProfileAction', () => {
     // El modelo rechaza thinkingBudget 0 (400).
     expect(body.generationConfig.thinkingConfig).toBeUndefined();
     expect(body.contents[0].parts[0].text).toContain('Producto: TAJIN X 45g');
+  });
+
+  it('registra el consumo como catalog_suggest (suma a la IA de la cuenta)', async () => {
+    const usage = { prompt_tokens: 80, output_tokens: 20, thoughts_tokens: 0, cached_tokens: 0, total_tokens: 100 };
+    const { action, recordUsage } = makeAction(productRow, { text: '{"description":"x"}', usage });
+    await action.execute(COMPANY, 5);
+    expect(recordUsage).toHaveBeenCalledWith({
+      companyId: COMPANY,
+      kind: 'catalog_suggest',
+      model: 'gemini-flash-lite-latest',
+      usage,
+      rounds: 1,
+    });
   });
 
   it('respuesta inválida o error de la IA → 503 amable', async () => {

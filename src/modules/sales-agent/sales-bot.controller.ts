@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, UseGuards } fro
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { SalesAgentEnabledGuard } from '@/modules/sales-agent-access/sales-agent-enabled.guard';
 import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
 
 import { TelegramBotManager } from './channels/telegram/telegram-bot.manager';
@@ -24,12 +25,14 @@ import {
  * menú "Asistente de ventas". Feature CLOUD.
  *
  * Gating: NIVEL ADMIN (owner/superadmin o empleado con rol Administrador) vía
- * `AdminLevelGuard`. El token de Telegram entra por aquí y NUNCA se devuelve.
+ * `AdminLevelGuard`, y solo si el negocio tiene el agente habilitado desde el
+ * panel superadmin (`SalesAgentEnabledGuard`, 403 SALES_AGENT_NOT_ENABLED). El
+ * token de Telegram entra por aquí y NUNCA se devuelve.
  */
 @ApiTags('sales-bot')
 @ApiBearerAuth('bearer')
 @Controller('sales-bot')
-@UseGuards(AdminLevelGuard)
+@UseGuards(AdminLevelGuard, SalesAgentEnabledGuard)
 export class SalesBotController {
   constructor(
     private readonly botConfig: SalesBotConfigService,

@@ -8,6 +8,7 @@ import type { ChatTurn } from '@/modules/ai/internal/gemini.types';
 import { MAX_AUDIO_BASE64_LENGTH, SalesAgentService } from '../seller-agent.service';
 import type { SalesBotSettingsService } from '../sales-bot-settings.service';
 import type { SellerCartService } from '../seller-cart.service';
+import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 import { emptyCart, setCartItem } from '../internal/cart';
 import Big from 'big.js';
 import type { SellerToolRunner, SellerToolContext } from '../internal/seller-tool-runner';
@@ -34,6 +35,7 @@ interface Harness {
   getSettings: jest.Mock;
   getCart: jest.Mock;
   dataSource: DataSource;
+  recordUsage: jest.Mock;
 }
 
 const makeService = (): Harness => {
@@ -71,6 +73,9 @@ const makeService = (): Harness => {
   const getCart = jest.fn().mockResolvedValue(null);
   const cart = { get: getCart } as unknown as SellerCartService;
 
+  const recordUsage = jest.fn().mockResolvedValue(undefined);
+  const access = { recordUsage } as unknown as SalesAgentAccessService;
+
   const service = new SalesAgentService(
     configService,
     gemini,
@@ -78,8 +83,9 @@ const makeService = (): Harness => {
     dataSource,
     botSettings,
     cart,
+    access,
   );
-  return { service, streamRound, execute, isEnabled, getSettings, getCart, dataSource };
+  return { service, streamRound, execute, isEnabled, getSettings, getCart, dataSource, recordUsage };
 };
 
 const turns: ChatTurn[] = [{ role: 'user', content: 'Hola, ¿tienes arroz?' }];
@@ -282,7 +288,7 @@ describe('SalesAgentService — saludo y presentación', () => {
 });
 
 describe('SalesAgentService.transcribeAudio', () => {
-  const audio = { data: 'T2dnUw==', mime_type: 'audio/ogg; codecs=opus' };
+  const audio = { companyId: 7, data: 'T2dnUw==', mime_type: 'audio/ogg; codecs=opus' };
 
   it('manda el audio inline a Gemini y devuelve el texto transcrito', async () => {
     const { service, streamRound } = makeService();
@@ -319,12 +325,13 @@ describe('SalesAgentService.transcribeAudio', () => {
 
   it('rechaza sin llamar a la IA: sin IA, sin datos, MIME no-audio o audio enorme', async () => {
     const { service, streamRound, isEnabled } = makeService();
-    await expect(service.transcribeAudio({ data: '', mime_type: 'audio/ogg' })).resolves.toBeNull();
+    await expect(service.transcribeAudio({ companyId: 7, data: '', mime_type: 'audio/ogg' })).resolves.toBeNull();
     await expect(
-      service.transcribeAudio({ data: 'eA==', mime_type: 'image/png' }),
+      service.transcribeAudio({ companyId: 7, data: 'eA==', mime_type: 'image/png' }),
     ).resolves.toBeNull();
     await expect(
       service.transcribeAudio({
+        companyId: 7,
         data: 'a'.repeat(MAX_AUDIO_BASE64_LENGTH + 1),
         mime_type: 'audio/ogg',
       }),
@@ -392,5 +399,56 @@ describe('SalesAgentService — pedido en curso', () => {
     await service.handleMessage({ ...CONTEXT, companyId: 98, conversation }, turns);
 
     expect(execute.mock.calls[0][1]).toMatchObject({ pickupAvailable: false });
+  });
+});
+
+describe('SalesAgentService — consumo de IA (suma a la cuenta)', () => {
+  const usage = (total: number) => ({
+    prompt_tokens: total - 10,
+    output_tokens: 10,
+    thoughts_tokens: 0,
+    cached_tokens: 0,
+    total_tokens: total,
+  });
+
+  it('registra un mensaje con la SUMA de tokens de todas sus rondas', async () => {
+    const { service, streamRound, execute, recordUsage } = makeService();
+    streamRound
+      .mockResolvedValueOnce(
+        round({ functionCalls: [{ name: 'search_products', args: { query: 'arroz' } }], usage: usage(100) }),
+      )
+      .mockResolvedValueOnce(round({ text: 'Claro', usage: usage(50) }));
+    execute.mockResolvedValue({ response: { families: [] } });
+
+    await service.handleMessage(CONTEXT, turns);
+
+    expect(recordUsage).toHaveBeenCalledTimes(1);
+    expect(recordUsage).toHaveBeenCalledWith({
+      companyId: 7,
+      kind: 'sales_agent',
+      model: 'gemini-flash-latest',
+      usage: expect.objectContaining({ total_tokens: 150, output_tokens: 20 }),
+      rounds: 2,
+    });
+  });
+
+  it('también registra cuando la IA falla a mitad (lo consumido se cobra)', async () => {
+    const { service, streamRound, recordUsage } = makeService();
+    streamRound.mockResolvedValue(round({ error: 'boom', usage: usage(30) } as Partial<GeminiRoundResult>));
+    await service.handleMessage(CONTEXT, turns);
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ kind: 'sales_agent' }));
+  });
+
+  it('una nota de voz registra su transcripción aparte (sales_agent_audio)', async () => {
+    const { service, streamRound, recordUsage } = makeService();
+    streamRound.mockResolvedValueOnce(round({ text: 'hola', usage: usage(40) }));
+    await service.transcribeAudio({ companyId: 9, data: 'T2dnUw==', mime_type: 'audio/ogg' });
+    expect(recordUsage).toHaveBeenCalledWith({
+      companyId: 9,
+      kind: 'sales_agent_audio',
+      model: 'gemini-flash-latest',
+      usage: expect.objectContaining({ total_tokens: 40 }),
+      rounds: 1,
+    });
   });
 });

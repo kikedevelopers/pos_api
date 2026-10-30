@@ -9,6 +9,8 @@ import { APP_TIMEZONE, dayjs } from '@/common/utils/dayjs';
 import {
   AI_ENABLED_COMPANIES_SQL,
   AI_USAGE_BY_COMPANY_SQL,
+  PLACE_USAGE_KINDS,
+  SALES_AGENT_USAGE_KINDS,
   buildAiUsageByModelSql,
   buildAiUsageDailySql,
   buildAiUsageTotalsSql,
@@ -28,6 +30,12 @@ export interface AiUsageTotals {
   questions: number;
   /** Saludos generados por Place. */
   greetings: number;
+  /** Mensajes atendidos por el asistente de ventas. */
+  agent_messages: number;
+  /** Notas de voz que transcribió el asistente de ventas. */
+  agent_audios: number;
+  /** Fichas propuestas con "Completar con IA". */
+  catalog_suggestions: number;
 }
 
 export interface AiUsageDay extends AiUsageTotals {
@@ -69,6 +77,14 @@ export interface TenantAiUsage {
   by_model: AiUsageByModel[];
 }
 
+/** Consumo del asistente de ventas de un negocio en un rango. */
+export interface SalesAgentUsage {
+  range: AiUsageRange;
+  totals: AiUsageTotals;
+  daily: AiUsageDay[];
+  by_model: AiUsageByModel[];
+}
+
 type Row = Record<string, unknown>;
 
 const int = (value: unknown): number => {
@@ -84,6 +100,9 @@ export const toUsageTotals = (row: Row | undefined): AiUsageTotals => ({
   total_tokens: int(row?.total_tokens),
   questions: int(row?.questions),
   greetings: int(row?.greetings),
+  agent_messages: int(row?.agent_messages),
+  agent_audios: int(row?.agent_audios),
+  catalog_suggestions: int(row?.catalog_suggestions),
 });
 
 /** Últimos 30 días (Colombia) si el panel no manda rango. */
@@ -108,12 +127,17 @@ export class GetAiUsageAction {
   async global(from?: string, to?: string): Promise<GlobalAiUsage> {
     const range = resolveUsageRange(from, to);
     const { dateStart, dateEnd } = parseUtcRange(range.from, range.to);
-    const params = [dateStart, dateEnd];
+    const params = [dateStart, dateEnd, [...PLACE_USAGE_KINDS]];
     const [totals, daily, by_model, by_company, companies] = await Promise.all([
       this.dataSource.query<Row[]>(buildAiUsageTotalsSql(false), params),
       this.dataSource.query<Row[]>(buildAiUsageDailySql(false), params),
       this.dataSource.query<Row[]>(buildAiUsageByModelSql(false), params),
-      this.dataSource.query<Row[]>(AI_USAGE_BY_COMPANY_SQL, [...params, creditsDay()]),
+      this.dataSource.query<Row[]>(AI_USAGE_BY_COMPANY_SQL, [
+        dateStart,
+        dateEnd,
+        creditsDay(),
+        [...PLACE_USAGE_KINDS],
+      ]),
       this.dataSource.query<Row[]>(AI_ENABLED_COMPANIES_SQL),
     ]);
     return {
@@ -146,7 +170,7 @@ export class GetAiUsageAction {
     }
     const range = resolveUsageRange(from, to);
     const { dateStart, dateEnd } = parseUtcRange(range.from, range.to);
-    const params = [dateStart, dateEnd, String(company_id)];
+    const params = [dateStart, dateEnd, String(company_id), [...PLACE_USAGE_KINDS]];
     const [totals, daily, by_model, credits] = await Promise.all([
       this.dataSource.query<Row[]>(buildAiUsageTotalsSql(true), params),
       this.dataSource.query<Row[]>(buildAiUsageDailySql(true), params),
@@ -157,6 +181,27 @@ export class GetAiUsageAction {
       range,
       ai_enabled: company.ai_enabled === true,
       credits,
+      totals: toUsageTotals(totals[0]),
+      daily: daily.map((row) => ({ day: String(row.day), ...toUsageTotals(row) })),
+      by_model: by_model.map((row) => ({ model: String(row.model), ...toUsageTotals(row) })),
+    };
+  }
+
+  /**
+   * Consumo del asistente de ventas de un negocio (mensajes, audios y fichas
+   * con IA). Suma a la IA de la cuenta, aparte de Place.
+   */
+  async salesAgent(company_id: number, from?: string, to?: string): Promise<SalesAgentUsage> {
+    const range = resolveUsageRange(from, to);
+    const { dateStart, dateEnd } = parseUtcRange(range.from, range.to);
+    const params = [dateStart, dateEnd, String(company_id), [...SALES_AGENT_USAGE_KINDS]];
+    const [totals, daily, by_model] = await Promise.all([
+      this.dataSource.query<Row[]>(buildAiUsageTotalsSql(true), params),
+      this.dataSource.query<Row[]>(buildAiUsageDailySql(true), params),
+      this.dataSource.query<Row[]>(buildAiUsageByModelSql(true), params),
+    ]);
+    return {
+      range,
       totals: toUsageTotals(totals[0]),
       daily: daily.map((row) => ({ day: String(row.day), ...toUsageTotals(row) })),
       by_model: by_model.map((row) => ({ model: String(row.model), ...toUsageTotals(row) })),

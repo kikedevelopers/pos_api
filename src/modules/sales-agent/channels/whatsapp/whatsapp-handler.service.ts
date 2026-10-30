@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { WhatsappConfig } from '@/config/whatsapp.config';
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 import { todayUtcDate } from '@/modules/reports/internal/range';
 
 import { formatOrderForOwner } from '../../internal/order-format';
@@ -40,6 +41,7 @@ export class WhatsappHandlerService {
     private readonly agent: SalesAgentService,
     private readonly sessions: SellerSessionStore,
     private readonly botConfig: SalesBotConfigService,
+    private readonly access: SalesAgentAccessService,
   ) {
     this.client = new WhatsappClient(this.config.graphApiVersion);
   }
@@ -72,6 +74,8 @@ export class WhatsappHandlerService {
       return;
     }
     if (!this.agent.isReady()) return;
+    // Agente inhabilitado para el negocio (panel superadmin): no responde nada.
+    if (!(await this.access.isEnabled(Number(tenant.company_id)))) return;
 
     const token = tenant.whatsapp_access_token?.trim() || this.config.accessToken;
     if (!token) {

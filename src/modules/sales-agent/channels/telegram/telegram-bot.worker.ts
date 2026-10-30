@@ -148,7 +148,11 @@ export class TelegramBotWorker {
     if (!file) {
       return null;
     }
-    return this.params.agent.transcribeAudio({ data: file.data, mime_type: voice.mimeType });
+    return this.params.agent.transcribeAudio({
+      companyId: this.params.companyId,
+      data: file.data,
+      mime_type: voice.mimeType,
+    });
   }
 
   private async handle(update: TelegramIncomingMessage, conversationId: string): Promise<void> {

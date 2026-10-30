@@ -8,12 +8,14 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { RequirePermission } from '@/common/decorators/require-permission.decorator';
 import { Roles } from '@/common/decorators/roles.decorator';
+import { SalesAgentEnabledGuard } from '@/modules/sales-agent-access/sales-agent-enabled.guard';
 
 import { CatalogSemanticService } from './catalog-semantic.service';
 import { UpdateAssistantProfileDto } from './dto/update-assistant-profile.dto';
@@ -26,11 +28,14 @@ import { SuggestAssistantProfileAction } from './suggest-assistant-profile.actio
 
 /**
  * `/inventory/:id/assistant-profile` — ficha "Para el asistente" de un producto
- * base (contexto para el vendedor IA). Mismos permisos que editar el producto.
+ * base (contexto para el vendedor IA). Mismos permisos que editar el producto,
+ * y solo si el negocio tiene el asistente de ventas habilitado (403
+ * SALES_AGENT_NOT_ENABLED).
  */
 @ApiTags('inventory')
 @ApiBearerAuth('bearer')
 @Controller('inventory')
+@UseGuards(SalesAgentEnabledGuard)
 export class CatalogKnowledgeController {
   constructor(
     private readonly profiles: ProductAssistantProfileService,

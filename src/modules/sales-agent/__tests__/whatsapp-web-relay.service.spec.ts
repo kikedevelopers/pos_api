@@ -2,6 +2,7 @@ import { WhatsappWebRelayService } from '../channels/whatsapp-web/whatsapp-web-r
 import { AUDIO_NOT_UNDERSTOOD_REPLY, type SalesAgentService } from '../seller-agent.service';
 import type { SalesBotConfigService } from '../sales-bot-config.service';
 import type { SalesBotTakeoverService } from '../sales-bot-takeover.service';
+import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 import type { SellerSessionStore } from '../internal/session-store';
 import type { SalesBotConfigEntity } from '../entities/sales-bot-config.entity';
 import type { ClosedOrder } from '../internal/types';
@@ -23,6 +24,8 @@ const order: ClosedOrder = {
 
 interface Harness {
   relay: WhatsappWebRelayService;
+  accessEnabled: jest.Mock;
+  assertEnabled: jest.Mock;
   transcribeAudio: jest.Mock;
   handleMessage: jest.Mock;
   greeting: jest.Mock;
@@ -62,9 +65,15 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   const pause = jest.fn().mockResolvedValue({ paused_until: '2026-10-31T05:00:00.000Z' });
   const takeovers = { isPaused, pause } as unknown as SalesBotTakeoverService;
 
-  const relay = new WhatsappWebRelayService(agent, sessions, botConfig, takeovers);
+  const accessEnabled = jest.fn().mockResolvedValue(true);
+  const assertEnabled = jest.fn().mockResolvedValue(undefined);
+  const access = { isEnabled: accessEnabled, assertEnabled } as unknown as SalesAgentAccessService;
+
+  const relay = new WhatsappWebRelayService(agent, sessions, botConfig, takeovers, access);
   return {
     relay,
+    accessEnabled,
+    assertEnabled,
     transcribeAudio,
     handleMessage,
     greeting,
@@ -255,6 +264,7 @@ describe('WhatsappWebRelayService — notas de voz', () => {
     const result = await h.relay.reply(7, voice());
 
     expect(h.transcribeAudio).toHaveBeenCalledWith({
+      companyId: 7,
       data: 'T2dnUw==',
       mime_type: 'audio/ogg; codecs=opus',
     });
@@ -296,5 +306,27 @@ describe('WhatsappWebRelayService — notas de voz', () => {
     const h = makeRelay(enabled({ enabled: false }));
     await h.relay.reply(7, voice());
     expect(h.transcribeAudio).not.toHaveBeenCalled();
+  });
+});
+
+describe('WhatsappWebRelayService — agente inhabilitado desde el panel', () => {
+  it('no responde ni transcribe ni llama a la IA', async () => {
+    const h = makeRelay(enabled());
+    h.accessEnabled.mockResolvedValue(false);
+    const result = await h.relay.reply(
+      7,
+      incoming({ text: '', audio_base64: 'T2dnUw==', audio_mime_type: 'audio/ogg' }),
+    );
+    expect(result).toEqual({ reply: null, notifications: [] });
+    expect(h.accessEnabled).toHaveBeenCalledWith(7);
+    expect(h.transcribeAudio).not.toHaveBeenCalled();
+    expect(h.handleMessage).not.toHaveBeenCalled();
+  });
+
+  it('la toma de control también queda bloqueada (403)', async () => {
+    const h = makeRelay(enabled());
+    h.assertEnabled.mockRejectedValue(new Error('SALES_AGENT_NOT_ENABLED'));
+    await expect(h.relay.takeover(7, 'chat@s.whatsapp.net')).rejects.toThrow('SALES_AGENT_NOT_ENABLED');
+    expect(h.pause).not.toHaveBeenCalled();
   });
 });
