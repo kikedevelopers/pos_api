@@ -9,6 +9,8 @@ import type { GeminiFunctionCall } from '@/modules/ai/internal/gemini.types';
 import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
 
 import type { SalesBotStockPolicy } from '../entities/sales-bot-settings.entity';
+import { CatalogSemanticService } from '@/modules/catalog-knowledge/catalog-semantic.service';
+
 import { SellerCartService, type CartOptions } from '../seller-cart.service';
 import { cartView } from './cart';
 import type { SessionKey } from './session-store';
@@ -101,6 +103,13 @@ interface InventoryRow {
   packaging: string | null;
   packaging_value: string | null;
   prices: Array<{ name: string; sale_price: string }> | null;
+  /** Ficha "Para el asistente" del producto base (solo en búsquedas por familia). */
+  family_profile?: {
+    description?: string;
+    uses?: string[];
+    attributes?: Array<{ name: string; value: string }>;
+    related?: Array<{ id: string | number; name: string; kind: string }>;
+  } | null;
 }
 
 /** Máximo de filas (presentaciones) que devuelve una búsqueda. */
@@ -138,6 +147,87 @@ export const availableStock = (
 const mapPrices = (prices: InventoryRow['prices']): Array<{ name: string; salePrice: number }> =>
   (prices ?? []).map((price) => ({ name: price.name, salePrice: num(price.sale_price) }));
 
+const NEED_NOTE =
+  'Resultados por PARECIDO con la necesidad, del más al menos parecido. Usa la ficha ("profile": descripción, para qué sirve, características) para elegir el que de verdad la resuelve y explica en una frase por qué; si el cliente agrega un requisito (p. ej. "también para las papas"), compara las características y ofrece el que lo cumple (mira también los relacionados de tipo "upgrade").';
+
+/**
+ * Consulta de familias: toma el CTE `matched` (family_id + rank) y trae cada
+ * familia completa (base + presentaciones vendibles) con precios, stock y la
+ * ficha "Para el asistente" del producto base. El orden respeta `rank`.
+ */
+export const familiesSql = (accessSql: string, matchedCte: string, rowLimitIdx: string): string => `
+      WITH matched AS (${matchedCte}
+      )
+      SELECT
+        COALESCE(p.parent_id, p.id) AS family_id,
+        fam.name AS family_name,
+        p.id,
+        p.name,
+        p.sku_code,
+        p.bar_code,
+        p.parent_id,
+        p.stock,
+        parent.stock AS parent_stock,
+        cat.name AS category,
+        pk.name  AS packaging,
+        pk.value AS packaging_value,
+        (
+          SELECT jsonb_agg(jsonb_build_object('name', pp.name, 'sale_price', pp.sale_price)
+                 ORDER BY pp.id ASC)
+          FROM product_prices pp
+          WHERE pp.product_id = p.id
+        ) AS prices,
+        (
+          SELECT jsonb_build_object(
+                   'description', pap.description,
+                   'uses', pap.uses,
+                   'attributes', pap.attributes,
+                   'related', (
+                     SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                              'id', r.id, 'name', r.name, 'kind', x.value->>'kind')), '[]'::jsonb)
+                       FROM jsonb_array_elements(pap.related) AS x
+                       JOIN products r ON r.id = (x.value->>'product_id')::bigint
+                                      AND r.is_archived = false
+                   )
+                 )
+            FROM product_assistant_profiles pap
+           WHERE pap.product_id = m.family_id
+        ) AS family_profile
+      FROM products p
+      JOIN matched m ON m.family_id = COALESCE(p.parent_id, p.id)
+      JOIN products fam ON fam.id = m.family_id
+      LEFT JOIN products parent ON parent.id = p.parent_id
+      LEFT JOIN categories cat ON cat.id = p.category_id
+      LEFT JOIN packagings pk ON pk.id = p.packaging_id
+      WHERE ${accessSql}
+        AND ${SELLABLE_SQL}
+      ORDER BY m.rank ASC, (p.parent_id IS NOT NULL) ASC, pk.value DESC NULLS LAST, p.name ASC
+      LIMIT ${rowLimitIdx}
+      `;
+
+/** Ficha compacta para el modelo (sin campos vacíos); `null` si no aporta nada. */
+export const compactProfile = (
+  raw: InventoryRow['family_profile'],
+): Record<string, unknown> | null => {
+  if (!raw) {
+    return null;
+  }
+  const profile: Record<string, unknown> = {};
+  if (typeof raw.description === 'string' && raw.description.trim()) {
+    profile.description = raw.description.trim();
+  }
+  if (Array.isArray(raw.uses) && raw.uses.length > 0) {
+    profile.uses = raw.uses;
+  }
+  if (Array.isArray(raw.attributes) && raw.attributes.length > 0) {
+    profile.attributes = raw.attributes;
+  }
+  if (Array.isArray(raw.related) && raw.related.length > 0) {
+    profile.related = raw.related.map((r) => ({ id: Number(r.id), name: r.name, kind: r.kind }));
+  }
+  return Object.keys(profile).length > 0 ? profile : null;
+};
+
 /** Agrupa las filas por familia (producto base + sus presentaciones). */
 export const groupFamilies = (
   rows: readonly InventoryRow[],
@@ -145,12 +235,18 @@ export const groupFamilies = (
 ): Array<Record<string, unknown>> => {
   const families = new Map<
     string,
-    { product: string; presentations: Array<Record<string, unknown>> }
+    {
+      product: string;
+      profile?: Record<string, unknown>;
+      presentations: Array<Record<string, unknown>>;
+    }
   >();
   for (const row of rows) {
     const familyId = String(row.family_id);
+    const profile = compactProfile(row.family_profile);
     const family = families.get(familyId) ?? {
       product: row.family_name,
+      ...(profile ? { profile } : {}),
       presentations: [],
     };
     family.presentations.push({
@@ -184,6 +280,7 @@ export class SellerToolRunner {
   constructor(
     private readonly dataSource: DataSource,
     private readonly cart: SellerCartService,
+    private readonly semantic: CatalogSemanticService,
   ) {}
 
   async execute(call: GeminiFunctionCall, context: SellerToolContext): Promise<SellerToolResult> {
@@ -192,6 +289,10 @@ export class SellerToolRunner {
       case 'search_products':
         return {
           response: await this.searchProducts(context.companyId, args, offerAlways(context)),
+        };
+      case 'find_products_for_need':
+        return {
+          response: await this.findProductsForNeed(context.companyId, args, offerAlways(context)),
         };
       case 'get_popular_products':
         return {
@@ -239,9 +340,7 @@ export class SellerToolRunner {
     const prefixIdx = `$${access.params.length + 4}`;
     const relevance = `BOOL_OR(${accentInsensitiveLike('p.name', prefixIdx)}) DESC, MIN(p.name) ASC`;
 
-    const rows = await this.dataSource.query<InventoryRow[]>(
-      `
-      WITH matched AS (
+    const matched = `
         SELECT
           COALESCE(p.parent_id, p.id) AS family_id,
           ROW_NUMBER() OVER (ORDER BY ${relevance}) AS rank
@@ -252,43 +351,20 @@ export class SellerToolRunner {
             ${accentInsensitiveLike('p.name', searchIdx)}
             OR ${accentInsensitiveLike("COALESCE(p.sku_code, '')", searchIdx)}
             OR ${accentInsensitiveLike("COALESCE(p.bar_code, '')", searchIdx)}
+            -- Cómo lo llaman los clientes (ficha "Para el asistente").
+            OR EXISTS (
+              SELECT 1 FROM product_assistant_profiles pap
+               WHERE pap.product_id = COALESCE(p.parent_id, p.id)
+                 AND ${accentInsensitiveLike('pap.aliases::text', searchIdx)}
+            )
           )
         GROUP BY COALESCE(p.parent_id, p.id)
         -- Primero los que EMPIEZAN por lo buscado ("uva pasa…" antes que
         -- "combinado uva pasa…"); luego alfabético.
         ORDER BY ${relevance}
-        LIMIT ${familyLimitIdx}
-      )
-      SELECT
-        COALESCE(p.parent_id, p.id) AS family_id,
-        fam.name AS family_name,
-        p.id,
-        p.name,
-        p.sku_code,
-        p.bar_code,
-        p.parent_id,
-        p.stock,
-        parent.stock AS parent_stock,
-        cat.name AS category,
-        pk.name  AS packaging,
-        pk.value AS packaging_value,
-        (
-          SELECT jsonb_agg(jsonb_build_object('name', pp.name, 'sale_price', pp.sale_price)
-                 ORDER BY pp.id ASC)
-          FROM product_prices pp
-          WHERE pp.product_id = p.id
-        ) AS prices
-      FROM products p
-      JOIN matched m ON m.family_id = COALESCE(p.parent_id, p.id)
-      JOIN products fam ON fam.id = m.family_id
-      LEFT JOIN products parent ON parent.id = p.parent_id
-      LEFT JOIN categories cat ON cat.id = p.category_id
-      LEFT JOIN packagings pk ON pk.id = p.packaging_id
-      WHERE ${access.sql}
-        AND ${SELLABLE_SQL}
-      ORDER BY m.rank ASC, (p.parent_id IS NOT NULL) ASC, pk.value DESC NULLS LAST, p.name ASC
-      LIMIT ${rowLimitIdx}
-      `,
+        LIMIT ${familyLimitIdx}`;
+    const rows = await this.dataSource.query<InventoryRow[]>(
+      familiesSql(access.sql, matched, rowLimitIdx),
       params,
     );
 
@@ -299,6 +375,52 @@ export class SellerToolRunner {
       currency: 'COP',
       families,
       note: hideStock ? SEARCH_NOTE_OFFER_ALWAYS : SEARCH_NOTE_INFORM,
+    };
+  }
+
+  /**
+   * Búsqueda por NECESIDAD ("algo para hamburguesa y papas"): la búsqueda por
+   * significado elige las familias y aquí se arman igual que en search_products
+   * (presentaciones, precios, stock y ficha), en orden de parecido.
+   */
+  private async findProductsForNeed(
+    companyId: number,
+    args: Record<string, unknown>,
+    hideStock: boolean,
+  ): Promise<Record<string, unknown>> {
+    const need = typeof args.need === 'string' ? args.need.trim() : '';
+    if (!need) {
+      return { error: 'Falta describir la necesidad del cliente.' };
+    }
+    const limit = toPositiveInt(args.limit, 5, 1, 10);
+    const matches = await this.semantic.search(companyId, need, limit);
+    if (matches.length === 0) {
+      return {
+        need,
+        count: 0,
+        families: [],
+        note: 'No encontré productos que respondan a esa necesidad. Prueba search_products con palabras concretas o pregúntale al cliente un detalle más; no inventes productos.',
+      };
+    }
+
+    const access = accessibleProductsPredicate('p', companyId, 1);
+    const params: unknown[] = [...access.params, matches.map((m) => String(m.id)), MAX_SEARCH_ROWS];
+    const idsIdx = `$${access.params.length + 1}`;
+    const rowLimitIdx = `$${access.params.length + 2}`;
+    const matched = `
+        SELECT x.id::bigint AS family_id, x.rank
+          FROM unnest(${idsIdx}::bigint[]) WITH ORDINALITY AS x(id, rank)`;
+    const rows = await this.dataSource.query<InventoryRow[]>(
+      familiesSql(access.sql, matched, rowLimitIdx),
+      params,
+    );
+    const families = groupFamilies(rows, hideStock);
+    return {
+      need,
+      count: families.length,
+      currency: 'COP',
+      families,
+      note: `${NEED_NOTE} ${hideStock ? SEARCH_NOTE_OFFER_ALWAYS : SEARCH_NOTE_INFORM}`,
     };
   }
 

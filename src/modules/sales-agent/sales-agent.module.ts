@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
+import { CatalogKnowledgeModule } from '@/modules/catalog-knowledge/catalog-knowledge.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 
 import { TelegramBotManager } from './channels/telegram/telegram-bot.manager';
@@ -48,6 +49,7 @@ import { SalesAgentService } from './seller-agent.service';
       SalesBotConversationEntity,
     ]),
     RolesModule,
+    CatalogKnowledgeModule,
   ],
   controllers: [SalesBotController, WhatsappWebhookController, WhatsappWebRelayController],
   providers: [

@@ -288,3 +288,17 @@ describe('Cierre de ventas sin atosigar', () => {
     expect(prompt).not.toContain('# Pedido en curso');
   });
 });
+
+describe('Búsqueda por necesidad', () => {
+  const prompt = buildSellerSystemPrompt({ businessName: 'X', today: '2026-10-30' });
+
+  it('usa find_products_for_need cuando el cliente describe un uso o necesidad', () => {
+    expect(prompt).toMatch(/describe una NECESIDAD o un uso/);
+    expect(prompt).toMatch(/find_products_for_need con la necesidad completa/);
+  });
+
+  it('ante un requisito nuevo vuelve a buscar con la necesidad completa y considera el upgrade', () => {
+    expect(prompt).toMatch(/necesidad COMPLETA actualizada/);
+    expect(prompt).toMatch(/relacionado "upgrade"/);
+  });
+});

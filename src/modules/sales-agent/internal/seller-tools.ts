@@ -11,6 +11,7 @@ import type { GeminiFunctionDeclaration } from '@/modules/ai/internal/gemini.typ
  */
 export const SELLER_TOOL_NAMES = [
   'search_products',
+  'find_products_for_need',
   'get_popular_products',
   'set_cart_item',
   'set_order_details',
@@ -38,6 +39,23 @@ export const SELLER_TOOLS: readonly GeminiFunctionDeclaration[] = [
         },
       },
       required: ['query'],
+    },
+  },
+  {
+    name: 'find_products_for_need',
+    description:
+      'Busca por SIGNIFICADO los productos que resuelven una necesidad o un uso que describe el cliente ("algo para servir hamburguesa con papas", "qué me sirve para un asado", "necesito empacar comida para domicilio"), aunque no diga el nombre del producto. Devuelve las familias más parecidas con sus presentaciones, precios y su ficha (descripción, para qué sirve, características y relacionados). Para un producto que el cliente nombra, usa search_products.',
+    parameters: {
+      type: 'object',
+      properties: {
+        need: {
+          type: 'string',
+          description:
+            'La necesidad COMPLETA del cliente en sus palabras, sumando lo que ya dijo antes (ej. "contenedor para hamburguesa y papas para domicilio").',
+        },
+        limit: { type: 'integer', description: 'Máximo de productos (1-10). Por defecto 5.' },
+      },
+      required: ['need'],
     },
   },
   {

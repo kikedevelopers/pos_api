@@ -6,6 +6,7 @@ import {
   type SellerToolContext,
 } from '../internal/seller-tool-runner';
 import type { SellerCartService } from '../seller-cart.service';
+import type { CatalogSemanticService } from '@/modules/catalog-knowledge/catalog-semantic.service';
 import { emptyCart, setCartItem } from '../internal/cart';
 import Big from 'big.js';
 
@@ -22,10 +23,13 @@ const makeCart = () => ({
   close: jest.fn(),
 });
 
-const makeRunner = (queryImpl: jest.Mock, cart = makeCart()) =>
+const makeSemantic = () => ({ search: jest.fn().mockResolvedValue([]) });
+
+const makeRunner = (queryImpl: jest.Mock, cart = makeCart(), semantic = makeSemantic()) =>
   new SellerToolRunner(
     { query: queryImpl } as unknown as DataSource,
     cart as unknown as SellerCartService,
+    semantic as unknown as CatalogSemanticService,
   );
 
 describe('SellerToolRunner · search_products', () => {
@@ -460,5 +464,142 @@ describe('SellerToolRunner · política de stock', () => {
     const response = result.response as { products: Array<Record<string, unknown>>; note: string };
     expect(response.products[0]).not.toHaveProperty('stock');
     expect(response.note).toMatch(/No hables de existencias/);
+  });
+});
+
+describe('SellerToolRunner · búsqueda por necesidad y ficha del producto', () => {
+  const j2Row = {
+    id: '20',
+    family_id: '20',
+    family_name: 'CONTENEDOR J2',
+    name: 'CONTENEDOR J2',
+    sku_code: null,
+    bar_code: null,
+    parent_id: null,
+    stock: '50',
+    parent_stock: null,
+    category: 'Desechables',
+    packaging: null,
+    packaging_value: null,
+    prices: [{ name: 'Base', sale_price: '900' }],
+    family_profile: {
+      description: 'Contenedor con dos compartimentos',
+      uses: ['hamburguesa con papas'],
+      attributes: [{ name: 'compartimentos', value: '2' }],
+      related: [{ id: '21', name: 'SALSA SOBRE', kind: 'complement' }],
+    },
+  };
+
+  it('find_products_for_need busca por significado y arma las familias en ese orden', async () => {
+    const semantic = makeSemantic();
+    semantic.search.mockResolvedValue([
+      { id: 20, score: 0.71 },
+      { id: 10, score: 0.69 },
+    ]);
+    const query = jest.fn().mockResolvedValue([j2Row]);
+    const runner = makeRunner(query, makeCart(), semantic);
+
+    const result = await runner.execute(
+      { name: 'find_products_for_need', args: { need: 'contenedor para hamburguesa y papas' } },
+      context,
+    );
+
+    expect(semantic.search).toHaveBeenCalledWith(7, 'contenedor para hamburguesa y papas', 5);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toMatch(/unnest\(\$\d+::bigint\[\]\) WITH ORDINALITY/);
+    expect(params).toContainEqual(['20', '10']);
+    const response = result.response as {
+      count: number;
+      families: Array<Record<string, unknown>>;
+      note: string;
+    };
+    expect(response.count).toBe(1);
+    expect(response.families[0]).toMatchObject({
+      product: 'CONTENEDOR J2',
+      profile: {
+        description: 'Contenedor con dos compartimentos',
+        uses: ['hamburguesa con papas'],
+        attributes: [{ name: 'compartimentos', value: '2' }],
+        related: [{ id: 21, name: 'SALSA SOBRE', kind: 'complement' }],
+      },
+    });
+    expect(response.note).toMatch(/PARECIDO con la necesidad/);
+  });
+
+  it('sin coincidencias no consulta la BD y pide no inventar', async () => {
+    const query = jest.fn();
+    const result = await makeRunner(query).execute(
+      { name: 'find_products_for_need', args: { need: 'repuestos de moto' } },
+      context,
+    );
+    expect(query).not.toHaveBeenCalled();
+    expect(result.response).toMatchObject({ count: 0, families: [] });
+    expect((result.response as { note: string }).note).toMatch(/no inventes productos/);
+  });
+
+  it('sin necesidad devuelve error y no busca', async () => {
+    const semantic = makeSemantic();
+    const result = await makeRunner(jest.fn(), makeCart(), semantic).execute(
+      { name: 'find_products_for_need', args: { need: '  ' } },
+      context,
+    );
+    expect(result.response).toMatchObject({ error: expect.any(String) });
+    expect(semantic.search).not.toHaveBeenCalled();
+  });
+
+  it('acota el límite a 1..10', async () => {
+    const semantic = makeSemantic();
+    const runner = makeRunner(jest.fn(), makeCart(), semantic);
+    await runner.execute(
+      { name: 'find_products_for_need', args: { need: 'x', limit: 50 } },
+      context,
+    );
+    expect(semantic.search).toHaveBeenCalledWith(7, 'x', 10);
+  });
+
+  it('con offer_always tampoco entrega stock', async () => {
+    const semantic = makeSemantic();
+    semantic.search.mockResolvedValue([{ id: 20, score: 0.7 }]);
+    const runner = makeRunner(jest.fn().mockResolvedValue([j2Row]), makeCart(), semantic);
+    const result = await runner.execute(
+      { name: 'find_products_for_need', args: { need: 'contenedor' } },
+      { ...context, stockPolicy: 'offer_always' },
+    );
+    const families = (result.response as { families: Array<{ presentations: unknown[] }> })
+      .families;
+    expect(families[0].presentations[0]).not.toHaveProperty('stock');
+  });
+
+  it('search_products también busca por los sinónimos de la ficha', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    await makeRunner(query).execute(
+      { name: 'search_products', args: { query: 'portacomida' } },
+      context,
+    );
+    expect(query.mock.calls[0][0]).toMatch(
+      /product_assistant_profiles pap[\s\S]*pap\.aliases::text/,
+    );
+  });
+
+  it('search_products incluye la ficha; una ficha vacía no se manda', async () => {
+    const emptyProfile = {
+      ...j2Row,
+      family_profile: { description: '', uses: [], attributes: [], related: [] },
+    };
+    const runner = makeRunner(
+      jest
+        .fn()
+        .mockResolvedValue([
+          j2Row,
+          { ...emptyProfile, id: '30', family_id: '30', family_name: 'OTRO' },
+        ]),
+    );
+    const result = await runner.execute(
+      { name: 'search_products', args: { query: 'contenedor' } },
+      context,
+    );
+    const families = (result.response as { families: Array<Record<string, unknown>> }).families;
+    expect(families[0]).toHaveProperty('profile');
+    expect(families[1]).not.toHaveProperty('profile');
   });
 });
