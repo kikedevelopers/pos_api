@@ -49,3 +49,27 @@ describe('formatOrderForOwner', () => {
     expect(text).toContain('telegram (999)');
   });
 });
+
+describe('formatOrderForOwner — referencia y pago', () => {
+  const base: ClosedOrder = {
+    items: [{ name: 'Arroz', quantity: 1, unit_price: 3000, line_total: 3000 }],
+    total: 3000,
+    channel: 'whatsapp',
+    chat_id: '57300',
+  };
+
+  it('muestra la referencia del pedido en el título', () => {
+    expect(formatOrderForOwner({ ...base, reference: 'P-4F2A9C1B' })).toMatch(
+      /^🛒 NUEVO PEDIDO P-4F2A9C1B \(asistente de ventas\)/,
+    );
+  });
+
+  it('sin referencia, título genérico', () => {
+    expect(formatOrderForOwner(base)).toMatch(/^🛒 NUEVO PEDIDO \(asistente de ventas\)/);
+  });
+
+  it('incluye la forma de pago solo si se dio', () => {
+    expect(formatOrderForOwner({ ...base, payment_method: 'Nequi' })).toContain('Pago: Nequi');
+    expect(formatOrderForOwner(base)).not.toContain('Pago:');
+  });
+});

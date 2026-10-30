@@ -47,6 +47,8 @@ import {
   type PricedLine,
   type SaleItemRequest,
   type SaleTotals,
+  toSellableProduct,
+  type SellableDetailRow,
   type SellableProduct,
 } from '../internal/sale-tool-helpers';
 import {
@@ -77,21 +79,6 @@ interface PoolRow {
   sku_code: string | null;
   bar_code: string | null;
   packaging_name: string | null;
-}
-
-interface DetailRow {
-  id: string;
-  name: string;
-  sku_code: string | null;
-  bar_code: string | null;
-  product_type: string;
-  cost: string;
-  stock: string;
-  parent_id: string | null;
-  parent_stock: string | null;
-  packaging_name: string | null;
-  packaging_value: string | null;
-  prices: Array<{ id: string | number; name: string; sale_price: string }>;
 }
 
 interface CustomerRow {
@@ -168,23 +155,6 @@ const describeSize = (size: string | null, pack: string | null): string | null =
 
 const money = (value: Big | string): number => preciseNumber(new Big(value), 2);
 const units = (value: Big | string): number => preciseNumber(new Big(value), 4);
-
-const toSellable = (row: DetailRow): SellableProduct => ({
-  id: Number(row.id),
-  name: row.name,
-  product_type: row.product_type,
-  cost: new Big(row.cost ?? 0),
-  stock: new Big(row.stock ?? 0),
-  parent_id: row.parent_id !== null ? Number(row.parent_id) : null,
-  parent_stock: row.parent_stock !== null ? new Big(row.parent_stock) : null,
-  packaging_name: row.packaging_name,
-  packaging_value: row.packaging_value !== null ? new Big(row.packaging_value) : null,
-  prices: (row.prices ?? []).map((price) => ({
-    id: Number(price.id),
-    name: price.name ?? '',
-    sale_price: new Big(price.sale_price ?? 0),
-  })),
-});
 
 /** Las violaciones del DTO en una frase (incluye las de las líneas anidadas). */
 const describeViolations = (errors: readonly ValidationError[]): string =>
@@ -648,8 +618,8 @@ export class RunAiSaleToolAction {
       return new Map();
     }
     const { sql, params } = buildSellableDetailsSql(company_id, ids);
-    const rows = await manager.query<DetailRow[]>(sql, params);
-    return new Map(rows.map((row) => [Number(row.id), toSellable(row)]));
+    const rows = await manager.query<SellableDetailRow[]>(sql, params);
+    return new Map(rows.map((row) => [Number(row.id), toSellableProduct(row)]));
   }
 
   private async minimumMargin(manager: EntityManager, company_id: number): Promise<number | null> {

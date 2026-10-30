@@ -113,6 +113,7 @@ export class WhatsappHandlerService {
         channel: CHANNEL,
         chatId: message.from,
         chatDisplayName: message.senderName,
+        conversation: sessionKey,
       },
       turns,
       { firstMessageOfDay },

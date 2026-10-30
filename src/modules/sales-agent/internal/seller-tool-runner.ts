@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import Big from 'big.js';
@@ -9,12 +9,22 @@ import type { GeminiFunctionCall } from '@/modules/ai/internal/gemini.types';
 import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
 
 import type { SalesBotStockPolicy } from '../entities/sales-bot-settings.entity';
-import type { ClosedOrder, ClosedOrderItem } from './types';
+import { SellerCartService, type CartOptions } from '../seller-cart.service';
+import { cartView } from './cart';
+import type { SessionKey } from './session-store';
+import type { ClosedOrder } from './types';
 
 /** Datos del canal para etiquetar el pedido cerrado (quién y por dónde escribe). */
 export interface SellerToolContext {
   companyId: number;
   channel: string;
+  /**
+   * Conversación (memoria + carrito). Sin ella, las herramientas del carrito
+   * no están disponibles.
+   */
+  conversation?: SessionKey;
+  /** El negocio tiene punto físico: el cliente puede recoger. Default: false. */
+  pickupAvailable?: boolean;
   chatId: string;
   chatDisplayName?: string;
   /**
@@ -26,7 +36,7 @@ export interface SellerToolContext {
 }
 
 const FAMILIES_NOTE =
-  'Cada elemento de "families" es UN producto con TODAS sus presentaciones (libra, media libra, cuarto, paquete, gramo, caja...). Si el cliente no dijo la presentación, ofrécele las de consumo con su precio y pregúntale cuál prefiere; no escojas una sola. Habla de los productos con naturalidad (no copies el nombre del catálogo en mayúsculas ni con abreviaturas); el "name" exacto solo va en submit_order.';
+  'Cada elemento de "families" es UN producto con TODAS sus presentaciones (libra, media libra, cuarto, paquete, gramo, caja...). Si el cliente no dijo la presentación, ofrécele las de consumo con su precio y pregúntale cuál prefiere; no escojas una sola. Habla de los productos con naturalidad (no copies el nombre del catálogo en mayúsculas ni con abreviaturas); para agregar al pedido usa el "id" de la presentación en set_cart_item.';
 
 const SEARCH_NOTE_INFORM =
   FAMILIES_NOTE +
@@ -42,11 +52,24 @@ const POPULAR_NOTE_INFORM =
 const POPULAR_NOTE_OFFER_ALWAYS =
   'Sugerencias ordenadas por lo más vendido en los últimos 90 días. Úsalas para recomendar o hacer venta cruzada. No hables de existencias. Precios en pesos (COP).';
 
+const CART_UNAVAILABLE = {
+  status: 'unavailable',
+  message:
+    'El pedido no está disponible en este momento. Toma los datos y dile que el negocio lo confirma.',
+};
+
+const CART_UPDATED_MESSAGE =
+  'Pedido actualizado. Los precios los pone el negocio (úsalos tal cual). Revisa "missing_to_close" para saber qué falta y avanza UN paso hacia el cierre.';
+
+const cartOptions = (context: SellerToolContext): CartOptions => ({
+  pickupAvailable: context.pickupAvailable === true,
+});
+
 /** Resultado de ejecutar una herramienta: respuesta para el modelo + efecto. */
 export interface SellerToolResult {
   /** Objeto que se le devuelve al modelo como functionResponse. */
   response: Record<string, unknown>;
-  /** Pedido cerrado (solo lo pone submit_order); el canal avisa al dueño. */
+  /** Pedido cerrado (solo lo pone close_order); el canal avisa al dueño. */
   order?: ClosedOrder;
 }
 
@@ -63,10 +86,9 @@ const toPositiveInt = (value: unknown, fallback: number, min: number, max: numbe
   return Math.min(Math.max(Math.trunc(parsed), min), max);
 };
 
-const round2 = (value: number): number => Math.round(value * 100) / 100;
-
 /** Filas de inventario que leen las herramientas (sin costos). */
 interface InventoryRow {
+  id: string;
   family_id: string;
   family_name: string;
   name: string;
@@ -83,6 +105,13 @@ interface InventoryRow {
 
 /** Máximo de filas (presentaciones) que devuelve una búsqueda. */
 const MAX_SEARCH_ROWS = 60;
+
+/**
+ * Solo lo que el POS puede vender (mismas condiciones que el carrito): no
+ * archivado, visible en el POS y de tipo simple o combo.
+ */
+const SELLABLE_SQL =
+  "p.is_archived = false AND p.show_in_pos = true AND p.product_type IN ('SIMPLE', 'COMBO')";
 
 /**
  * Hay existencias del producto: las presentaciones (`parent_id`) consumen del
@@ -125,6 +154,7 @@ export const groupFamilies = (
       presentations: [],
     };
     family.presentations.push({
+      id: Number(row.id),
       name: row.name,
       sku: row.sku_code,
       barcode: row.bar_code,
@@ -151,9 +181,10 @@ const POPULAR_WINDOW_DAYS = 90;
  */
 @Injectable()
 export class SellerToolRunner {
-  private readonly logger = new Logger(SellerToolRunner.name);
-
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly cart: SellerCartService,
+  ) {}
 
   async execute(call: GeminiFunctionCall, context: SellerToolContext): Promise<SellerToolResult> {
     const args = call.args ?? {};
@@ -166,8 +197,12 @@ export class SellerToolRunner {
         return {
           response: await this.popularProducts(context.companyId, args, offerAlways(context)),
         };
-      case 'submit_order':
-        return this.submitOrder(args, context);
+      case 'set_cart_item':
+        return { response: await this.setCartItem(args, context) };
+      case 'set_order_details':
+        return { response: await this.setOrderDetails(args, context) };
+      case 'close_order':
+        return this.closeOrder(context);
       default:
         return { response: { error: `Herramienta no disponible: ${call.name}` } };
     }
@@ -212,7 +247,7 @@ export class SellerToolRunner {
           ROW_NUMBER() OVER (ORDER BY ${relevance}) AS rank
         FROM products p
         WHERE ${access.sql}
-          AND p.is_archived = false
+          AND ${SELLABLE_SQL}
           AND (
             ${accentInsensitiveLike('p.name', searchIdx)}
             OR ${accentInsensitiveLike("COALESCE(p.sku_code, '')", searchIdx)}
@@ -227,6 +262,7 @@ export class SellerToolRunner {
       SELECT
         COALESCE(p.parent_id, p.id) AS family_id,
         fam.name AS family_name,
+        p.id,
         p.name,
         p.sku_code,
         p.bar_code,
@@ -249,7 +285,7 @@ export class SellerToolRunner {
       LEFT JOIN categories cat ON cat.id = p.category_id
       LEFT JOIN packagings pk ON pk.id = p.packaging_id
       WHERE ${access.sql}
-        AND p.is_archived = false
+        AND ${SELLABLE_SQL}
       ORDER BY m.rank ASC, (p.parent_id IS NOT NULL) ASC, pk.value DESC NULLS LAST, p.name ASC
       LIMIT ${rowLimitIdx}
       `,
@@ -283,6 +319,7 @@ export class SellerToolRunner {
       Array<
         Pick<
           InventoryRow,
+          | 'id'
           | 'name'
           | 'stock'
           | 'parent_id'
@@ -296,6 +333,7 @@ export class SellerToolRunner {
     >(
       `
       SELECT
+        p.id,
         p.name,
         p.stock,
         p.parent_id,
@@ -324,7 +362,7 @@ export class SellerToolRunner {
         GROUP BY l.product_id
       ) AS sold ON sold.product_id = p.id
       WHERE ${access.sql}
-        AND p.is_archived = false
+        AND ${SELLABLE_SQL}
         ${hideStock ? '' : `AND ${IN_STOCK_SQL}`}
       ORDER BY COALESCE(sold.units, 0) DESC, p.name ASC
       LIMIT ${limitIdx}
@@ -336,6 +374,7 @@ export class SellerToolRunner {
       count: rows.length,
       currency: 'COP',
       products: rows.map((row) => ({
+        id: Number(row.id),
         name: row.name,
         category: row.category,
         packaging: row.packaging,
@@ -347,74 +386,81 @@ export class SellerToolRunner {
     };
   }
 
-  /** Cierra el pedido: calcula totales y lo entrega para avisarle al dueño. */
-  private submitOrder(args: Record<string, unknown>, context: SellerToolContext): SellerToolResult {
-    const rawItems = Array.isArray(args.items) ? args.items : [];
-    const items: ClosedOrderItem[] = [];
-    for (const raw of rawItems) {
-      if (!raw || typeof raw !== 'object') {
-        continue;
-      }
-      const item = raw as Record<string, unknown>;
-      const name = typeof item.name === 'string' ? item.name.trim() : '';
-      const quantity = num(item.quantity as number);
-      const unitPrice = num(item.unit_price as number);
-      if (!name || quantity <= 0 || unitPrice < 0) {
-        continue;
-      }
-      items.push({
-        name,
-        quantity,
-        unit_price: unitPrice,
-        line_total: round2(quantity * unitPrice),
-      });
+  /** Pone la cantidad de una presentación en el pedido (0 = quitarla). */
+  private async setCartItem(
+    args: Record<string, unknown>,
+    context: SellerToolContext,
+  ): Promise<Record<string, unknown>> {
+    if (!context.conversation) {
+      return CART_UNAVAILABLE;
     }
+    const productId = Number(args.product_id);
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+      return {
+        status: 'invalid_product',
+        message:
+          'Falta el "id" de la presentación (lo da search_products). NO se cambió el pedido.',
+      };
+    }
+    const result = await this.cart.setItem(context.conversation, productId, args.quantity);
+    if (result.status !== 'ok') {
+      return { status: result.status, message: result.message };
+    }
+    return {
+      status: 'ok',
+      cart: cartView(result.cart, cartOptions(context)),
+      message: CART_UPDATED_MESSAGE,
+    };
+  }
 
-    if (items.length === 0) {
+  /** Guarda datos de entrega que dio el cliente. */
+  private async setOrderDetails(
+    args: Record<string, unknown>,
+    context: SellerToolContext,
+  ): Promise<Record<string, unknown>> {
+    if (!context.conversation) {
+      return CART_UNAVAILABLE;
+    }
+    const cart = await this.cart.setDetails(context.conversation, args);
+    return { status: 'ok', cart: cartView(cart, cartOptions(context)) };
+  }
+
+  /** Cierra el pedido confirmado: el canal le AVISA al dueño (no se crea venta). */
+  private async closeOrder(context: SellerToolContext): Promise<SellerToolResult> {
+    if (!context.conversation) {
+      return { response: CART_UNAVAILABLE };
+    }
+    const result = await this.cart.close(context.conversation, cartOptions(context), {
+      channel: context.channel,
+      chatId: context.chatId,
+      chatDisplayName: context.chatDisplayName,
+    });
+    if (result.status === 'missing_data') {
       return {
         response: {
-          status: 'invalid',
-          message:
-            'No hay líneas válidas en el pedido. Confirma con el cliente qué lleva (producto, cantidad y precio) antes de cerrar.',
+          status: 'missing_data',
+          missing: result.missing,
+          message: `NO se cerró: falta ${result.missing.join(', ')}. Pídeselo al cliente de forma natural, una cosa a la vez.`,
         },
       };
     }
-
-    const total = round2(items.reduce((sum, item) => sum + item.line_total, 0));
-    const order: ClosedOrder = {
-      items,
-      total,
-      customer_name:
-        typeof args.customer_name === 'string' ? args.customer_name.trim() || undefined : undefined,
-      customer_phone:
-        typeof args.customer_phone === 'string'
-          ? args.customer_phone.trim() || undefined
-          : undefined,
-      delivery: typeof args.delivery === 'string' ? args.delivery.trim() || undefined : undefined,
-      notes: typeof args.notes === 'string' ? args.notes.trim() || undefined : undefined,
-      channel: context.channel,
-      chat_id: context.chatId,
-      chat_display_name: context.chatDisplayName,
-    };
-
-    this.logger.log(
-      { companyId: context.companyId, channel: context.channel, total, lines: items.length },
-      'Pedido cerrado por el vendedor',
-    );
-
+    if (result.status === 'price_changed') {
+      return {
+        response: {
+          status: 'price_changed',
+          cart: cartView(result.cart, cartOptions(context)),
+          message: result.message,
+        },
+      };
+    }
     return {
-      order,
+      order: result.order,
       response: {
-        status: 'taken',
-        total,
-        items: items.map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          unitPrice: item.unit_price,
-          lineTotal: item.line_total,
-        })),
+        status: 'closed',
+        reference: result.order.reference,
+        total: result.order.total,
         message:
-          'Pedido TOMADO y pasado al negocio. Confírmale al cliente con un resumen cálido (productos, cantidades y total) y dile que EL NEGOCIO le confirma en un momento la entrega y el pago. NO digas que el pedido quedó "registrado en el sistema" ni que ya está facturado: tú solo tomas el pedido. Llama esta herramienta UNA sola vez por pedido.',
+          'Pedido TOMADO y enviado al negocio. Confírmale al cliente en una o dos frases (referencia y total, sin repetir toda la lista) y dile que el negocio le confirma en un momento la entrega y el pago. NO digas que quedó "registrado en el sistema" ni facturado. No vuelvas a llamar close_order para este pedido.',
       },
     };
   }

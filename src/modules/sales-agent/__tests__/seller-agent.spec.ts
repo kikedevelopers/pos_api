@@ -7,6 +7,9 @@ import type { ChatTurn } from '@/modules/ai/internal/gemini.types';
 
 import { MAX_AUDIO_BASE64_LENGTH, SalesAgentService } from '../seller-agent.service';
 import type { SalesBotSettingsService } from '../sales-bot-settings.service';
+import type { SellerCartService } from '../seller-cart.service';
+import { emptyCart, setCartItem } from '../internal/cart';
+import Big from 'big.js';
 import type { SellerToolRunner, SellerToolContext } from '../internal/seller-tool-runner';
 
 const CONTEXT: SellerToolContext = {
@@ -29,6 +32,8 @@ interface Harness {
   execute: jest.Mock;
   isEnabled: jest.Mock;
   getSettings: jest.Mock;
+  getCart: jest.Mock;
+  dataSource: DataSource;
 }
 
 const makeService = (): Harness => {
@@ -63,17 +68,26 @@ const makeService = (): Harness => {
     .mockResolvedValue({ bot_name: '', personality: 'amable_profesional', stock_policy: 'inform' });
   const botSettings = { get: getSettings } as unknown as SalesBotSettingsService;
 
+  const getCart = jest.fn().mockResolvedValue(null);
+  const cart = { get: getCart } as unknown as SellerCartService;
+
   const service = new SalesAgentService(
     configService,
     gemini,
     toolRunner,
     dataSource,
     botSettings,
+    cart,
   );
-  return { service, streamRound, execute, isEnabled, getSettings };
+  return { service, streamRound, execute, isEnabled, getSettings, getCart, dataSource };
 };
 
 const turns: ChatTurn[] = [{ role: 'user', content: 'Hola, ¿tienes arroz?' }];
+
+const systemText = (streamRound: jest.Mock): string => {
+  const [body] = streamRound.mock.calls[0];
+  return body.systemInstruction.parts[0].text as string;
+};
 
 describe('SalesAgentService.handleMessage', () => {
   it('usa razonamiento BAJO (thinkingBudget de la config) para responder rápido', async () => {
@@ -110,7 +124,11 @@ describe('SalesAgentService.handleMessage', () => {
 
     expect(execute).toHaveBeenCalledTimes(1);
     // Las herramientas reciben el contexto + la política de stock del negocio.
-    expect(execute).toHaveBeenCalledWith(call, { ...CONTEXT, stockPolicy: 'inform' });
+    expect(execute).toHaveBeenCalledWith(call, {
+      ...CONTEXT,
+      stockPolicy: 'inform',
+      pickupAvailable: false,
+    });
     expect(result.reply).toContain('$ 3.000');
     expect(result.orders).toEqual([]);
   });
@@ -127,7 +145,11 @@ describe('SalesAgentService.handleMessage', () => {
     await service.handleMessage(CONTEXT, turns);
 
     expect(getSettings).toHaveBeenCalledWith(CONTEXT.companyId);
-    expect(execute).toHaveBeenCalledWith(call, { ...CONTEXT, stockPolicy: 'offer_always' });
+    expect(execute).toHaveBeenCalledWith(call, {
+      ...CONTEXT,
+      stockPolicy: 'offer_always',
+      pickupAvailable: false,
+    });
     const [body] = streamRound.mock.calls[0];
     expect(body.systemInstruction.parts[0].text).toMatch(/NUNCA hables de\s+existencias/);
   });
@@ -190,11 +212,6 @@ describe('SalesAgentService.handleMessage', () => {
 });
 
 describe('SalesAgentService — saludo y presentación', () => {
-  const systemText = (streamRound: jest.Mock): string => {
-    const [body] = streamRound.mock.calls[0];
-    return body.systemInstruction.parts[0].text as string;
-  };
-
   it('primer mensaje del día: el prompt pide saludar y presentarse', async () => {
     const { service, streamRound } = makeService();
     streamRound.mockResolvedValueOnce(round({ text: '¡Buenos días!' }));
@@ -290,7 +307,7 @@ describe('SalesAgentService.transcribeAudio', () => {
 
   it('error de Gemini (también tras el reintento) → null', async () => {
     const { service, streamRound } = makeService();
-    streamRound.mockResolvedValue(round({ error: 'boom' } as Partial<GeminiRoundResult>));
+    streamRound.mockResolvedValue(round({ error: 'boom' }));
     await expect(service.transcribeAudio(audio)).resolves.toBeNull();
   });
 
@@ -303,12 +320,77 @@ describe('SalesAgentService.transcribeAudio', () => {
   it('rechaza sin llamar a la IA: sin IA, sin datos, MIME no-audio o audio enorme', async () => {
     const { service, streamRound, isEnabled } = makeService();
     await expect(service.transcribeAudio({ data: '', mime_type: 'audio/ogg' })).resolves.toBeNull();
-    await expect(service.transcribeAudio({ data: 'eA==', mime_type: 'image/png' })).resolves.toBeNull();
     await expect(
-      service.transcribeAudio({ data: 'a'.repeat(MAX_AUDIO_BASE64_LENGTH + 1), mime_type: 'audio/ogg' }),
+      service.transcribeAudio({ data: 'eA==', mime_type: 'image/png' }),
+    ).resolves.toBeNull();
+    await expect(
+      service.transcribeAudio({
+        data: 'a'.repeat(MAX_AUDIO_BASE64_LENGTH + 1),
+        mime_type: 'audio/ogg',
+      }),
     ).resolves.toBeNull();
     isEnabled.mockReturnValue(false);
     await expect(service.transcribeAudio(audio)).resolves.toBeNull();
     expect(streamRound).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesAgentService — pedido en curso', () => {
+  const conversation = { companyId: 7, channel: 'whatsapp-web', chatId: '57300@s.whatsapp.net' };
+
+  it('con conversación, el prompt incluye el pedido en curso y su etapa', async () => {
+    const { service, streamRound, getCart } = makeService();
+    getCart.mockResolvedValue(
+      setCartItem(
+        emptyCart(),
+        { product_id: 5, name: 'UVA PASA X LIBRA', unit_price: new Big(8000) },
+        new Big(2),
+      ),
+    );
+    streamRound.mockResolvedValueOnce(round({ text: '¿A qué dirección te lo envío?' }));
+
+    await service.handleMessage({ ...CONTEXT, conversation }, turns);
+
+    expect(getCart).toHaveBeenCalledWith(conversation);
+    const prompt = systemText(streamRound);
+    expect(prompt).toContain('# Pedido en curso');
+    expect(prompt).toContain('2 × UVA PASA X LIBRA (id 5)');
+    expect(prompt).toMatch(/Falta: dirección de entrega/);
+  });
+
+  it('sin conversación no consulta el carrito ni agrega el bloque', async () => {
+    const { service, streamRound, getCart } = makeService();
+    streamRound.mockResolvedValueOnce(round({ text: 'Hola' }));
+    await service.handleMessage(CONTEXT, turns);
+    expect(getCart).not.toHaveBeenCalled();
+    expect(systemText(streamRound)).not.toContain('# Pedido en curso');
+  });
+
+  it('las herramientas saben si se puede recoger (negocio con dirección)', async () => {
+    const { service, streamRound, execute, dataSource } = makeService();
+    (dataSource.query as jest.Mock).mockResolvedValue([
+      { name: 'Granero La 21', address: 'Cra 10 #20-30', phone_number: null },
+    ]);
+    streamRound
+      .mockResolvedValueOnce(round({ functionCalls: [{ name: 'close_order', args: {} }] }))
+      .mockResolvedValueOnce(round({ text: 'Listo' }));
+    execute.mockResolvedValue({ response: { status: 'closed' } });
+
+    await service.handleMessage({ ...CONTEXT, companyId: 99, conversation }, turns);
+
+    const [, toolContext] = execute.mock.calls[0];
+    expect(toolContext).toMatchObject({ pickupAvailable: true, conversation });
+  });
+
+  it('sin dirección del negocio, no se puede recoger', async () => {
+    const { service, streamRound, execute } = makeService();
+    streamRound
+      .mockResolvedValueOnce(round({ functionCalls: [{ name: 'close_order', args: {} }] }))
+      .mockResolvedValueOnce(round({ text: 'Listo' }));
+    execute.mockResolvedValue({ response: { status: 'closed' } });
+
+    await service.handleMessage({ ...CONTEXT, companyId: 98, conversation }, turns);
+
+    expect(execute.mock.calls[0][1]).toMatchObject({ pickupAvailable: false });
   });
 });

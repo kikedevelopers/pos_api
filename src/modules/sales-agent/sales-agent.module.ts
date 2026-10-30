@@ -14,6 +14,7 @@ import { SalesBotConfigEntity } from './entities/sales-bot-config.entity';
 import { SalesBotConversationEntity } from './entities/sales-bot-conversation.entity';
 import { SalesBotSettingsEntity } from './entities/sales-bot-settings.entity';
 import { SalesBotTakeoverEntity } from './entities/sales-bot-takeover.entity';
+import { SellerCartService } from './seller-cart.service';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
 import { SalesBotTakeoverService } from './sales-bot-takeover.service';
 import { SellerSessionStore } from './internal/session-store';
@@ -56,6 +57,7 @@ import { SalesAgentService } from './seller-agent.service';
     SalesBotTakeoverService,
     SellerToolRunner,
     SellerSessionStore,
+    SellerCartService,
     TelegramBotManager,
     WhatsappHandlerService,
     WhatsappWebRelayService,

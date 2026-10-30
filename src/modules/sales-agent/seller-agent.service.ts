@@ -16,6 +16,8 @@ import { SELLER_TOOLS } from './internal/seller-tools';
 import { SellerToolRunner, type SellerToolContext } from './internal/seller-tool-runner';
 import type { ClosedOrder, SellerReply } from './internal/types';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
+import { SellerCartService } from './seller-cart.service';
+import { describeCartForPrompt } from './internal/cart';
 
 /** Opciones por mensaje que el canal le pasa al vendedor. */
 export interface SellerMessageOptions {
@@ -72,6 +74,7 @@ export class SalesAgentService {
     private readonly toolRunner: SellerToolRunner,
     private readonly dataSource: DataSource,
     private readonly botSettings: SalesBotSettingsService,
+    private readonly cart: SellerCartService,
   ) {}
 
   private get config(): SalesBotConfig {
@@ -176,6 +179,9 @@ export class SalesAgentService {
     const config = this.config;
     const business = await this.businessProfile(context.companyId);
     const settings = await this.botSettings.get(context.companyId);
+    // Sin dirección no hay punto físico: todo pedido es a domicilio.
+    const pickupAvailable = Boolean(business.address);
+    const cart = context.conversation ? await this.cart.get(context.conversation) : null;
     const model = this.gemini.resolveModel(config.model);
 
     const systemPrompt = buildSellerSystemPrompt({
@@ -190,10 +196,17 @@ export class SalesAgentService {
       firstMessageOfDay: options.firstMessageOfDay,
       timeOfDay: timeOfDayFromHour(nowBogota().hour()),
       stockPolicy: settings.stock_policy,
+      cartBlock: context.conversation
+        ? describeCartForPrompt(cart, { pickupAvailable })
+        : undefined,
     });
     // Las herramientas también obedecen la política de stock (ocultan el stock
     // al modelo cuando el negocio pide ofrecer siempre).
-    const toolContext: SellerToolContext = { ...context, stockPolicy: settings.stock_policy };
+    const toolContext: SellerToolContext = {
+      ...context,
+      stockPolicy: settings.stock_policy,
+      pickupAvailable,
+    };
 
     const body = buildGeminiRequest({
       turns,

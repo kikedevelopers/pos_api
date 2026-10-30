@@ -57,8 +57,8 @@ describe('buildSellerSystemPrompt', () => {
 
   it('cierra de forma honesta (no "registrado en el sistema") y una sola vez', () => {
     const prompt = buildSellerSystemPrompt(base);
-    expect(prompt).toMatch(/UNA SOLA\s+VEZ por pedido/i);
-    expect(prompt).toMatch(/registrado en el sistema/i);
+    expect(prompt).toMatch(/close_order UNA sola vez/i);
+    expect(prompt).toMatch(/registrado en el\s+sistema/i);
     expect(prompt).toMatch(/TOMAS el pedido/i);
   });
 
@@ -254,5 +254,37 @@ describe('Saludo: no repetir', () => {
       firstMessageOfDay: true,
     });
     expect(prompt).toMatch(/ya saludaste o te presentaste, NO lo\s+repitas/);
+  });
+});
+
+describe('Cierre de ventas sin atosigar', () => {
+  const prompt = buildSellerSystemPrompt({ businessName: 'X', today: '2026-10-30' });
+
+  it('orienta a cerrar: un solo paso concreto por respuesta y cierre asumido', () => {
+    expect(prompt).toMatch(/tu objetivo es CERRAR la venta/);
+    expect(prompt).toMatch(/UN solo paso concreto hacia el cierre/);
+    expect(prompt).toMatch(/cierre asumido/);
+  });
+
+  it('arma el pedido con las herramientas (id + cantidad total) y pide el "sí" antes de cerrar', () => {
+    expect(prompt).toMatch(/set_cart_item con el "id"/);
+    expect(prompt).toMatch(/set_order_details/);
+    expect(prompt).toMatch(/Con el "sí" explícito llama close_order/);
+  });
+
+  it('limita la venta cruzada y no insiste ante la duda', () => {
+    expect(prompt).toMatch(/como máximo UNA sugerencia por mensaje/);
+    expect(prompt).toMatch(/no la vuelvas a ofrecer/);
+    expect(prompt).toMatch(/UNA sola pregunta para entender qué\s+lo frena/);
+  });
+
+  it('incluye el bloque del pedido en curso cuando se le pasa', () => {
+    const withCart = buildSellerSystemPrompt({
+      businessName: 'X',
+      today: '2026-10-30',
+      cartBlock: '# Pedido en curso\n- 2 × ARROZ',
+    });
+    expect(withCart).toContain('# Pedido en curso\n- 2 × ARROZ');
+    expect(prompt).not.toContain('# Pedido en curso');
   });
 });

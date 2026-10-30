@@ -181,6 +181,7 @@ export class TelegramBotWorker {
         channel: CHANNEL,
         chatId: update.chatId,
         chatDisplayName: update.senderName,
+        conversation: sessionKey,
       },
       turns,
       { firstMessageOfDay },

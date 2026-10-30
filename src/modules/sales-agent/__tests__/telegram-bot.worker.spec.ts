@@ -101,7 +101,13 @@ describe('TelegramBotWorker.process — chat directo', () => {
 
     expect(h.sendTyping).toHaveBeenCalledWith('900', undefined);
     expect(h.handleMessage).toHaveBeenCalledWith(
-      { companyId: COMPANY_ID, channel: 'telegram', chatId: '900', chatDisplayName: 'Ana' },
+      {
+        companyId: COMPANY_ID,
+        channel: 'telegram',
+        chatId: '900',
+        chatDisplayName: 'Ana',
+        conversation: { companyId: COMPANY_ID, channel: 'telegram', chatId: '900' },
+      },
       expect.any(Array),
       { firstMessageOfDay: true },
     );

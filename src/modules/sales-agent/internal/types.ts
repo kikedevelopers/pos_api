@@ -6,13 +6,16 @@ export interface ClosedOrderItem {
   line_total: number;
 }
 
-/** Pedido que Place cerró en el chat; se le avisa al dueño (v1: no escribe POS). */
+/** Pedido que Place cerró en el chat; se le AVISA al dueño (no escribe en el POS). */
 export interface ClosedOrder {
+  /** Referencia corta del pedido ("P-4F2A9C1B"). */
+  reference?: string;
   items: ClosedOrderItem[];
   total: number;
   customer_name?: string;
   customer_phone?: string;
   delivery?: string;
+  payment_method?: string;
   notes?: string;
   /** Identidad del cliente en el canal, para que el dueño pueda ubicarlo. */
   channel: string;

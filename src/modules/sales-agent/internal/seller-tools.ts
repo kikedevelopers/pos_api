@@ -5,14 +5,16 @@ import type { GeminiFunctionDeclaration } from '@/modules/ai/internal/gemini.typ
  * negocio del bot (`company_id` fijo de la config), nunca a datos de otro.
  *
  * Son de solo lectura del INVENTARIO (sin costos ni márgenes: el vendedor no ve
- * ni expone esa información), salvo `submit_order`, que no escribe en la base:
- * registra el pedido para avisarle al dueño (la creación real en el POS llega
- * en una iteración posterior).
+ * ni expone esa información), salvo las del PEDIDO EN CURSO (`set_cart_item`, `set_order_details`,
+ * `close_order`), que solo escriben el carrito de la conversación. Cerrar le
+ * AVISA al dueño: no crea venta ni pedido en el POS.
  */
 export const SELLER_TOOL_NAMES = [
   'search_products',
   'get_popular_products',
-  'submit_order',
+  'set_cart_item',
+  'set_order_details',
+  'close_order',
 ] as const;
 
 export type SellerToolName = (typeof SELLER_TOOL_NAMES)[number];
@@ -53,54 +55,54 @@ export const SELLER_TOOLS: readonly GeminiFunctionDeclaration[] = [
     },
   },
   {
-    name: 'submit_order',
+    name: 'set_cart_item',
     description:
-      'Registra el pedido que el cliente YA confirmó, para avisarle al dueño del negocio. Llámala solo cuando el cliente aceptó explícitamente lo que lleva. Incluye TODAS las líneas con el nombre EXACTO del producto como te lo devolvió search_products, su cantidad y su precio unitario de venta. Incluye los datos de contacto/entrega que te dio el cliente. Tras registrarla, confírmale al cliente con un resumen cálido.',
+      'Pone en el PEDIDO EN CURSO la cantidad de una presentación (crea, corrige o, con quantity 0, quita la línea). Úsala en cuanto el cliente diga que lleva algo ("dame 2", "agrégame la libra"). El precio lo pone el negocio: no lo envíes. Devuelve el pedido actualizado, su total y "missing_to_close" (lo que falta para cerrar).',
     parameters: {
       type: 'object',
       properties: {
-        items: {
-          type: 'array',
-          description: 'Líneas del pedido confirmadas por el cliente.',
-          items: {
-            type: 'object',
-            properties: {
-              name: {
-                type: 'string',
-                description:
-                  'Nombre EXACTO del producto tal como lo devolvió search_products (con su presentación).',
-              },
-              quantity: {
-                type: 'number',
-                description: 'Cantidad de ese producto/presentación, como número limpio.',
-              },
-              unit_price: {
-                type: 'number',
-                description: 'Precio UNITARIO de venta en pesos, sin separadores (ej. 12000).',
-              },
-            },
-            required: ['name', 'quantity', 'unit_price'],
-          },
+        product_id: {
+          type: 'integer',
+          description: 'El "id" de la presentación tal como lo devolvió search_products.',
         },
-        customer_name: {
-          type: 'string',
-          description: 'Nombre del cliente, si lo dio.',
-        },
-        customer_phone: {
-          type: 'string',
-          description: 'Teléfono del cliente, si lo dio.',
-        },
-        delivery: {
-          type: 'string',
+        quantity: {
+          type: 'number',
           description:
-            'Dirección o indicación de entrega/recogida tal como la dio el cliente, si aplica.',
-        },
-        notes: {
-          type: 'string',
-          description: 'Cualquier nota relevante del pedido (forma de pago, horario, etc.).',
+            'Cantidad TOTAL de esa presentación en el pedido (no la suma). 0 = quitarla.',
         },
       },
-      required: ['items'],
+      required: ['product_id', 'quantity'],
     },
+  },
+  {
+    name: 'set_order_details',
+    description:
+      'Guarda los datos de entrega que el cliente vaya dando (aunque sea uno solo). Llámala en cuanto te dé cualquiera de ellos.',
+    parameters: {
+      type: 'object',
+      properties: {
+        customer_name: { type: 'string', description: 'Nombre de quien recibe.' },
+        customer_phone: { type: 'string', description: 'Teléfono de contacto, si lo dio.' },
+        delivery_mode: {
+          type: 'string',
+          enum: ['domicilio', 'recoger'],
+          description: 'domicilio = se lo llevan; recoger = pasa por el negocio.',
+        },
+        delivery_address: {
+          type: 'string',
+          description: 'Dirección de entrega con barrio/referencias, tal como la dio.',
+        },
+        payment_method: {
+          type: 'string',
+          description: 'Cómo va a pagar (efectivo, transferencia...), si lo dijo.',
+        },
+        notes: { type: 'string', description: 'Indicaciones del pedido (horario, cambio, etc.).' },
+      },
+    },
+  },
+  {
+    name: 'close_order',
+    description:
+      'Cierra el pedido en curso y se lo envía al negocio. Llámala SOLO cuando el cliente confirmó explícitamente el resumen (productos y total) y ya no falta ningún dato. UNA vez por pedido. Si falta algo o cambió un precio, te lo dice y NO cierra.',
   },
 ] as const;

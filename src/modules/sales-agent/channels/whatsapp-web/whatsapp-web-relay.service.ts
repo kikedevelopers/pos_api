@@ -128,7 +128,13 @@ export class WhatsappWebRelayService {
     const firstMessageOfDay = await this.sessions.markDay(sessionKey, today);
     const turns = await this.sessions.append(sessionKey, { role: 'user', content: text });
     const result = await this.agent.handleMessage(
-      { companyId, channel: CHANNEL, chatId, chatDisplayName: input.sender_name },
+      {
+        companyId,
+        channel: CHANNEL,
+        chatId,
+        chatDisplayName: input.sender_name,
+        conversation: sessionKey,
+      },
       turns,
       { firstMessageOfDay },
     );
