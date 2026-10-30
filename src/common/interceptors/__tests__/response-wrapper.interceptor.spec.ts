@@ -1,14 +1,20 @@
 import { StreamableFile, type CallHandler, type ExecutionContext } from '@nestjs/common';
+import type { Reflector } from '@nestjs/core';
 import { of } from 'rxjs';
 
 import { ResponseWrapperInterceptor } from '../response-wrapper.interceptor';
 
 describe('ResponseWrapperInterceptor', () => {
-  const run = (value: unknown): Promise<unknown> =>
+  const run = (value: unknown, raw = false): Promise<unknown> =>
     new Promise((resolve) => {
-      const interceptor = new ResponseWrapperInterceptor();
+      const reflector = { getAllAndOverride: () => raw } as unknown as Reflector;
+      const interceptor = new ResponseWrapperInterceptor(reflector);
+      const context = {
+        getHandler: () => undefined,
+        getClass: () => undefined,
+      } as unknown as ExecutionContext;
       interceptor
-        .intercept({} as ExecutionContext, { handle: () => of(value) } as CallHandler)
+        .intercept(context, { handle: () => of(value) } as CallHandler)
         .subscribe(resolve);
     });
 
@@ -23,5 +29,10 @@ describe('ResponseWrapperInterceptor', () => {
   it('NO envuelve un StreamableFile (descarga binaria pasa tal cual)', async () => {
     const file = new StreamableFile(Buffer.from('%PDF-1.4'));
     expect(await run(file)).toBe(file);
+  });
+
+  it('con @RawResponse devuelve el valor CRUDO (ej. reto del webhook)', async () => {
+    expect(await run('RETO_OK', true)).toBe('RETO_OK');
+    expect(await run({ received: true }, true)).toEqual({ received: true });
   });
 });

@@ -19,6 +19,7 @@ import type { Request } from 'express';
 
 import type { WhatsappConfig } from '@/config/whatsapp.config';
 import { Public } from '@/common/decorators/public.decorator';
+import { RawResponse } from '@/common/decorators/raw-response.decorator';
 import { SkipActiveCompanyCheck } from '@/common/decorators/skip-active-company-check.decorator';
 import { SkipSubscriptionCheck } from '@/modules/subscriptions/skip-subscription-check.decorator';
 
@@ -40,6 +41,7 @@ import { parseWhatsappWebhook } from './whatsapp-webhook.parser';
 @ApiExcludeController()
 @Controller('sales-bot/whatsapp/webhook')
 @Public()
+@RawResponse()
 @SkipThrottle()
 @SkipSubscriptionCheck()
 @SkipActiveCompanyCheck()
