@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpStatus,
   Logger,
   NotFoundException,
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -24,7 +26,10 @@ import {
 } from './actions/get-ai-usage.action';
 import { SalesAgentTenantAction, type TenantSalesAgent } from './actions/sales-agent-tenant.action';
 import { AiUsageQueryDto } from './dto/ai-usage-query.dto';
-import { UpdateSalesAgentAccessDto } from './dto/update-sales-agent-access.dto';
+import {
+  ReleaseSalesAgentChatDto,
+  UpdateSalesAgentAccessDto,
+} from './dto/update-sales-agent-access.dto';
 import { UpdateAiCreditsDto } from './dto/update-ai-credits.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
 
@@ -57,6 +62,23 @@ export class SuperadminAiController {
     @Query() query: AiUsageQueryDto,
   ): Promise<TenantSalesAgent> {
     return this.salesAgentTenant.get(companyId, query.from, query.to);
+  }
+
+  @Post('tenants/:companyId/sales-agent/release-chat')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reanuda el asistente de ventas en un chat que estaba en pausa.',
+    description:
+      'Body: { channel, chat_id }. Borra la toma de control vigente de ese chat: el agente ' +
+      'vuelve a responder desde el próximo mensaje del cliente.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  releaseSalesAgentChat(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: ReleaseSalesAgentChatDto,
+  ): Promise<{ released: boolean }> {
+    return this.salesAgentTenant.releaseChat(companyId, dto.channel, dto.chat_id.trim());
   }
 
   @Patch('tenants/:companyId/sales-agent-access')

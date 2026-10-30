@@ -34,8 +34,10 @@ const makeAction = (options: {
   company?: { sales_agent_enabled: boolean } | null;
   configs?: unknown[];
   settings?: unknown[];
+  paused?: unknown[];
+  deleted?: number;
 }) => {
-  const query = jest.fn(async (sql: string) => {
+  const query = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.startsWith('SELECT sales_agent_enabled FROM companies')) {
       return options.company === null ? [] : [options.company ?? { sales_agent_enabled: false }];
     }
@@ -44,6 +46,12 @@ const makeAction = (options: {
     }
     if (sql.includes('FROM sales_bot_settings')) {
       return options.settings ?? [];
+    }
+    if (sql.includes('SELECT channel, chat_id, paused_until')) {
+      return options.paused ?? [];
+    }
+    if (sql.includes('DELETE FROM sales_bot_takeovers')) {
+      return [[], options.deleted ?? 0];
     }
     return [];
   });
@@ -157,5 +165,67 @@ describe('Consumo de IA por tipo', () => {
     expect(sql).toContain("e.kind = 'sales_agent')::int       AS agent_messages");
     expect(sql).toContain('AS agent_audios');
     expect(sql).toContain('AS catalog_suggestions');
+  });
+});
+
+describe('SalesAgentTenantAction — chats en pausa', () => {
+  it('lista los chats en pausa vigente con fechas ISO', async () => {
+    const h = makeAction({
+      company: { sales_agent_enabled: true },
+      paused: [
+        {
+          channel: 'whatsapp',
+          chat_id: '573113306995@s.whatsapp.net',
+          paused_until: new Date('2026-10-31T05:00:00Z'),
+          updated_at: new Date('2026-10-30T18:27:00Z'),
+        },
+      ],
+    });
+    const result = await h.action.get(1);
+    expect(result.paused_chats).toEqual([
+      {
+        channel: 'whatsapp',
+        chat_id: '573113306995@s.whatsapp.net',
+        paused_until: '2026-10-31T05:00:00.000Z',
+        paused_at: '2026-10-30T18:27:00.000Z',
+      },
+    ]);
+    const pausedSql = h.query.mock.calls.find(([sql]) =>
+      sql.includes('SELECT channel, chat_id, paused_until'),
+    );
+    expect(pausedSql?.[0]).toContain('paused_until > now()');
+    expect(pausedSql?.[1]).toEqual(['1']);
+  });
+
+  it('sin pausas: lista vacía', async () => {
+    const result = await makeAction({ company: { sales_agent_enabled: true } }).action.get(1);
+    expect(result.paused_chats).toEqual([]);
+  });
+
+  it('reanudar borra SOLO la pausa vigente de ese chat del negocio', async () => {
+    const h = makeAction({ company: { sales_agent_enabled: true }, deleted: 1 });
+    await expect(
+      h.action.releaseChat(1, 'whatsapp', '573113306995@s.whatsapp.net'),
+    ).resolves.toEqual({ released: true });
+    const call = h.query.mock.calls.find(([sql]) =>
+      sql.startsWith('DELETE FROM sales_bot_takeovers'),
+    );
+    expect(call?.[0]).toContain('company_id = $1 AND channel = $2 AND chat_id = $3');
+    expect(call?.[1]).toEqual(['1', 'whatsapp', '573113306995@s.whatsapp.net']);
+  });
+
+  it('si el chat ya no estaba en pausa, released=false', async () => {
+    const h = makeAction({ company: { sales_agent_enabled: true }, deleted: 0 });
+    await expect(h.action.releaseChat(1, 'telegram', 'b:900')).resolves.toEqual({
+      released: false,
+    });
+  });
+
+  it('company inexistente → 404 sin borrar', async () => {
+    const h = makeAction({ company: null });
+    await expect(h.action.releaseChat(1, 'whatsapp', 'x')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(h.query.mock.calls.some(([sql]) => sql.startsWith('DELETE'))).toBe(false);
   });
 });
