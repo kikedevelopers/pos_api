@@ -9,6 +9,19 @@ export interface TelegramIncomingMessage {
   senderName?: string;
 }
 
+/** Identidad del bot según `getMe` (lo que sí es público y podemos mostrar). */
+export interface TelegramBotIdentity {
+  id: string;
+  username: string | null;
+  firstName: string | null;
+}
+
+interface RawBotIdentity {
+  id?: number;
+  username?: string;
+  first_name?: string;
+}
+
 interface TelegramApiResponse<T> {
   ok: boolean;
   result?: T;
@@ -58,6 +71,21 @@ export class TelegramClient {
       this.logger.error({ err: error, method }, 'Fallo de red hablando con Telegram');
       return null;
     }
+  }
+
+  /**
+   * Valida el token contra la Bot API (`getMe`). Devuelve la identidad del bot
+   * si el token es válido, o `null` si Telegram lo rechaza o hay fallo de red.
+   * Se usa para verificar el token ANTES de guardarlo (no arranca el poller).
+   */
+  async getMe(): Promise<TelegramBotIdentity | null> {
+    const me = await this.call<RawBotIdentity>('getMe', {});
+    if (!me || typeof me.id !== 'number') return null;
+    return {
+      id: String(me.id),
+      username: me.username ?? null,
+      firstName: me.first_name ?? null,
+    };
   }
 
   /**

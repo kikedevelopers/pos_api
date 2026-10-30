@@ -6,6 +6,7 @@ import type { GeminiRoundResult } from '@/modules/ai/internal/gemini-client';
 import type { ChatTurn } from '@/modules/ai/internal/gemini.types';
 
 import { SalesAgentService } from '../seller-agent.service';
+import type { SalesBotConfigService } from '../sales-bot-config.service';
 import type { SellerToolRunner, SellerToolContext } from '../internal/seller-tool-runner';
 
 const CONTEXT: SellerToolContext = {
@@ -56,7 +57,13 @@ const makeService = (): Harness => {
     query: jest.fn().mockResolvedValue([{ name: 'Granero La 21' }]),
   } as unknown as DataSource;
 
-  const service = new SalesAgentService(configService, gemini, toolRunner, dataSource);
+  const botConfig = {
+    getPersona: jest
+      .fn()
+      .mockResolvedValue({ botName: '', personality: 'amable_profesional' }),
+  } as unknown as SalesBotConfigService;
+
+  const service = new SalesAgentService(configService, gemini, toolRunner, dataSource, botConfig);
   return { service, streamRound, execute, isEnabled };
 };
 

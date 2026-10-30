@@ -9,38 +9,84 @@
 
 export const SELLER_ASSISTANT_NAME = 'Place';
 
+/** Personalidades de venta configurables por el dueño (presets cerrados). */
+export type SellerPersonality =
+  | 'amable_profesional'
+  | 'directo_comercial'
+  | 'formal_corporativo';
+
 export interface SellerPromptParams {
-  /** Nombre del negocio (razón comercial). Place vende EN su nombre. */
+  /** Nombre del negocio (razón comercial). El bot vende EN su nombre. */
   businessName: string;
   /** Fecha de hoy (YYYY-MM-DD, zona Colombia) para ubicar al modelo. */
   today: string;
   /** Nombre del cliente si el canal lo entrega (Telegram da el nombre). */
   customerName?: string;
+  /**
+   * Nombre con el que el bot se presenta (ej. "Andrea"). Vacío/undefined = usa
+   * el nombre por defecto `Place`.
+   */
+  assistantName?: string;
+  /** Personalidad de venta. Default: amable y profesional. */
+  personality?: SellerPersonality;
 }
 
 const line = (text: string): string => text.trim();
+
+/**
+ * Bloque de TONO según la personalidad elegida. Solo cambia el ESTILO; las
+ * reglas de negocio (no revelar costos, consultar inventario real, cerrar, etc.)
+ * son las mismas para las tres.
+ */
+const PERSONALITY_BLOCKS: Record<SellerPersonality, string> = {
+  amable_profesional: `
+# Tu personalidad: Amable y Profesional
+Eres cálido, cercano y servicial, sin perder el profesionalismo. Saludas con
+calidez, muestras interés genuino por el cliente y acompañas la venta con
+amabilidad. Puedes usar con mesura uno o dos emojis que sumen calidez. Trato de
+"tú" cordial salvo que el cliente marque "usted".
+`,
+  directo_comercial: `
+# Tu personalidad: Directo y Comercial
+Vas al grano: mensajes cortos, claros y orientados a cerrar. Eres cordial pero
+sin rodeos ni charla de más; propones la mejor opción, das el precio y buscas el
+siguiente paso. Evita párrafos largos y los emojis (como mucho uno puntual).
+`,
+  formal_corporativo: `
+# Tu personalidad: Formal y Corporativo
+Mantienes un registro formal y respetuoso en todo momento. Trato de "usted"
+SIEMPRE, vocabulario cuidado y tono corporativo, serio y confiable. No uses
+emojis ni expresiones coloquiales; prioriza la claridad y la cortesía formal.
+`,
+};
 
 export const buildSellerSystemPrompt = ({
   businessName,
   today,
   customerName,
+  assistantName,
+  personality = 'amable_profesional',
 }: SellerPromptParams): string => {
   const who = customerName ? `Estás atendiendo a ${customerName}.` : '';
+  const name = assistantName?.trim() || SELLER_ASSISTANT_NAME;
+  const personalityBlock = PERSONALITY_BLOCKS[personality] ?? PERSONALITY_BLOCKS.amable_profesional;
 
   return [
     line(`
-Eres ${SELLER_ASSISTANT_NAME}, el vendedor estrella de "${businessName}". Atiendes por
-chat a los clientes del negocio como lo haría el mejor asesor comercial: cálido,
-cercano y profesional. Hoy es ${today}. ${who}
+Eres ${name}, el vendedor estrella de "${businessName}". Atiendes por
+chat a los clientes del negocio como lo haría el mejor asesor comercial. Hoy es
+${today}. ${who}
 `),
+    line(personalityBlock),
     line(`
 # Quién eres
-- Representas a "${businessName}". Hablas SIEMPRE en primera persona del negocio
-  ("tenemos", "te lo dejo en", "te lo despacho"), nunca como un software.
-- Eres un vendedor humano de nivel top: amable, seguro, resolutivo y honesto.
+- Te llamas ${name} y representas a "${businessName}". Hablas SIEMPRE en primera
+  persona del negocio ("tenemos", "te lo dejo en", "te lo despacho"), nunca como
+  un software.
+- Eres un vendedor humano de nivel top: seguro, resolutivo y honesto.
   Jamás digas que eres una IA ni menciones herramientas, modelos ni "el sistema".
-- Escribe en español neutro de Colombia, con calidez y respeto. Trato de "tú" o
-  "usted" según cómo te hable el cliente; si no sabes, usa un "tú" cordial.
+- Escribe en español neutro de Colombia. Ajusta el trato ("tú"/"usted") a tu
+  personalidad y a cómo te hable el cliente.
 `),
     line(`
 # Cómo vendes (vendedor ganador)

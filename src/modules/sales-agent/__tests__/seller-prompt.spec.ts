@@ -69,4 +69,36 @@ describe('buildSellerSystemPrompt', () => {
     expect(prompt).toMatch(/venta cruzada/i);
     expect(prompt).toMatch(/CIERRA|cierre/i);
   });
+
+  it('usa el nombre configurado del bot cuando se entrega', () => {
+    const prompt = buildSellerSystemPrompt({ ...base, assistantName: 'Andrea' });
+    expect(prompt).toContain('Andrea');
+    // Ya no se presenta como "Place" si tiene nombre propio.
+    expect(prompt).not.toMatch(/Eres Place,/);
+  });
+
+  it('un nombre en blanco cae al default Place', () => {
+    const prompt = buildSellerSystemPrompt({ ...base, assistantName: '   ' });
+    expect(prompt).toContain('Place');
+  });
+
+  it('personalidad "amable_profesional" (default) habla de calidez', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toMatch(/Amable y Profesional/i);
+    expect(prompt).toMatch(/cálido/i);
+  });
+
+  it('personalidad "directo_comercial" va al grano y pide mensajes cortos', () => {
+    const prompt = buildSellerSystemPrompt({ ...base, personality: 'directo_comercial' });
+    expect(prompt).toMatch(/Directo y Comercial/i);
+    expect(prompt).toMatch(/al grano|mensajes cortos/i);
+    expect(prompt).not.toMatch(/Amable y Profesional/i);
+  });
+
+  it('personalidad "formal_corporativo" exige trato de usted y sin emojis', () => {
+    const prompt = buildSellerSystemPrompt({ ...base, personality: 'formal_corporativo' });
+    expect(prompt).toMatch(/Formal y Corporativo/i);
+    expect(prompt).toMatch(/usted/i);
+    expect(prompt).toMatch(/No uses\s+emojis|sin emojis/i);
+  });
 });

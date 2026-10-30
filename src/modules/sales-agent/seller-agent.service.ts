@@ -12,6 +12,7 @@ import { buildSellerSystemPrompt } from './internal/seller-prompt';
 import { SELLER_TOOLS } from './internal/seller-tools';
 import { SellerToolRunner, type SellerToolContext } from './internal/seller-tool-runner';
 import type { ClosedOrder, SellerReply } from './internal/types';
+import { SalesBotConfigService } from './sales-bot-config.service';
 
 /** Último recurso cuando el servidor no tiene IA o algo falla feo. */
 const FALLBACK_REPLY =
@@ -33,6 +34,7 @@ export class SalesAgentService {
     private readonly gemini: GeminiClient,
     private readonly toolRunner: SellerToolRunner,
     private readonly dataSource: DataSource,
+    private readonly botConfig: SalesBotConfigService,
   ) {}
 
   private get config(): SalesBotConfig {
@@ -68,12 +70,18 @@ export class SalesAgentService {
   private async run(context: SellerToolContext, turns: ChatTurn[]): Promise<SellerReply> {
     const config = this.config;
     const businessName = await this.businessName(context.companyId);
+    const persona = await this.botConfig.getPersona(
+      context.companyId,
+      context.channel as 'telegram' | 'whatsapp',
+    );
     const model = this.gemini.resolveModel(config.model);
 
     const systemPrompt = buildSellerSystemPrompt({
       businessName,
       today: todayUtcDate(),
       customerName: context.chatDisplayName,
+      assistantName: persona.botName,
+      personality: persona.personality,
     });
 
     const body = buildGeminiRequest({
