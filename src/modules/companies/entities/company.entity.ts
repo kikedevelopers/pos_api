@@ -124,6 +124,15 @@ export class Company {
   ai_enabled!: boolean;
 
   /**
+   * Asistente de ventas (agente vendedor por Telegram/WhatsApp) de ESTA company.
+   * Apagado por defecto; se habilita desde el panel superadmin. Cada sucursal
+   * tiene el suyo. Apagado = no responde en ningún canal y su configuración
+   * queda inaccesible (403 SALES_AGENT_NOT_ENABLED). Migración 1747013070000.
+   */
+  @Column({ type: 'boolean', default: false })
+  sales_agent_enabled!: boolean;
+
+  /**
    * Preguntas diarias que la cuenta puede hacerle a Place (calendario de
    * Colombia, compartidas por todos los usuarios de la company). 0 = bloqueado.
    * Se asignan desde el panel superadmin. Migración 1747012920000.

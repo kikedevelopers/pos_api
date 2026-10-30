@@ -49,35 +49,11 @@ const makeService = (existing: Partial<SalesBotConfigEntity> | null = null): Har
 afterEach(() => jest.restoreAllMocks());
 
 describe('SalesBotConfigService.upsertTelegram', () => {
-  it('rechaza una personalidad no válida', async () => {
-    const { service } = makeService();
-    await expect(
-      service.upsertTelegram(7, {
-        bot_name: 'Andrea',
-        personality: 'payaso' as never,
-        enabled: false,
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('rechaza un nombre de más de 60 caracteres', async () => {
-    const { service } = makeService();
-    await expect(
-      service.upsertTelegram(7, {
-        bot_name: 'a'.repeat(61),
-        personality: 'amable_profesional',
-        enabled: false,
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
   it('valida el token nuevo con getMe y guarda la identidad del bot', async () => {
     mockGetMeOk('granero_bot');
     const { service, repo } = makeService();
 
     const result = await service.upsertTelegram(7, {
-      bot_name: 'Andrea',
-      personality: 'directo_comercial',
       enabled: true,
       token: '123:ABC',
     });
@@ -99,8 +75,6 @@ describe('SalesBotConfigService.upsertTelegram', () => {
 
     await expect(
       service.upsertTelegram(7, {
-        bot_name: 'Andrea',
-        personality: 'amable_profesional',
         enabled: true,
         token: 'token-malo',
       }),
@@ -112,8 +86,6 @@ describe('SalesBotConfigService.upsertTelegram', () => {
     const { service, repo } = makeService(null);
     await expect(
       service.upsertTelegram(7, {
-        bot_name: 'Andrea',
-        personality: 'amable_profesional',
         enabled: true,
         // sin token y sin config previa
       }),
@@ -133,8 +105,6 @@ describe('SalesBotConfigService.upsertTelegram', () => {
     } as Partial<SalesBotConfigEntity>);
 
     const result = await service.upsertTelegram(7, {
-      bot_name: 'Nuevo nombre',
-      personality: 'formal_corporativo',
       enabled: true,
       token: '',
     });
@@ -143,12 +113,10 @@ describe('SalesBotConfigService.upsertTelegram', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     const saved = repo.save.mock.calls[0][0] as SalesBotConfigEntity;
     expect(saved.telegram_token).toBe('token-viejo');
-    expect(saved.bot_name).toBe('Nuevo nombre');
-    expect(saved.personality).toBe('formal_corporativo');
     expect(result.has_token).toBe(true);
   });
 
-  it('recorta el nombre y normaliza owner_chat_id vacío a null', async () => {
+  it('normaliza owner_chat_id vacío a null y NO toca la persona (es de los ajustes)', async () => {
     const { service, repo } = makeService({
       company_id: '7',
       channel: 'telegram',
@@ -157,14 +125,13 @@ describe('SalesBotConfigService.upsertTelegram', () => {
     } as Partial<SalesBotConfigEntity>);
 
     await service.upsertTelegram(7, {
-      bot_name: '  Andrea  ',
-      personality: 'amable_profesional',
       enabled: false,
       owner_chat_id: '   ',
     });
 
     const saved = repo.save.mock.calls[0][0] as SalesBotConfigEntity;
-    expect(saved.bot_name).toBe('Andrea');
+    expect(saved.bot_name).toBeUndefined();
+    expect(saved.personality).toBeUndefined();
     expect(saved.owner_chat_id).toBeNull();
   });
 });
@@ -189,8 +156,6 @@ describe('SalesBotConfigService.getPublicConfig', () => {
     const { service } = makeService({
       telegram_token: 'secreto',
       telegram_bot_username: 'mi_bot',
-      bot_name: 'Andrea',
-      personality: 'directo_comercial',
       enabled: true,
       updated_at: new Date('2026-10-29T12:00:00Z'),
     } as Partial<SalesBotConfigEntity>);
@@ -198,27 +163,6 @@ describe('SalesBotConfigService.getPublicConfig', () => {
     expect(config.has_token).toBe(true);
     expect(config).not.toHaveProperty('telegram_token');
     expect(config.bot_username).toBe('mi_bot');
-  });
-});
-
-describe('SalesBotConfigService.getPersona', () => {
-  it('defaults cuando no hay config', async () => {
-    const { service } = makeService(null);
-    await expect(service.getPersona(7)).resolves.toEqual({
-      botName: '',
-      personality: 'amable_profesional',
-    });
-  });
-
-  it('entrega nombre y personalidad guardados', async () => {
-    const { service } = makeService({
-      bot_name: '  Andrea ',
-      personality: 'formal_corporativo',
-    } as Partial<SalesBotConfigEntity>);
-    await expect(service.getPersona(7)).resolves.toEqual({
-      botName: 'Andrea',
-      personality: 'formal_corporativo',
-    });
   });
 });
 
@@ -267,23 +211,51 @@ const makeServiceByChannel = (
 };
 
 describe('SalesBotConfigService.upsertWhatsapp', () => {
-  it('no deja ACTIVAR sin phone_number_id', async () => {
+  it('permite ACTIVAR sin phone_number_id (conexión por QR en el escritorio)', async () => {
     const { service, repo } = makeServiceByChannel({ whatsapp: null });
-    await expect(
-      service.upsertWhatsapp(7, {
-        bot_name: 'Andrea',
-        personality: 'amable_profesional',
-        enabled: true,
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(repo.save).not.toHaveBeenCalled();
+    const result = await service.upsertWhatsapp(7, {
+      enabled: true,
+    });
+    const saved = repo.save.mock.calls[0][0] as SalesBotConfigEntity;
+    expect(saved.enabled).toBe(true);
+    expect(result.enabled).toBe(true);
+  });
+
+  it('no borra phone_number_id ni waba_id si el payload no los trae', async () => {
+    const { service, repo } = makeServiceByChannel({
+      whatsapp: {
+        channel: 'whatsapp',
+        whatsapp_phone_number_id: '111',
+        whatsapp_waba_id: 'waba-1',
+        enabled: false,
+      } as Partial<SalesBotConfigEntity>,
+    });
+    await service.upsertWhatsapp(7, {
+      enabled: true,
+    });
+    const saved = repo.save.mock.calls[0][0] as SalesBotConfigEntity;
+    expect(saved.whatsapp_phone_number_id).toBe('111');
+    expect(saved.whatsapp_waba_id).toBe('waba-1');
+  });
+
+  it('un phone_number_id vacío explícito sí lo limpia', async () => {
+    const { service, repo } = makeServiceByChannel({
+      whatsapp: {
+        channel: 'whatsapp',
+        whatsapp_phone_number_id: '111',
+      } as Partial<SalesBotConfigEntity>,
+    });
+    await service.upsertWhatsapp(7, {
+      enabled: false,
+      phone_number_id: '',
+    });
+    const saved = repo.save.mock.calls[0][0] as SalesBotConfigEntity;
+    expect(saved.whatsapp_phone_number_id).toBeNull();
   });
 
   it('guarda phone_number_id y token propio; el público no expone el token', async () => {
     const { service, repo } = makeServiceByChannel({ whatsapp: null });
     const result = await service.upsertWhatsapp(7, {
-      bot_name: 'Andrea',
-      personality: 'directo_comercial',
       enabled: true,
       phone_number_id: '111222',
       token: 'EAAG-secret',
@@ -308,8 +280,6 @@ describe('SalesBotConfigService.upsertWhatsapp', () => {
       } as Partial<SalesBotConfigEntity>,
     });
     await service.upsertWhatsapp(7, {
-      bot_name: 'Andrea',
-      personality: 'amable_profesional',
       enabled: true,
       phone_number_id: '111',
       token: '',
@@ -323,8 +293,6 @@ describe('SalesBotConfigService.upsertWhatsapp', () => {
     repo.save.mockRejectedValueOnce(Object.assign(new Error('dup'), { code: '23505' }));
     await expect(
       service.upsertWhatsapp(7, {
-        bot_name: 'Andrea',
-        personality: 'amable_profesional',
         enabled: false,
         phone_number_id: '111',
       }),
@@ -349,25 +317,3 @@ describe('SalesBotConfigService.getWhatsappPublicConfig', () => {
   });
 });
 
-describe('SalesBotConfigService.getPersona por canal', () => {
-  it('usa la fila de WhatsApp cuando tiene nombre', async () => {
-    const { service } = makeServiceByChannel({
-      whatsapp: { bot_name: 'Gysell', personality: 'formal_corporativo' } as Partial<SalesBotConfigEntity>,
-    });
-    await expect(service.getPersona(7, 'whatsapp')).resolves.toEqual({
-      botName: 'Gysell',
-      personality: 'formal_corporativo',
-    });
-  });
-
-  it('cae al nombre de Telegram si la fila de WhatsApp no tiene nombre', async () => {
-    const { service } = makeServiceByChannel({
-      whatsapp: { bot_name: '   ', personality: 'directo_comercial' } as Partial<SalesBotConfigEntity>,
-      telegram: { bot_name: 'Andrea', personality: 'amable_profesional' } as Partial<SalesBotConfigEntity>,
-    });
-    const persona = await service.getPersona(7, 'whatsapp');
-    expect(persona.botName).toBe('Andrea');
-    // La personalidad se respeta de la fila de WhatsApp (que sí existe).
-    expect(persona.personality).toBe('directo_comercial');
-  });
-});

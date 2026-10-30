@@ -8,6 +8,8 @@ import type { SalesAgentService } from '../seller-agent.service';
 import type { SalesBotConfigService } from '../sales-bot-config.service';
 import type { SellerSessionStore } from '../internal/session-store';
 import type { SalesBotConfigEntity } from '../entities/sales-bot-config.entity';
+import type { SalesBotTakeoverService } from '../sales-bot-takeover.service';
+import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 
 const envConfig = (overrides: Partial<SalesBotConfig> = {}): SalesBotConfig => ({
   enabled: false,
@@ -42,6 +44,8 @@ interface Harness {
   listRunnable: jest.Mock;
   getEntity: jest.Mock;
   isReady: jest.Mock;
+  enabledIds: jest.Mock;
+  isEnabled: jest.Mock;
 }
 
 const makeManager = (env: SalesBotConfig): Harness => {
@@ -66,8 +70,25 @@ const makeManager = (env: SalesBotConfig): Harness => {
     .spyOn(TelegramBotWorker.prototype, 'stop')
     .mockResolvedValue(undefined);
 
-  const manager = new TelegramBotManager(configService, agent, sessions, botConfig);
-  return { manager, startSpy, stopSpy, listRunnable, getEntity, isReady };
+  const takeovers = {} as unknown as SalesBotTakeoverService;
+
+  // Por defecto todos los negocios de los tests tienen el agente habilitado.
+  const enabledIds = jest.fn().mockResolvedValue([5, 7, 8, 99]);
+  const isEnabled = jest.fn().mockResolvedValue(true);
+  const access = {
+    enabledCompanyIds: enabledIds,
+    isEnabled,
+  } as unknown as SalesAgentAccessService;
+
+  const manager = new TelegramBotManager(
+    configService,
+    agent,
+    sessions,
+    botConfig,
+    takeovers,
+    access,
+  );
+  return { manager, startSpy, stopSpy, listRunnable, getEntity, isReady, enabledIds, isEnabled };
 };
 
 afterEach(() => jest.restoreAllMocks());
@@ -144,3 +165,38 @@ describe('TelegramBotManager.refresh', () => {
     expect(h.startSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('TelegramBotManager — agente inhabilitado desde el panel', () => {
+  it('al arrancar no levanta bots de negocios con el agente inhabilitado', async () => {
+    const h = makeManager(envConfig());
+    h.enabledIds.mockResolvedValue([7]);
+    h.listRunnable.mockResolvedValue([dbConfig(7), dbConfig(8)]);
+    await h.manager.onModuleInit();
+    expect(h.startSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('tampoco levanta el bot legacy por env si su negocio está inhabilitado', async () => {
+    const h = makeManager(
+      envConfig({ enabled: true, companyId: 99, telegram: { token: 'env-tkn', pollIntervalMs: 1500, longPollTimeoutSec: 30, ownerChatId: '' } }),
+    );
+    h.enabledIds.mockResolvedValue([]);
+    await h.manager.onModuleInit();
+    expect(h.startSpy).not.toHaveBeenCalled();
+  });
+
+  it('refresh con el agente inhabilitado detiene el bot y no lo rearranca', async () => {
+    const h = makeManager(envConfig());
+    h.listRunnable.mockResolvedValue([dbConfig(7)]);
+    await h.manager.onModuleInit();
+    h.startSpy.mockClear();
+
+    h.isEnabled.mockResolvedValue(false);
+    h.getEntity.mockResolvedValue(dbConfig(7));
+    await h.manager.refresh(7);
+
+    expect(h.stopSpy).toHaveBeenCalledTimes(1);
+    expect(h.startSpy).not.toHaveBeenCalled();
+    expect(h.getEntity).not.toHaveBeenCalled();
+  });
+});
+

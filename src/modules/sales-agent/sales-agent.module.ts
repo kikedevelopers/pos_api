@@ -3,15 +3,26 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
+import { CatalogKnowledgeModule } from '@/modules/catalog-knowledge/catalog-knowledge.module';
+import { SalesAgentAccessModule } from '@/modules/sales-agent-access/sales-agent-access.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 
 import { TelegramBotManager } from './channels/telegram/telegram-bot.manager';
 import { WhatsappHandlerService } from './channels/whatsapp/whatsapp-handler.service';
 import { WhatsappWebhookController } from './channels/whatsapp/whatsapp.controller';
+import { WhatsappWebRelayController } from './channels/whatsapp-web/whatsapp-web-relay.controller';
+import { WhatsappWebRelayService } from './channels/whatsapp-web/whatsapp-web-relay.service';
 import { SalesBotConfigEntity } from './entities/sales-bot-config.entity';
+import { SalesBotConversationEntity } from './entities/sales-bot-conversation.entity';
+import { SalesBotSettingsEntity } from './entities/sales-bot-settings.entity';
+import { SalesBotTakeoverEntity } from './entities/sales-bot-takeover.entity';
+import { SellerCartService } from './seller-cart.service';
+import { SalesBotSettingsService } from './sales-bot-settings.service';
+import { SalesBotTakeoverService } from './sales-bot-takeover.service';
 import { SellerSessionStore } from './internal/session-store';
 import { SellerToolRunner } from './internal/seller-tool-runner';
 import { SalesBotConfigService } from './sales-bot-config.service';
+import { SalesAgentAccessController } from './sales-agent-access.controller';
 import { SalesBotController } from './sales-bot.controller';
 import { SalesAgentService } from './seller-agent.service';
 
@@ -28,24 +39,43 @@ import { SalesAgentService } from './seller-agent.service';
  * (`SalesAgentService`) es agnóstico del canal: cuando se sume WhatsApp, solo se
  * agrega otro adaptador en `channels/`.
  *
- * `sales_bot_configs` persiste la config por negocio; la memoria de conversación
- * sigue en memoria (`SellerSessionStore`) para esta fase.
+ * `sales_bot_configs` persiste la config por negocio y `sales_bot_conversations`
+ * la memoria de conversación (`SellerSessionStore`), que sobrevive a reinicios.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([SalesBotConfigEntity]), RolesModule],
-  controllers: [SalesBotController, WhatsappWebhookController],
+  imports: [
+    TypeOrmModule.forFeature([
+      SalesBotConfigEntity,
+      SalesBotSettingsEntity,
+      SalesBotTakeoverEntity,
+      SalesBotConversationEntity,
+    ]),
+    RolesModule,
+    CatalogKnowledgeModule,
+    SalesAgentAccessModule,
+  ],
+  controllers: [
+    SalesBotController,
+    SalesAgentAccessController,
+    WhatsappWebhookController,
+    WhatsappWebRelayController,
+  ],
   providers: [
     SalesAgentService,
     SalesBotConfigService,
+    SalesBotSettingsService,
+    SalesBotTakeoverService,
     SellerToolRunner,
     SellerSessionStore,
+    SellerCartService,
     TelegramBotManager,
     WhatsappHandlerService,
+    WhatsappWebRelayService,
     AdminLevelGuard,
     // Instancia propia del cliente de Gemini (sin estado): se reutiliza la clase
     // del módulo `ai` sin importar todo ese módulo.
     GeminiClient,
   ],
-  exports: [SalesAgentService, SalesBotConfigService],
+  exports: [SalesAgentService, SalesBotConfigService, TelegramBotManager],
 })
 export class SalesAgentModule {}

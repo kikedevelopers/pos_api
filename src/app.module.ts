@@ -72,6 +72,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { SalesAgentModule } from './modules/sales-agent/sales-agent.module';
+import { CatalogKnowledgeModule } from './modules/catalog-knowledge/catalog-knowledge.module';
 import { SubscriptionGuard } from './modules/subscriptions/subscription.guard';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { BackupsModule } from './modules/backups/backups.module';
@@ -254,6 +255,8 @@ import { WalletsModule } from './modules/wallets/wallets.module';
     SalesModule,
     // Place VENDEDOR en canales de chat (Telegram). Aislado del asistente `ai`.
     SalesAgentModule,
+    // Ficha "Para el asistente" + búsqueda por significado del catálogo.
+    CatalogKnowledgeModule,
     // Fase 7 — Notas crédito/débito (depende de Sales).
     CreditNotesModule,
     // Fase 8 — Compras.

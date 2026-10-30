@@ -224,6 +224,40 @@ export interface SellableProduct {
   prices: SellablePrice[];
 }
 
+/** Fila de `buildSellableDetailsSql` (decimales como string, tal cual pg). */
+export interface SellableDetailRow {
+  id: string;
+  name: string;
+  sku_code: string | null;
+  bar_code: string | null;
+  product_type: string;
+  cost: string;
+  stock: string;
+  parent_id: string | null;
+  parent_stock: string | null;
+  packaging_name: string | null;
+  packaging_value: string | null;
+  prices: Array<{ id: string | number; name: string; sale_price: string }>;
+}
+
+/** Fila de detalle → producto vendible (Big exactos). */
+export const toSellableProduct = (row: SellableDetailRow): SellableProduct => ({
+  id: Number(row.id),
+  name: row.name,
+  product_type: row.product_type,
+  cost: new Big(row.cost ?? 0),
+  stock: new Big(row.stock ?? 0),
+  parent_id: row.parent_id !== null ? Number(row.parent_id) : null,
+  parent_stock: row.parent_stock !== null ? new Big(row.parent_stock) : null,
+  packaging_name: row.packaging_name,
+  packaging_value: row.packaging_value !== null ? new Big(row.packaging_value) : null,
+  prices: (row.prices ?? []).map((price) => ({
+    id: Number(price.id),
+    name: price.name ?? '',
+    sale_price: new Big(price.sale_price ?? 0),
+  })),
+});
+
 export type LinePriceMode = 'fixed' | 'manual';
 
 /**

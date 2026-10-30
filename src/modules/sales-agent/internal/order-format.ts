@@ -7,12 +7,24 @@ export const formatCop = (value: number): string => {
   return `$ ${withSep}`;
 };
 
+/** Firma estable de un pedido (líneas + total) para detectar un doble cierre. */
+export const orderSignature = (order: ClosedOrder): string => {
+  const lines = order.items
+    .map((item) => `${item.name}|${item.quantity}|${item.unit_price}`)
+    .sort()
+    .join(';');
+  return `${lines}#${order.total}`;
+};
+
 /**
  * Mensaje que recibe el DUEÑO cuando el vendedor cierra un pedido. Pensado para
  * leerse de un vistazo en el chat: qué pidieron, cuánto, y cómo ubicar al cliente.
  */
 export const formatOrderForOwner = (order: ClosedOrder): string => {
-  const lines: string[] = ['🛒 NUEVO PEDIDO (Place vendedor)', ''];
+  const title = order.reference
+    ? `🛒 NUEVO PEDIDO ${order.reference} (asistente de ventas)`
+    : '🛒 NUEVO PEDIDO (asistente de ventas)';
+  const lines: string[] = [title, ''];
 
   for (const item of order.items) {
     lines.push(
@@ -23,10 +35,21 @@ export const formatOrderForOwner = (order: ClosedOrder): string => {
   lines.push('', `TOTAL: ${formatCop(order.total)}`, '');
 
   const contact: string[] = [];
-  if (order.customer_name) contact.push(`Cliente: ${order.customer_name}`);
-  if (order.customer_phone) contact.push(`Tel: ${order.customer_phone}`);
-  if (order.delivery) contact.push(`Entrega: ${order.delivery}`);
-  if (order.notes) contact.push(`Notas: ${order.notes}`);
+  if (order.customer_name) {
+    contact.push(`Cliente: ${order.customer_name}`);
+  }
+  if (order.customer_phone) {
+    contact.push(`Tel: ${order.customer_phone}`);
+  }
+  if (order.delivery) {
+    contact.push(`Entrega: ${order.delivery}`);
+  }
+  if (order.payment_method) {
+    contact.push(`Pago: ${order.payment_method}`);
+  }
+  if (order.notes) {
+    contact.push(`Notas: ${order.notes}`);
+  }
   const origin =
     order.chat_display_name && order.chat_display_name.length > 0
       ? `${order.chat_display_name} · ${order.channel}`

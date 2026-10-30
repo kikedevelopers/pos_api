@@ -22,7 +22,9 @@ import {
   type GlobalAiUsage,
   type TenantAiUsage,
 } from './actions/get-ai-usage.action';
+import { SalesAgentTenantAction, type TenantSalesAgent } from './actions/sales-agent-tenant.action';
 import { AiUsageQueryDto } from './dto/ai-usage-query.dto';
+import { UpdateSalesAgentAccessDto } from './dto/update-sales-agent-access.dto';
 import { UpdateAiCreditsDto } from './dto/update-ai-credits.dto';
 import { SuperadminSignatureGuard } from './guards/superadmin-signature.guard';
 
@@ -41,7 +43,38 @@ export class SuperadminAiController {
   constructor(
     private readonly getAiUsageAction: GetAiUsageAction,
     private readonly aiCredits: AiCreditsAction,
+    private readonly salesAgentTenant: SalesAgentTenantAction,
   ) {}
+
+  @Get('tenants/:companyId/sales-agent')
+  @ApiOperation({
+    summary: 'Asistente de ventas de un negocio: interruptor, canales y consumo de IA.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  tenantSalesAgent(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Query() query: AiUsageQueryDto,
+  ): Promise<TenantSalesAgent> {
+    return this.salesAgentTenant.get(companyId, query.from, query.to);
+  }
+
+  @Patch('tenants/:companyId/sales-agent-access')
+  @ApiOperation({
+    summary: 'Habilita/inhabilita el asistente de ventas de ESTA company.',
+    description:
+      'Body: { enabled }. Apagado por defecto. Apagado: no responde en ningún canal (Telegram ' +
+      'se detiene al instante), su configuración responde 403 SALES_AGENT_NOT_ENABLED y el ' +
+      'catálogo deja de indexarse. Cada sucursal tiene el suyo.',
+  })
+  @ApiResponse({ status: HttpStatus.OK })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'La company no existe' })
+  updateSalesAgentAccess(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Body() dto: UpdateSalesAgentAccessDto,
+  ): Promise<{ salesAgentEnabled: boolean }> {
+    return this.salesAgentTenant.setAccess(companyId, dto.enabled);
+  }
 
   @Get('ai/usage')
   @ApiOperation({

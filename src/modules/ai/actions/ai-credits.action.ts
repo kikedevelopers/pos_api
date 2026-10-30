@@ -17,10 +17,21 @@ import type { GeminiUsage } from '../internal/gemini.types';
 export const creditsDay = (now: Date = new Date()): string =>
   dayjs(now).tz(APP_TIMEZONE).format('YYYY-MM-DD');
 
+/**
+ * Tipo de consumo de IA de una cuenta: Place (`chat`, `greeting`) y el
+ * asistente de ventas (`sales_agent`, `sales_agent_audio`, `catalog_suggest`).
+ */
+export type AiUsageKind =
+  | 'chat'
+  | 'greeting'
+  | 'sales_agent'
+  | 'sales_agent_audio'
+  | 'catalog_suggest';
+
 export interface AiUsageEvent {
   company_id: number;
   user_id: number | null;
-  kind: 'chat' | 'greeting';
+  kind: AiUsageKind;
   model: string;
   usage: GeminiUsage;
   rounds: number;

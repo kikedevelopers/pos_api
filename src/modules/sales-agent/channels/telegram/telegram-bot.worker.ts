@@ -1,9 +1,11 @@
 import { Logger } from '@nestjs/common';
 
-import type { SalesAgentService } from '../../seller-agent.service';
-import { formatOrderForOwner } from '../../internal/order-format';
+import { todayUtcDate } from '@/modules/reports/internal/range';
+
+import { AUDIO_NOT_UNDERSTOOD_REPLY, type SalesAgentService } from '../../seller-agent.service';
+import type { SalesBotTakeoverService } from '../../sales-bot-takeover.service';
+import { formatOrderForOwner, orderSignature } from '../../internal/order-format';
 import { SellerSessionStore } from '../../internal/session-store';
-import type { ClosedOrder } from '../../internal/types';
 import { TelegramClient, type TelegramIncomingMessage } from './telegram.client';
 
 const CHANNEL = 'telegram';
@@ -20,6 +22,9 @@ export interface TelegramBotWorkerParams {
   longPollTimeoutSec: number;
   agent: SalesAgentService;
   sessions: SellerSessionStore;
+  takeovers: SalesBotTakeoverService;
+  /** Inyectable para tests; por defecto se crea con el token. */
+  client?: TelegramClient;
 }
 
 /**
@@ -39,12 +44,14 @@ export class TelegramBotWorker {
   private loopPromise: Promise<void> | null = null;
 
   constructor(private readonly params: TelegramBotWorkerParams) {
-    this.client = new TelegramClient(params.token);
+    this.client = params.client ?? new TelegramClient(params.token);
   }
 
   /** Arranca el bucle en segundo plano (no bloquea). Idempotente. */
   start(): void {
-    if (this.running) return;
+    if (this.running) {
+      return;
+    }
     this.running = true;
     this.loopPromise = this.loop();
     this.logger.log(
@@ -65,19 +72,16 @@ export class TelegramBotWorker {
   private async loop(): Promise<void> {
     while (this.running) {
       try {
-        const updates = await this.client.getUpdates(
-          this.offset,
-          this.params.longPollTimeoutSec,
-        );
+        const updates = await this.client.getUpdates(this.offset, this.params.longPollTimeoutSec);
         for (const update of updates) {
           // Avanza SIEMPRE el offset, incluso para lo que no atendemos (fotos,
           // stickers), para no releerlo en el siguiente ciclo.
           this.offset = Math.max(this.offset, update.updateId + 1);
-          if (!this.running) break;
-          if (update.text.length === 0) continue;
-          await this.handle(update);
+          if (!this.running) {
+            break;
+          }
+          await this.process(update);
         }
-        this.params.sessions.pruneExpired();
       } catch (error) {
         this.logger.error(
           { err: error, companyId: this.params.companyId },
@@ -91,25 +95,89 @@ export class TelegramBotWorker {
     }
   }
 
-  private async handle(update: TelegramIncomingMessage): Promise<void> {
-    const { companyId, agent, sessions, ownerChatId } = this.params;
-    // La clave de sesión incluye el negocio para no cruzar conversaciones entre
-    // bots distintos que compartan el proceso.
-    const sessionKey = SellerSessionStore.key(`${CHANNEL}:${companyId}`, update.chatId);
+  /**
+   * Atiende un update ya normalizado. Público para poder probarlo sin el bucle.
+   *
+   * Telegram Business: el bot recibe los mensajes de AMBOS lados del chat de la
+   * cuenta del dueño. Si escribe el lado del negocio y NO fue el bot, es una
+   * persona tomando el control → el agente se calla en ese chat hasta mañana
+   * (igual que en WhatsApp por QR).
+   */
+  async process(update: TelegramIncomingMessage): Promise<void> {
+    const { companyId, takeovers } = this.params;
+    const conversationId = conversationIdOf(update);
 
-    // Comandos de control: reinician la conversación con un saludo.
-    if (RESET_COMMANDS.has(update.text.toLowerCase())) {
-      sessions.reset(sessionKey);
-      await this.client.sendMessage(
-        update.chatId,
-        '¡Hola! 👋 Soy tu asesor. ¿En qué te puedo ayudar hoy?',
-      );
+    if (update.fromBusinessSide) {
+      if (!update.sentByBot) {
+        await takeovers.pause(companyId, CHANNEL, conversationId);
+        this.logger.log(
+          { companyId, chatId: conversationId },
+          'Una persona del negocio respondió; el agente se pausa en este chat.',
+        );
+      }
       return;
     }
 
-    await this.client.sendTyping(update.chatId);
+    if (update.text.length === 0 && !update.voice) {
+      return;
+    }
+    if (await takeovers.isPaused(companyId, CHANNEL, conversationId)) {
+      return;
+    }
 
-    const turns = sessions.append(sessionKey, { role: 'user', content: update.text });
+    // Nota de voz → se transcribe y se atiende como si la hubiera escrito.
+    if (update.text.length === 0 && update.voice) {
+      const text = await this.transcribe(update.voice);
+      if (!text) {
+        await this.client.sendMessage(
+          update.chatId,
+          AUDIO_NOT_UNDERSTOOD_REPLY,
+          update.businessConnectionId,
+        );
+        return;
+      }
+      await this.handle({ ...update, text }, conversationId);
+      return;
+    }
+
+    await this.handle(update, conversationId);
+  }
+
+  private async transcribe(voice: { fileId: string; mimeType: string }): Promise<string | null> {
+    const file = await this.client.downloadFile(voice.fileId);
+    if (!file) {
+      return null;
+    }
+    return this.params.agent.transcribeAudio({
+      companyId: this.params.companyId,
+      data: file.data,
+      mime_type: voice.mimeType,
+    });
+  }
+
+  private async handle(update: TelegramIncomingMessage, conversationId: string): Promise<void> {
+    const { companyId, agent, sessions, ownerChatId, takeovers } = this.params;
+    const businessConnectionId = update.businessConnectionId;
+    // La clave de sesión incluye el negocio para no cruzar conversaciones entre
+    // bots distintos que compartan el proceso.
+    const sessionKey = SellerSessionStore.key(companyId, CHANNEL, conversationId);
+
+    const today = todayUtcDate();
+
+    // Comandos de control: reinician la conversación con un saludo que presenta
+    // al bot (nombre, negocio y tono de su personalidad).
+    if (RESET_COMMANDS.has(update.text.toLowerCase())) {
+      await sessions.reset(sessionKey);
+      const greeting = await agent.greeting(companyId);
+      await sessions.markDay(sessionKey, today);
+      await this.client.sendMessage(update.chatId, greeting, businessConnectionId);
+      return;
+    }
+
+    await this.client.sendTyping(update.chatId, businessConnectionId);
+
+    const firstMessageOfDay = await sessions.markDay(sessionKey, today);
+    const turns = await sessions.append(sessionKey, { role: 'user', content: update.text });
 
     const result = await agent.handleMessage(
       {
@@ -117,18 +185,25 @@ export class TelegramBotWorker {
         channel: CHANNEL,
         chatId: update.chatId,
         chatDisplayName: update.senderName,
+        conversation: sessionKey,
       },
       turns,
+      { firstMessageOfDay },
     );
 
-    sessions.append(sessionKey, { role: 'assistant', content: result.reply });
-    await this.client.sendMessage(update.chatId, result.reply);
+    // Mientras la IA pensaba, una persona pudo tomar el chat: no la pisamos.
+    if (await takeovers.isPaused(companyId, CHANNEL, conversationId)) {
+      return;
+    }
+
+    await sessions.append(sessionKey, { role: 'assistant', content: result.reply });
+    await this.client.sendMessage(update.chatId, result.reply, businessConnectionId);
 
     // Avisa al dueño de cada pedido cerrado, deduplicando: si el modelo cerró el
     // mismo pedido dos veces (doble "sí"), solo se notifica una vez.
     for (const order of result.orders) {
       const signature = orderSignature(order);
-      if (!sessions.rememberOrder(sessionKey, signature)) {
+      if (!(await sessions.rememberOrder(sessionKey, signature))) {
         this.logger.log({ signature }, 'Pedido duplicado (doble cierre); no se re-notifica.');
         continue;
       }
@@ -144,13 +219,12 @@ export class TelegramBotWorker {
   }
 }
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Id de la conversación para sesión y toma de control. Los chats de la cuenta
+ * Business van aparte (`b:`) de los chats directos con el bot, aunque el
+ * cliente sea el mismo.
+ */
+export const conversationIdOf = (update: TelegramIncomingMessage): string =>
+  update.businessConnectionId ? `b:${update.chatId}` : update.chatId;
 
-/** Firma estable de un pedido (líneas + total) para detectar un doble cierre. */
-const orderSignature = (order: ClosedOrder): string => {
-  const lines = order.items
-    .map((item) => `${item.name}|${item.quantity}|${item.unit_price}`)
-    .sort()
-    .join(';');
-  return `${lines}#${order.total}`;
-};
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

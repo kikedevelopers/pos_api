@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { WhatsappConfig } from '@/config/whatsapp.config';
+import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
+import { todayUtcDate } from '@/modules/reports/internal/range';
 
 import { formatOrderForOwner } from '../../internal/order-format';
 import { SellerSessionStore } from '../../internal/session-store';
@@ -39,6 +41,7 @@ export class WhatsappHandlerService {
     private readonly agent: SalesAgentService,
     private readonly sessions: SellerSessionStore,
     private readonly botConfig: SalesBotConfigService,
+    private readonly access: SalesAgentAccessService,
   ) {
     this.client = new WhatsappClient(this.config.graphApiVersion);
   }
@@ -71,6 +74,8 @@ export class WhatsappHandlerService {
       return;
     }
     if (!this.agent.isReady()) return;
+    // Agente inhabilitado para el negocio (panel superadmin): no responde nada.
+    if (!(await this.access.isEnabled(Number(tenant.company_id)))) return;
 
     const token = tenant.whatsapp_access_token?.trim() || this.config.accessToken;
     if (!token) {
@@ -91,18 +96,20 @@ export class WhatsappHandlerService {
       messageId: message.messageId,
     });
 
-    const sessionKey = SellerSessionStore.key(`${CHANNEL}:${companyId}`, message.from);
+    const sessionKey = SellerSessionStore.key(companyId, CHANNEL, message.from);
+
+    const today = todayUtcDate();
 
     if (RESET_COMMANDS.has(message.text.toLowerCase())) {
-      this.sessions.reset(sessionKey);
-      await this.client.sendText({
-        ...send,
-        text: '¡Hola! 👋 Soy tu asesor. ¿En qué te puedo ayudar hoy?',
-      });
+      await this.sessions.reset(sessionKey);
+      const greeting = await this.agent.greeting(companyId);
+      await this.sessions.markDay(sessionKey, today);
+      await this.client.sendText({ ...send, text: greeting });
       return;
     }
 
-    const turns = this.sessions.append(sessionKey, { role: 'user', content: message.text });
+    const firstMessageOfDay = await this.sessions.markDay(sessionKey, today);
+    const turns = await this.sessions.append(sessionKey, { role: 'user', content: message.text });
 
     const result = await this.agent.handleMessage(
       {
@@ -110,18 +117,20 @@ export class WhatsappHandlerService {
         channel: CHANNEL,
         chatId: message.from,
         chatDisplayName: message.senderName,
+        conversation: sessionKey,
       },
       turns,
+      { firstMessageOfDay },
     );
 
-    this.sessions.append(sessionKey, { role: 'assistant', content: result.reply });
+    await this.sessions.append(sessionKey, { role: 'assistant', content: result.reply });
     await this.client.sendText({ ...send, text: result.reply });
 
     // Avisa al dueño de cada pedido cerrado (dedupe por sesión).
     const ownerChatId = tenant.owner_chat_id?.trim();
     for (const order of result.orders) {
       const signature = orderSignature(order);
-      if (!this.sessions.rememberOrder(sessionKey, signature)) continue;
+      if (!(await this.sessions.rememberOrder(sessionKey, signature))) continue;
       if (ownerChatId) {
         await this.client.sendText({
           phoneNumberId: message.phoneNumberId,
@@ -136,8 +145,6 @@ export class WhatsappHandlerService {
         );
       }
     }
-
-    this.sessions.pruneExpired();
   }
 
   private remember(messageId: string): void {
