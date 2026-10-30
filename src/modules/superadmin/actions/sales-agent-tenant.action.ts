@@ -15,9 +15,21 @@ export interface SalesAgentChannelSummary {
   bot_username?: string | null;
 }
 
+/** Chat donde el agente está en pausa porque una persona tomó la conversación. */
+export interface PausedChat {
+  channel: string;
+  chat_id: string;
+  /** Hasta cuándo dura la pausa (ISO). */
+  paused_until: string;
+  /** Cuándo se pausó por última vez (ISO). */
+  paused_at: string;
+}
+
 /** Asistente de ventas de un negocio, para el panel superadmin. */
 export interface TenantSalesAgent extends SalesAgentUsage {
   sales_agent_enabled: boolean;
+  /** Chats en pausa vigente (una persona los tomó); se pueden reanudar. */
+  paused_chats: PausedChat[];
   /** Nombre con el que se presenta el agente ('' = por defecto). */
   bot_name: string;
   channels: {
@@ -51,7 +63,7 @@ export class SalesAgentTenantAction {
 
   async get(companyId: number, from?: string, to?: string): Promise<TenantSalesAgent> {
     const enabled = await this.companyFlag(companyId);
-    const [configs, settings, usage] = await Promise.all([
+    const [configs, settings, usage, paused] = await Promise.all([
       this.dataSource.query<ConfigRow[]>(
         `SELECT channel, enabled,
                 (telegram_token IS NOT NULL OR whatsapp_access_token IS NOT NULL
@@ -66,11 +78,13 @@ export class SalesAgentTenantAction {
         [String(companyId)],
       ),
       this.usage.salesAgent(companyId, from, to),
+      this.pausedChats(companyId),
     ]);
     const telegram = configs.find((c) => c.channel === 'telegram');
     const whatsapp = configs.find((c) => c.channel === 'whatsapp');
     return {
       sales_agent_enabled: enabled,
+      paused_chats: paused,
       bot_name: settings[0]?.bot_name?.trim() ?? '',
       channels: {
         telegram: {
@@ -102,6 +116,52 @@ export class SalesAgentTenantAction {
     }
     this.logger.log({ event: 'superadmin.sales_agent_access.updated', companyId, enabled });
     return { salesAgentEnabled: enabled };
+  }
+
+  /**
+   * Reanuda el agente en un chat que estaba en pausa (una persona lo había
+   * tomado, o el sistema lo creyó así). Devuelve si había una pausa vigente.
+   */
+  async releaseChat(
+    companyId: number,
+    channel: string,
+    chatId: string,
+  ): Promise<{ released: boolean }> {
+    await this.companyFlag(companyId);
+    const result = await this.dataSource.query<[unknown[], number]>(
+      `DELETE FROM sales_bot_takeovers
+        WHERE company_id = $1 AND channel = $2 AND chat_id = $3 AND paused_until > now()`,
+      [String(companyId), channel, chatId],
+    );
+    // DELETE con `query` devuelve [filas, cantidad].
+    const released = Array.isArray(result) && Number(result[1] ?? 0) > 0;
+    this.logger.log({
+      event: 'superadmin.sales_agent_chat.released',
+      companyId,
+      channel,
+      chatId,
+      released,
+    });
+    return { released };
+  }
+
+  private async pausedChats(companyId: number): Promise<PausedChat[]> {
+    const rows = await this.dataSource.query<
+      Array<{ channel: string; chat_id: string; paused_until: Date; updated_at: Date }>
+    >(
+      `SELECT channel, chat_id, paused_until, updated_at
+         FROM sales_bot_takeovers
+        WHERE company_id = $1 AND paused_until > now()
+        ORDER BY updated_at DESC
+        LIMIT 100`,
+      [String(companyId)],
+    );
+    return rows.map((row) => ({
+      channel: row.channel,
+      chat_id: row.chat_id,
+      paused_until: new Date(row.paused_until).toISOString(),
+      paused_at: new Date(row.updated_at).toISOString(),
+    }));
   }
 
   private async companyFlag(companyId: number): Promise<boolean> {
