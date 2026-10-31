@@ -149,6 +149,24 @@ describe('TelegramBotWorker.process — chat directo', () => {
     await h.worker.process(clientMessage());
     expect(h.sendMessage).toHaveBeenCalledTimes(1);
   });
+
+  it('envía al dueño los avisos del negocio (cliente canceló / pide cambio)', async () => {
+    const h = makeWorker();
+    h.handleMessage.mockResolvedValue({
+      reply: 'Listo',
+      orders: [],
+      notices: ['❌ EL CLIENTE CANCELÓ EL PEDIDO P-1'],
+    });
+    await h.worker.process(clientMessage());
+    expect(h.sendMessage).toHaveBeenCalledWith('111', '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1');
+  });
+
+  it('sin chat del dueño, los avisos no se envían', async () => {
+    const h = makeWorker(null);
+    h.handleMessage.mockResolvedValue({ reply: 'Listo', orders: [], notices: ['aviso'] });
+    await h.worker.process(clientMessage());
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('TelegramBotWorker.process — Telegram Business y toma de control', () => {

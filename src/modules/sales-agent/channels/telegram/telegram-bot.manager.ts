@@ -65,6 +65,7 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
           companyId: Number(config.company_id),
           token: config.telegram_token ?? '',
           ownerChatId: config.owner_chat_id,
+          botUsername: config.telegram_bot_username,
         });
       }
       this.logger.log({ count: this.workers.size }, 'Bots de Telegram activos desde BD.');
@@ -121,6 +122,7 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
       companyId,
       token: config.telegram_token,
       ownerChatId: config.owner_chat_id,
+      botUsername: config.telegram_bot_username,
     });
     this.logger.log({ companyId }, 'Bot de Telegram del negocio re-sincronizado (activo).');
   }
@@ -129,6 +131,7 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
     companyId: number;
     token: string;
     ownerChatId: string | null;
+    botUsername?: string | null;
   }): void {
     if (this.workers.has(args.companyId)) {
       return;
@@ -138,6 +141,7 @@ export class TelegramBotManager implements OnModuleInit, OnModuleDestroy {
       companyId: args.companyId,
       token: args.token,
       ownerChatId: args.ownerChatId,
+      botUsername: args.botUsername,
       pollIntervalMs: env.telegram.pollIntervalMs,
       longPollTimeoutSec: env.telegram.longPollTimeoutSec,
       agent: this.agent,

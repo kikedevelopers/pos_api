@@ -4,7 +4,21 @@ import type { Repository } from 'typeorm';
 import { SalesBotSettingsService } from '../sales-bot-settings.service';
 import type { SalesBotSettingsEntity } from '../entities/sales-bot-settings.entity';
 
-const DEFAULTS = { bot_name: '', personality: 'amable_profesional', stock_policy: 'inform' };
+const EXTRAS = {
+  greeting_style: '',
+  selling_style: '',
+  closing_style: '',
+  payment_methods: ['cash', 'bank_transfer'],
+  payment_instructions: '',
+  delivery_modes: ['pickup', 'delivery'],
+  pickup_address: '',
+};
+const DEFAULTS = {
+  bot_name: '',
+  personality: 'amable_profesional',
+  stock_policy: 'inform',
+  ...EXTRAS,
+};
 
 const makeService = (existing: Partial<SalesBotSettingsEntity> | null) => {
   const repo = {
@@ -34,6 +48,7 @@ describe('SalesBotSettingsService.get', () => {
       bot_name: 'Diana',
       personality: 'formal_corporativo',
       stock_policy: 'offer_always',
+      ...EXTRAS,
     });
   });
 
@@ -59,6 +74,7 @@ describe('SalesBotSettingsService.update', () => {
       bot_name: 'Diana',
       personality: 'directo_comercial',
       stock_policy: 'offer_always',
+      ...EXTRAS,
     });
   });
 
@@ -80,6 +96,7 @@ describe('SalesBotSettingsService.update', () => {
       bot_name: 'Diana',
       personality: 'formal_corporativo',
       stock_policy: 'offer_always',
+      ...EXTRAS,
     });
   });
 
@@ -117,5 +134,195 @@ describe('SalesBotSettingsService.update', () => {
       BadRequestException,
     );
     expect(repo.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesBotSettingsService · estilo propio', () => {
+  it('devuelve el estilo guardado, recortado', async () => {
+    const { service } = makeService({
+      greeting_style: '  Saluda con "¡Hola, vecino!" ',
+      selling_style: 'Recomienda lo de la casa',
+      closing_style: 'Recuerda el domicilio gratis',
+    });
+    const result = await service.get(7);
+    expect(result.greeting_style).toBe('Saluda con "¡Hola, vecino!"');
+    expect(result.selling_style).toBe('Recomienda lo de la casa');
+    expect(result.closing_style).toBe('Recuerda el domicilio gratis');
+  });
+
+  it('guarda cada etapa colapsando espacios y saltos de línea', async () => {
+    const { service, repo } = makeService(null);
+    const result = await service.update(7, {
+      greeting_style: '  Hola,\n\n  ¿qué receta   preparas? ',
+      closing_style: 'Cierra con\tcalidez',
+    });
+    expect(result.greeting_style).toBe('Hola, ¿qué receta preparas?');
+    expect(result.closing_style).toBe('Cierra con calidez');
+    expect(result.selling_style).toBe('');
+    expect(repo.save).toHaveBeenCalled();
+  });
+
+  it('las etapas omitidas conservan su valor', async () => {
+    const { service } = makeService({ ...DEFAULTS, selling_style: 'Lo de la casa' } as never);
+    const result = await service.update(7, { greeting_style: 'Hola vecino' });
+    expect(result.selling_style).toBe('Lo de la casa');
+    expect(result.greeting_style).toBe('Hola vecino');
+  });
+
+  it('un texto vacío borra la indicación (vuelve al preset)', async () => {
+    const { service } = makeService({ ...DEFAULTS, closing_style: 'Algo' } as never);
+    const result = await service.update(7, { closing_style: '   ' });
+    expect(result.closing_style).toBe('');
+  });
+
+  it('acepta exactamente 500 caracteres', async () => {
+    const { service } = makeService(null);
+    const result = await service.update(7, { selling_style: 'a'.repeat(500) });
+    expect(result.selling_style).toHaveLength(500);
+  });
+
+  it.each(['greeting_style', 'selling_style', 'closing_style'] as const)(
+    'rechaza %s de más de 500 caracteres sin guardar',
+    async (field) => {
+      const { service, repo } = makeService(null);
+      await expect(service.update(7, { [field]: 'a'.repeat(501) })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('SalesBotSettingsService · formas de pago', () => {
+  it('sin fila: efectivo y transferencia (lo que ofrecía antes)', async () => {
+    const { service } = makeService(null);
+    const result = await service.get(7);
+    expect(result.payment_methods).toEqual(['cash', 'bank_transfer']);
+    expect(result.payment_instructions).toBe('');
+  });
+
+  it('guarda las formas elegidas en orden canónico y sin duplicados', async () => {
+    const { service } = makeService(null);
+    const result = await service.update(7, {
+      payment_methods: ['credit_card', 'cash', 'credit_card', 'debit_card'],
+    });
+    expect(result.payment_methods).toEqual(['cash', 'debit_card', 'credit_card']);
+  });
+
+  it('acepta una sola forma de pago', async () => {
+    const { service } = makeService(null);
+    const result = await service.update(7, { payment_methods: ['bank_transfer'] });
+    expect(result.payment_methods).toEqual(['bank_transfer']);
+  });
+
+  it('rechaza una lista vacía sin guardar', async () => {
+    const { service, repo } = makeService(null);
+    await expect(service.update(7, { payment_methods: [] })).rejects.toThrow(
+      'Elige al menos una forma de pago.',
+    );
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una forma de pago desconocida sin guardar', async () => {
+    const { service, repo } = makeService(null);
+    await expect(
+      service.update(7, { payment_methods: ['cash', 'bitcoin' as never] }),
+    ).rejects.toThrow('Forma de pago no válida.');
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('omitidas conservan las guardadas', async () => {
+    const { service } = makeService({ ...DEFAULTS, payment_methods: ['debit_card'] } as never);
+    const result = await service.update(7, { bot_name: 'Diana' });
+    expect(result.payment_methods).toEqual(['debit_card']);
+  });
+
+  it('valores corruptos en BD caen al default', async () => {
+    const { service } = makeService({ payment_methods: ['bitcoin'] as never });
+    await expect(service.get(7)).resolves.toMatchObject({
+      payment_methods: ['cash', 'bank_transfer'],
+    });
+  });
+
+  it('guarda las indicaciones de pago normalizadas', async () => {
+    const { service } = makeService(null);
+    const result = await service.update(7, {
+      payment_instructions: '  Nequi 300 123 4567\n Datáfono en domicilios ',
+    });
+    expect(result.payment_instructions).toBe('Nequi 300 123 4567 Datáfono en domicilios');
+  });
+
+  it('rechaza indicaciones de más de 300 caracteres sin guardar', async () => {
+    const { service, repo } = makeService(null);
+    await expect(
+      service.update(7, { payment_instructions: 'a'.repeat(301) }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesBotSettingsService · entregas', () => {
+  it('sin fila: recoger y domicilio', async () => {
+    const { service } = makeService(null);
+    const result = await service.get(7);
+    expect(result.delivery_modes).toEqual(['pickup', 'delivery']);
+    expect(result.pickup_address).toBe('');
+  });
+
+  it('guarda "solo recoger" y la dirección de recogida normalizada', async () => {
+    const { service, repo } = makeService(null);
+    const result = await service.update(7, {
+      delivery_modes: ['pickup'],
+      pickup_address: '  Calle 10 # 5-20\n local 3 ',
+    });
+    expect(result.delivery_modes).toEqual(['pickup']);
+    expect(result.pickup_address).toBe('Calle 10 # 5-20 local 3');
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        delivery_modes: ['pickup'],
+        pickup_address: 'Calle 10 # 5-20 local 3',
+      }),
+    );
+  });
+
+  it('orden canónico y sin duplicados', async () => {
+    const { service } = makeService(null);
+    const result = await service.update(7, { delivery_modes: ['delivery', 'pickup', 'delivery'] });
+    expect(result.delivery_modes).toEqual(['pickup', 'delivery']);
+  });
+
+  it('rechaza una lista vacía sin guardar', async () => {
+    const { service, repo } = makeService(null);
+    await expect(service.update(7, { delivery_modes: [] })).rejects.toThrow(
+      'Elige al menos una forma de entrega.',
+    );
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una forma de entrega desconocida sin guardar', async () => {
+    const { service, repo } = makeService(null);
+    await expect(
+      service.update(7, { delivery_modes: ['pickup', 'drone' as never] }),
+    ).rejects.toThrow('Forma de entrega no válida.');
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una dirección de recogida de más de 250 caracteres', async () => {
+    const { service, repo } = makeService(null);
+    await expect(service.update(7, { pickup_address: 'a'.repeat(251) })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('omitidas conservan las guardadas', async () => {
+    const { service } = makeService({ ...DEFAULTS, delivery_modes: ['delivery'] } as never);
+    const result = await service.update(7, { bot_name: 'Diana' });
+    expect(result.delivery_modes).toEqual(['delivery']);
+  });
+
+  it('valores corruptos en BD caen al default', async () => {
+    const { service } = makeService({ delivery_modes: ['drone'] as never });
+    await expect(service.get(7)).resolves.toMatchObject({ delivery_modes: ['pickup', 'delivery'] });
   });
 });

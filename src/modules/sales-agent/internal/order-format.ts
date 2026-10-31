@@ -21,9 +21,11 @@ export const orderSignature = (order: ClosedOrder): string => {
  * leerse de un vistazo en el chat: qué pidieron, cuánto, y cómo ubicar al cliente.
  */
 export const formatOrderForOwner = (order: ClosedOrder): string => {
+  const label =
+    order.kind === 'updated' ? '✏️ PEDIDO ACTUALIZADO POR EL CLIENTE' : '🛒 NUEVO PEDIDO';
   const title = order.reference
-    ? `🛒 NUEVO PEDIDO ${order.reference} (asistente de ventas)`
-    : '🛒 NUEVO PEDIDO (asistente de ventas)';
+    ? `${label} ${order.reference} (asistente de ventas)`
+    : `${label} (asistente de ventas)`;
   const lines: string[] = [title, ''];
 
   for (const item of order.items) {
@@ -59,3 +61,38 @@ export const formatOrderForOwner = (order: ClosedOrder): string => {
   lines.push(...contact);
   return lines.join('\n');
 };
+
+/** Cómo está el pedido para el negocio ("ya está en PED-8303", "ya estaba descartado"). */
+const lockedState = (order: { status: string; ticket: { number: string } | null }): string =>
+  order.ticket
+    ? `ya está en el ticket ${order.ticket.number}`
+    : order.status === 'taken'
+      ? 'ya fue tomado'
+      : 'ya estaba descartado';
+
+/** Aviso al negocio: el cliente canceló un pedido que nadie había tomado. */
+export const formatCancelledNotice = (reference: string, reason: string | null): string =>
+  [
+    `❌ EL CLIENTE CANCELÓ EL PEDIDO ${reference} (asistente de ventas)`,
+    reason ? `Motivo: ${reason}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+/**
+ * Aviso al negocio: el cliente pide cambiar o cancelar un pedido que una
+ * persona YA tomó. El agente no lo toca; el equipo lo atiende.
+ */
+export const formatTakenRequestNotice = (
+  order: { reference: string; status: string; ticket: { number: string } | null },
+  kind: 'change' | 'cancel',
+  request: string,
+): string =>
+  [
+    `⚠️ SOLICITUD DEL CLIENTE sobre ${order.reference} (${lockedState(order)})`,
+    kind === 'cancel' ? 'Quiere CANCELAR el pedido.' : 'Quiere CAMBIAR el pedido.',
+    request ? `Pidió: ${request}` : null,
+    'Contáctalo para atenderla.',
+  ]
+    .filter(Boolean)
+    .join('\n');

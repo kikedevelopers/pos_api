@@ -12,7 +12,10 @@ import type { SalesBotStockPolicy } from '../entities/sales-bot-settings.entity'
 import { CatalogSemanticService } from '@/modules/catalog-knowledge/catalog-semantic.service';
 
 import { SellerCartService, type CartOptions } from '../seller-cart.service';
-import { cartView } from './cart';
+import { cartView, isDeliveryModeOffered } from './cart';
+import { formatCancelledNotice, formatTakenRequestNotice } from './order-format';
+import type { AgentOrderView } from '../sales-agent-orders.service';
+import { SELLABLE_SQL } from './sellable-sql';
 import type { SessionKey } from './session-store';
 import type { ClosedOrder } from './types';
 
@@ -25,10 +28,16 @@ export interface SellerToolContext {
    * no están disponibles.
    */
   conversation?: SessionKey;
-  /** El negocio tiene punto físico: el cliente puede recoger. Default: false. */
+  /** El negocio deja recoger en su punto. Default: false. */
   pickupAvailable?: boolean;
+  /** El negocio hace domicilios. Default: true. */
+  deliveryAvailable?: boolean;
   chatId: string;
   chatDisplayName?: string;
+  /** Cuenta del negocio en el canal (`@usuario_bot`, número de WhatsApp). */
+  channelAccount?: string;
+  /** Número del cliente cuando el canal lo da aparte (WhatsApp con chat `@lid`). */
+  chatPhone?: string;
   /**
    * Política de stock del negocio. Con `offer_always` las herramientas NO le
    * entregan el stock al modelo (no puede mencionarlo) y "populares" incluye
@@ -61,10 +70,11 @@ const CART_UNAVAILABLE = {
 };
 
 const CART_UPDATED_MESSAGE =
-  'Pedido actualizado. Los precios los pone el negocio (úsalos tal cual). Revisa "missing_to_close" para saber qué falta y avanza UN paso hacia el cierre.';
+  'Pedido actualizado. ANTES de responder, revisa línea por línea que cada producto, presentación y cantidad sea EXACTAMENTE lo que pidió el cliente (ni más ni menos, ni otra presentación); si algo no cuadra, corrígelo con set_cart_item. Al contarle al cliente lo que anotaste, usa las cantidades y los totales de este pedido TAL CUAL (no los recalcules ni los tomes de la búsqueda). Revisa "missing_to_close" y avanza UN paso hacia el cierre.';
 
 const cartOptions = (context: SellerToolContext): CartOptions => ({
   pickupAvailable: context.pickupAvailable === true,
+  deliveryAvailable: context.deliveryAvailable !== false,
 });
 
 /** Resultado de ejecutar una herramienta: respuesta para el modelo + efecto. */
@@ -73,6 +83,8 @@ export interface SellerToolResult {
   response: Record<string, unknown>;
   /** Pedido cerrado (solo lo pone close_order); el canal avisa al dueño. */
   order?: ClosedOrder;
+  /** Aviso de texto para el negocio (cancelación, solicitud sobre un pedido tomado). */
+  notice?: string;
 }
 
 const num = (value: string | number | null | undefined): number => {
@@ -115,12 +127,7 @@ interface InventoryRow {
 /** Máximo de filas (presentaciones) que devuelve una búsqueda. */
 const MAX_SEARCH_ROWS = 60;
 
-/**
- * Solo lo que el POS puede vender (mismas condiciones que el carrito): no
- * archivado, visible en el POS y de tipo simple o combo.
- */
-const SELLABLE_SQL =
-  "p.is_archived = false AND p.show_in_pos = true AND p.product_type IN ('SIMPLE', 'COMBO')";
+export { SELLABLE_SQL } from './sellable-sql';
 
 /**
  * Hay existencias del producto: las presentaciones (`parent_id`) consumen del
@@ -304,6 +311,10 @@ export class SellerToolRunner {
         return { response: await this.setOrderDetails(args, context) };
       case 'close_order':
         return this.closeOrder(context);
+      case 'modify_last_order':
+        return this.modifyLastOrder(args, context);
+      case 'cancel_last_order':
+        return this.cancelLastOrder(args, context);
       default:
         return { response: { error: `Herramienta no disponible: ${call.name}` } };
     }
@@ -338,7 +349,13 @@ export class SellerToolRunner {
     const familyLimitIdx = `$${access.params.length + 2}`;
     const rowLimitIdx = `$${access.params.length + 3}`;
     const prefixIdx = `$${access.params.length + 4}`;
-    const relevance = `BOOL_OR(${accentInsensitiveLike('p.name', prefixIdx)}) DESC, MIN(p.name) ASC`;
+    // Primero los que EMPIEZAN por lo buscado, luego los que lo contienen en el
+    // nombre y al final los que solo coinciden por categoría o alias.
+    const relevance = [
+      `BOOL_OR(${accentInsensitiveLike('p.name', prefixIdx)}) DESC`,
+      `BOOL_OR(${accentInsensitiveLike('p.name', searchIdx)}) DESC`,
+      'MIN(p.name) ASC',
+    ].join(', ');
 
     const matched = `
         SELECT
@@ -351,6 +368,13 @@ export class SellerToolRunner {
             ${accentInsensitiveLike('p.name', searchIdx)}
             OR ${accentInsensitiveLike("COALESCE(p.sku_code, '')", searchIdx)}
             OR ${accentInsensitiveLike("COALESCE(p.bar_code, '')", searchIdx)}
+            -- La categoría ("productos venezolanos", "lácteos"): el cliente
+            -- suele preguntar por la línea, no por el producto.
+            OR EXISTS (
+              SELECT 1 FROM categories cat
+               WHERE cat.id = p.category_id
+                 AND ${accentInsensitiveLike('cat.name', searchIdx)}
+            )
             -- Cómo lo llaman los clientes (ficha "Para el asistente").
             OR EXISTS (
               SELECT 1 FROM product_assistant_profiles pap
@@ -359,8 +383,6 @@ export class SellerToolRunner {
             )
           )
         GROUP BY COALESCE(p.parent_id, p.id)
-        -- Primero los que EMPIEZAN por lo buscado ("uva pasa…" antes que
-        -- "combinado uva pasa…"); luego alfabético.
         ORDER BY ${relevance}
         LIMIT ${familyLimitIdx}`;
     const rows = await this.dataSource.query<InventoryRow[]>(
@@ -524,14 +546,19 @@ export class SellerToolRunner {
           'Falta el "id" de la presentación (lo da search_products). NO se cambió el pedido.',
       };
     }
-    const result = await this.cart.setItem(context.conversation, productId, args.quantity);
+    const result = await this.cart.setItem(
+      context.conversation,
+      productId,
+      args.quantity,
+      args.amount_requested,
+    );
     if (result.status !== 'ok') {
       return { status: result.status, message: result.message };
     }
     return {
       status: 'ok',
       cart: cartView(result.cart, cartOptions(context)),
-      message: CART_UPDATED_MESSAGE,
+      message: result.note ? `${result.note} ${CART_UPDATED_MESSAGE}` : CART_UPDATED_MESSAGE,
     };
   }
 
@@ -542,6 +569,22 @@ export class SellerToolRunner {
   ): Promise<Record<string, unknown>> {
     if (!context.conversation) {
       return CART_UNAVAILABLE;
+    }
+    // Una entrega que el negocio no ofrece no se guarda: el agente no puede
+    // prometer domicilio (ni recogida) por su cuenta.
+    const mode =
+      typeof args.delivery_mode === 'string' ? args.delivery_mode.trim().toLowerCase() : '';
+    if (
+      (mode === 'domicilio' || mode === 'recoger') &&
+      !isDeliveryModeOffered(mode, cartOptions(context))
+    ) {
+      return {
+        status: 'delivery_not_offered',
+        message:
+          mode === 'domicilio'
+            ? 'NO se guardó: el negocio NO hace envíos a domicilio. Díselo al cliente con amabilidad y que el pedido se recoge en el negocio. Nunca le pidas dirección de entrega.'
+            : 'NO se guardó: el negocio NO tiene recogida en punto físico; los pedidos son a domicilio. Pídele la dirección de entrega.',
+      };
     }
     const cart = await this.cart.setDetails(context.conversation, args);
     return { status: 'ok', cart: cartView(cart, cartOptions(context)) };
@@ -556,6 +599,8 @@ export class SellerToolRunner {
       channel: context.channel,
       chatId: context.chatId,
       chatDisplayName: context.chatDisplayName,
+      channelAccount: context.channelAccount,
+      chatPhone: context.chatPhone,
     });
     if (result.status === 'missing_data') {
       return {
@@ -575,15 +620,135 @@ export class SellerToolRunner {
         },
       };
     }
+    if (result.status === 'locked') {
+      // Mientras el cliente confirmaba, una persona tomó el pedido: no se tocó.
+      return this.takenResponse(context, result.order, 'change', 'cambios que pidió en este chat');
+    }
+    const updated = result.order.kind === 'updated';
     return {
       order: result.order,
       response: {
-        status: 'closed',
+        status: updated ? 'updated' : 'closed',
         reference: result.order.reference,
         total: result.order.total,
-        message:
-          'Pedido TOMADO y enviado al negocio. Confírmale al cliente en una o dos frases (referencia y total, sin repetir toda la lista) y dile que el negocio le confirma en un momento la entrega y el pago. NO digas que quedó "registrado en el sistema" ni facturado. No vuelvas a llamar close_order para este pedido.',
+        message: updated
+          ? 'Pedido ACTUALIZADO (misma referencia) y enviado al negocio. Confírmale al cliente en una o dos frases que su pedido quedó actualizado, con la referencia y el nuevo total. NO digas que es un pedido nuevo. No vuelvas a llamar close_order para este pedido.'
+          : 'Pedido TOMADO y enviado al negocio. Confírmale al cliente en una o dos frases (referencia y total, sin repetir toda la lista) y dile que el negocio le confirma en un momento la entrega y el pago. NO digas que quedó "registrado en el sistema" ni facturado. No vuelvas a llamar close_order para este pedido.',
+      },
+    };
+  }
+
+  /** El cliente quiere cambiar el pedido que ya hizo. */
+  private async modifyLastOrder(
+    args: Record<string, unknown>,
+    context: SellerToolContext,
+  ): Promise<SellerToolResult> {
+    if (!context.conversation) {
+      return { response: CART_UNAVAILABLE };
+    }
+    const request = readText(args.request);
+    const result = await this.cart.reopenLastOrder(context.conversation);
+    if (result.status === 'none') {
+      return {
+        response: {
+          status: 'no_order',
+          message:
+            'No hay un pedido anterior de este cliente que se pueda cambiar en esta conversación. Si quiere comprar, arma un pedido nuevo.',
+        },
+      };
+    }
+    if (result.status === 'cart_busy') {
+      return {
+        response: {
+          status: 'cart_busy',
+          message:
+            'Hay un pedido NUEVO en curso en el carrito. Pregúntale si lo que pide es para ese pedido nuevo o para cambiar el anterior; si es para el anterior, primero vacía el carrito (set_cart_item con 0).',
+        },
+      };
+    }
+    if (result.status === 'locked') {
+      return this.takenResponse(context, result.order, 'change', request);
+    }
+    return {
+      response: {
+        status: 'reopened',
+        cart: cartView(result.cart, cartOptions(context)),
+        message: `El pedido ${result.cart.amends?.reference ?? ''} volvió al carrito para MODIFICARLO (aún nadie lo ha tomado). Aplica con set_cart_item / set_order_details lo que pidió cambiar, muéstrale el resumen y, con su "sí", close_order lo ACTUALIZA con la misma referencia (no crea uno nuevo).`,
+      },
+    };
+  }
+
+  /** El cliente quiere cancelar el pedido que ya hizo. */
+  private async cancelLastOrder(
+    args: Record<string, unknown>,
+    context: SellerToolContext,
+  ): Promise<SellerToolResult> {
+    if (!context.conversation) {
+      return { response: CART_UNAVAILABLE };
+    }
+    const reason = readText(args.reason);
+    const result = await this.cart.cancelLastOrder(context.conversation, reason || null);
+    if (result.status === 'none') {
+      return {
+        response: {
+          status: 'no_order',
+          message: 'No hay un pedido anterior de este cliente para cancelar en esta conversación.',
+        },
+      };
+    }
+    if (result.status === 'locked') {
+      return this.takenResponse(context, result.order, 'cancel', reason);
+    }
+    return {
+      notice: formatCancelledNotice(result.reference, reason || null),
+      response: {
+        status: 'cancelled',
+        reference: result.reference,
+        message: `Pedido ${result.reference} CANCELADO (nadie lo había tomado). Confírmale al cliente con amabilidad que quedó cancelado y déjale la puerta abierta para cuando quiera.`,
+      },
+    };
+  }
+
+  /**
+   * El pedido ya no se puede tocar (lo tomó una persona o se descartó): queda
+   * la solicitud para el equipo, se le avisa al negocio y el agente se lo
+   * explica al cliente.
+   */
+  private async takenResponse(
+    context: SellerToolContext,
+    order: AgentOrderView,
+    kind: 'change' | 'cancel',
+    request: string,
+  ): Promise<SellerToolResult> {
+    if (order.status === 'dismissed') {
+      return {
+        response: {
+          status: 'already_dismissed',
+          reference: order.reference,
+          message: order.cancelled_by_customer
+            ? `El pedido ${order.reference} ya estaba cancelado. Si quiere comprar, arma un pedido NUEVO.`
+            : `El pedido ${order.reference} no siguió adelante en el negocio. Dile con amabilidad que el negocio lo contactará, y si quiere comprar, arma un pedido NUEVO.`,
+        },
+      };
+    }
+    const label =
+      kind === 'cancel'
+        ? `Cancelar el pedido${request ? `: ${request}` : ''}`
+        : `Cambiar el pedido${request ? `: ${request}` : ''}`;
+    if (context.conversation) {
+      await this.cart.requestOnLastOrder(context.conversation, label);
+    }
+    return {
+      notice: formatTakenRequestNotice(order, kind, request),
+      response: {
+        status: 'already_taken',
+        reference: order.reference,
+        message: `NO se cambió: el pedido ${order.reference} ya lo tomó el equipo y se está alistando (o ya está alistado). Dile al cliente, con calidez, que su pedido ya está en preparación y que pasaste su solicitud al equipo de despacho, que lo contactará en breve para ${kind === 'cancel' ? 'la cancelación' : 'el cambio'}. NO prometas que se hará el cambio ni armes un pedido nuevo para reemplazarlo.`,
       },
     };
   }
 }
+
+/** Texto libre del modelo, en una línea y acotado. */
+const readText = (raw: unknown): string =>
+  typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 300) : '';

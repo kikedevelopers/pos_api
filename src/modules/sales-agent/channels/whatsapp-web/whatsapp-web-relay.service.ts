@@ -28,6 +28,10 @@ export interface WhatsappWebIncoming {
   /** Nota de voz en base64 (el escritorio la descarga de WhatsApp). */
   audio_base64?: string;
   audio_mime_type?: string;
+  /** Número del WhatsApp del negocio conectado por QR (dígitos con indicativo). */
+  business_phone?: string;
+  /** Número del cliente que resolvió el escritorio (sirve en chats `@lid`). */
+  customer_phone?: string;
 }
 
 /** Aviso que el escritorio debe enviar (p. ej. pedido cerrado → dueño). */
@@ -141,6 +145,8 @@ export class WhatsappWebRelayService {
         channel: CHANNEL,
         chatId,
         chatDisplayName: input.sender_name,
+        channelAccount: input.business_phone?.replace(/\D/g, '') || undefined,
+        chatPhone: input.customer_phone?.replace(/\D/g, '') || undefined,
         conversation: sessionKey,
       },
       turns,
@@ -168,6 +174,14 @@ export class WhatsappWebRelayService {
           { companyId, total: order.total, lines: order.items.length },
           'Pedido cerrado por WhatsApp (QR); el negocio no configuró número de avisos.',
         );
+      }
+    }
+    // Avisos para el negocio (cancelación, solicitud sobre un pedido tomado).
+    for (const notice of result.notices ?? []) {
+      if (ownerNumber) {
+        notifications.push({ to: ownerNumber, text: notice });
+      } else {
+        this.logger.log({ companyId, notice }, 'Aviso al negocio sin número de avisos (QR).');
       }
     }
     return { reply: result.reply, notifications };

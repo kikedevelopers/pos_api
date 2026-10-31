@@ -299,6 +299,4 @@ const toWhatsappPublicConfig = (
 
 /** `true` si el error de BD es una violación de índice único (Postgres 23505). */
 const isUniqueViolation = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  (error as { code?: string }).code === '23505';
+  typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';

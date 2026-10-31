@@ -8,16 +8,18 @@ const okJson = (body: unknown): Response => ({ json: async () => body }) as unkn
 
 /** getMe válido con la identidad del bot. */
 const mockGetMeOk = (username = 'mi_bot'): void => {
-  jest.spyOn(global, 'fetch').mockResolvedValue(
-    okJson({ ok: true, result: { id: 123456, username, first_name: 'Andrea' } }),
-  );
+  jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValue(
+      okJson({ ok: true, result: { id: 123456, username, first_name: 'Andrea' } }),
+    );
 };
 
 /** Telegram rechaza el token (401). */
 const mockGetMeInvalid = (): void => {
-  jest.spyOn(global, 'fetch').mockResolvedValue(
-    okJson({ ok: false, error_code: 401, description: 'Unauthorized' }),
-  );
+  jest
+    .spyOn(global, 'fetch')
+    .mockResolvedValue(okJson({ ok: false, error_code: 401, description: 'Unauthorized' }));
 };
 
 interface Harness {
@@ -316,4 +318,3 @@ describe('SalesBotConfigService.getWhatsappPublicConfig', () => {
     });
   });
 });
-

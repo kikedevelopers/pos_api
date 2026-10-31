@@ -11,6 +11,8 @@
 export interface WhatsappIncomingMessage {
   /** Id del número del negocio que recibió el mensaje (ruteo al tenant). */
   phoneNumberId: string;
+  /** Número visible del negocio (p. ej. "+57 300 1234567"), si viene. */
+  displayPhoneNumber?: string;
   /** wa_id del cliente (su número, formato internacional sin +). */
   from: string;
   text: string;
@@ -26,7 +28,7 @@ interface RawTextMessage {
 }
 
 interface RawValue {
-  metadata?: { phone_number_id?: string };
+  metadata?: { phone_number_id?: string; display_phone_number?: string };
   contacts?: Array<{ profile?: { name?: string }; wa_id?: string }>;
   messages?: RawTextMessage[];
 }
@@ -57,6 +59,7 @@ export function parseWhatsappWebhook(body: unknown): WhatsappIncomingMessage[] {
       const value = change?.value;
       const phoneNumberId = value?.metadata?.phone_number_id;
       if (!phoneNumberId || !Array.isArray(value?.messages)) continue;
+      const displayPhoneNumber = value?.metadata?.display_phone_number?.trim() || undefined;
 
       // El nombre viene en contacts[], correlacionado por wa_id.
       const nameByWaId = new Map<string, string>();
@@ -74,6 +77,7 @@ export function parseWhatsappWebhook(body: unknown): WhatsappIncomingMessage[] {
         if (!text || !from || !messageId) continue;
         out.push({
           phoneNumberId,
+          ...(displayPhoneNumber ? { displayPhoneNumber } : {}),
           from,
           text,
           senderName: nameByWaId.get(from),

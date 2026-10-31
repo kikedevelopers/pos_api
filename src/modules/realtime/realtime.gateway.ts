@@ -192,6 +192,22 @@ export class RealtimeGateway implements OnGatewayConnection {
     this.server.to(this.allRoom(companyId)).emit(ALERT_CREATED_EVENT, body);
   }
 
+  /**
+   * Emite `agent-orders:changed` a la room company-wide `company:<id>`: el
+   * agente de ventas cerró un pedido nuevo o cambió el estado de uno. El informe
+   * "Agente" y el contador del menú se refrescan al instante. Va company-wide (no
+   * solo `:all`) porque un EMPLEADO con rol Administrador también ve el informe;
+   * la señal no lleva datos del cliente y el front solo la atiende si tiene
+   * acceso.
+   *
+   * Best-effort: el llamador envuelve en try/catch; un fallo de socket nunca
+   * rompe el cierre del pedido.
+   */
+  emitAgentOrdersChanged(companyId: number, payload: AgentOrdersChangedPayload = {}): void {
+    const body: AgentOrdersChangedPayload = { ...payload, companyId };
+    this.server.to(this.companyRoom(companyId)).emit(AGENT_ORDERS_CHANGED_EVENT, body);
+  }
+
   private extractToken(client: Socket): string | null {
     // `handshake.auth` es `{ [key: string]: any }` en los typings de socket.io;
     // tipamos el acceso para evitar propagar `any` (no-unsafe-assignment).
@@ -270,4 +286,18 @@ export interface AlertCreatedPayload {
   companyId: number;
   alertType: string;
   severity?: string;
+}
+
+/** Evento de invalidación de la bandeja de pedidos del agente de ventas. */
+export const AGENT_ORDERS_CHANGED_EVENT = 'agent-orders:changed';
+
+/**
+ * Señal mínima: `reason` = `created` (pedido nuevo del agente) o
+ * `status_changed`. Con `created` el cliente puede mostrar un aviso; el detalle
+ * lo trae `GET /sales-agent-orders`.
+ */
+export interface AgentOrdersChangedPayload {
+  companyId?: number;
+  reason?: 'created' | 'status_changed' | 'updated' | 'customer_request';
+  reference?: string;
 }

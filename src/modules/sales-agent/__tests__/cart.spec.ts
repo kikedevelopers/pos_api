@@ -12,6 +12,9 @@ import {
   missingForCheckout,
   orderReference,
   readCartQuantity,
+  readAmountRequested,
+  isDeliveryModeOffered,
+  resolveDeliveryMode,
   setCartItem,
   type SellerCart,
 } from '../internal/cart';
@@ -23,14 +26,20 @@ const withItems = (): SellerCart =>
   setCartItem(setCartItem(emptyCart(), arroz, new Big(2)), aceite, new Big(1));
 
 describe('readCartQuantity', () => {
-  it('acepta enteros, decimales (hasta 4) y 0', () => {
+  it('acepta unidades enteras (también "2.0") y 0', () => {
     expect(readCartQuantity(2)?.toString()).toBe('2');
-    expect(readCartQuantity('1.5')?.toString()).toBe('1.5');
-    expect(readCartQuantity('0.2500')?.toString()).toBe('0.25');
+    expect(readCartQuantity('3')?.toString()).toBe('3');
+    expect(readCartQuantity('2.0')?.toString()).toBe('2');
     expect(readCartQuantity(0)?.toString()).toBe('0');
   });
 
-  it('rechaza negativos, texto, vacío, más de 4 decimales y montos enormes', () => {
+  it('RECHAZA fracciones: "media libra" no es 0.5 de una presentación', () => {
+    for (const raw of [0.5, '0.5', '1.5', '0.2500', 2.25]) {
+      expect(readCartQuantity(raw)).toBeNull();
+    }
+  });
+
+  it('rechaza negativos, texto, vacío, notación científica y montos enormes', () => {
     for (const raw of [-1, '-2', 'dos', '', null, undefined, '1.23456', '1e3', {}]) {
       expect(readCartQuantity(raw)).toBeNull();
     }
@@ -110,6 +119,20 @@ describe('mergeOrderDetails', () => {
   });
 });
 
+describe('readAmountRequested', () => {
+  it('lee el valor por unidad en pesos, con o sin signos', () => {
+    expect(readAmountRequested(2000)?.toString()).toBe('2000');
+    expect(readAmountRequested('2.000')?.toString()).toBe('2000');
+    expect(readAmountRequested('$ 1.000')?.toString()).toBe('1000');
+  });
+
+  it('rechaza 0, negativos, decimales y texto', () => {
+    for (const raw of [0, -2000, '20.5', 'dos mil', '', null, undefined, {}]) {
+      expect(readAmountRequested(raw)).toBeNull();
+    }
+  });
+});
+
 describe('missingForCheckout', () => {
   it('carrito vacío y sin datos: falta todo', () => {
     expect(missingForCheckout(emptyCart(), { pickupAvailable: true })).toEqual([
@@ -123,6 +146,17 @@ describe('missingForCheckout', () => {
     expect(missingForCheckout(withItems(), { pickupAvailable: false })).toEqual([
       'dirección de entrega',
       'nombre de quien recibe',
+    ]);
+  });
+
+  it('un carrito con cantidades fraccionadas (de antes de la regla) NO se puede cerrar', () => {
+    const legacy = mergeOrderDetails(withItems(), {
+      delivery_mode: 'recoger',
+      customer_name: 'Ana',
+    });
+    legacy.items[0] = { ...legacy.items[0], quantity: '0.5000' };
+    expect(missingForCheckout(legacy, { pickupAvailable: true })).toEqual([
+      'corregir cantidades fraccionadas (ARROZ X LIBRA): van en unidades enteras de la presentación',
     ]);
   });
 
@@ -204,5 +238,37 @@ describe('cartView y describeCartForPrompt', () => {
     expect(block).toMatch(/LISTO PARA CERRAR/);
     expect(block).toContain('Recibe: Ana');
     expect(block).toContain('Dirección: Cra 1');
+  });
+});
+
+describe('entregas que ofrece el negocio', () => {
+  const pickupOnly = { pickupAvailable: true, deliveryAvailable: false };
+  const deliveryOnly = { pickupAvailable: false, deliveryAvailable: true };
+  const both = { pickupAvailable: true, deliveryAvailable: true };
+
+  it('resolveDeliveryMode: con una sola opción es esa; con las dos, la del cliente', () => {
+    expect(resolveDeliveryMode({ delivery_mode: 'domicilio' }, pickupOnly)).toBe('recoger');
+    expect(resolveDeliveryMode({ delivery_mode: 'recoger' }, deliveryOnly)).toBe('domicilio');
+    expect(resolveDeliveryMode({ delivery_mode: 'recoger' }, both)).toBe('recoger');
+    expect(resolveDeliveryMode({}, both)).toBeUndefined();
+    // Sin `deliveryAvailable` (clientes viejos) = sí hace domicilios.
+    expect(resolveDeliveryMode({}, { pickupAvailable: false })).toBe('domicilio');
+  });
+
+  it('isDeliveryModeOffered', () => {
+    expect(isDeliveryModeOffered('domicilio', pickupOnly)).toBe(false);
+    expect(isDeliveryModeOffered('recoger', pickupOnly)).toBe(true);
+    expect(isDeliveryModeOffered('recoger', deliveryOnly)).toBe(false);
+    expect(isDeliveryModeOffered('domicilio', { pickupAvailable: true })).toBe(true);
+  });
+
+  it('solo recoger: NUNCA falta la dirección (aunque no la haya)', () => {
+    const cart = mergeOrderDetails(withItems(), { customer_name: 'Ana' });
+    expect(missingForCheckout(cart, pickupOnly)).toEqual([]);
+  });
+
+  it('solo domicilio: falta la dirección', () => {
+    const cart = mergeOrderDetails(withItems(), { customer_name: 'Ana' });
+    expect(missingForCheckout(cart, deliveryOnly)).toEqual(['dirección de entrega']);
   });
 });

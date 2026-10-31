@@ -1,8 +1,4 @@
-import {
-  buildSellerGreeting,
-  greetingPhrase,
-  timeOfDayFromHour,
-} from '../internal/greeting';
+import { buildSellerGreeting, greetingPhrase, timeOfDayFromHour } from '../internal/greeting';
 
 describe('timeOfDayFromHour', () => {
   it('5:00–11:59 es mañana', () => {
@@ -37,7 +33,11 @@ describe('greetingPhrase', () => {
 });
 
 describe('buildSellerGreeting', () => {
-  const base = { assistantName: 'Andrea', businessName: 'Granero La 21', timeOfDay: 'manana' as const };
+  const base = {
+    assistantName: 'Andrea',
+    businessName: 'Granero La 21',
+    timeOfDay: 'manana' as const,
+  };
 
   it('amable y profesional: cálido, con emoji y tuteo', () => {
     const text = buildSellerGreeting({ ...base, personality: 'amable_profesional' });
@@ -58,7 +58,11 @@ describe('buildSellerGreeting', () => {
   });
 
   it('respeta la franja horaria', () => {
-    const text = buildSellerGreeting({ ...base, timeOfDay: 'noche', personality: 'directo_comercial' });
+    const text = buildSellerGreeting({
+      ...base,
+      timeOfDay: 'noche',
+      personality: 'directo_comercial',
+    });
     expect(text.startsWith('Buenas noches')).toBe(true);
   });
 });

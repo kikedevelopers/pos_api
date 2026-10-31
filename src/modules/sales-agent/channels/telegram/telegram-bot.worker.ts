@@ -18,6 +18,8 @@ export interface TelegramBotWorkerParams {
   token: string;
   /** Chat del dueño al que avisar pedidos cerrados; null = solo log. */
   ownerChatId: string | null;
+  /** Usuario del bot (sin @), para identificar el canal en el pedido. */
+  botUsername?: string | null;
   pollIntervalMs: number;
   longPollTimeoutSec: number;
   agent: SalesAgentService;
@@ -185,6 +187,7 @@ export class TelegramBotWorker {
         channel: CHANNEL,
         chatId: update.chatId,
         chatDisplayName: update.senderName,
+        channelAccount: this.params.botUsername ? `@${this.params.botUsername}` : undefined,
         conversation: sessionKey,
       },
       turns,
@@ -214,6 +217,14 @@ export class TelegramBotWorker {
           { companyId, total: order.total, lines: order.items.length },
           'Pedido cerrado; el negocio no configuró chat del dueño (solo log).',
         );
+      }
+    }
+    // Avisos para el negocio (cancelación, solicitud sobre un pedido tomado).
+    for (const notice of result.notices ?? []) {
+      if (ownerChatId) {
+        await this.client.sendMessage(ownerChatId, notice);
+      } else {
+        this.logger.log({ companyId, notice }, 'Aviso al negocio sin chat del dueño (solo log).');
       }
     }
   }

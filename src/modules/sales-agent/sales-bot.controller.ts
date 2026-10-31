@@ -59,6 +59,13 @@ export class SalesBotController {
       bot_name: dto.bot_name,
       personality: dto.personality,
       stock_policy: dto.stock_policy,
+      greeting_style: dto.greeting_style,
+      selling_style: dto.selling_style,
+      closing_style: dto.closing_style,
+      payment_methods: dto.payment_methods,
+      payment_instructions: dto.payment_instructions,
+      delivery_modes: dto.delivery_modes,
+      pickup_address: dto.pickup_address,
     });
   }
 
@@ -100,9 +107,7 @@ export class SalesBotController {
   @Get('whatsapp/config')
   @ApiOperation({ summary: 'Config del bot de WhatsApp del negocio (sin el token).' })
   @ApiResponse({ status: HttpStatus.OK })
-  getWhatsappConfig(
-    @CurrentCompany() companyId: number,
-  ): Promise<SalesBotWhatsappPublicConfig> {
+  getWhatsappConfig(@CurrentCompany() companyId: number): Promise<SalesBotWhatsappPublicConfig> {
     return this.botConfig.getWhatsappPublicConfig(companyId);
   }
 

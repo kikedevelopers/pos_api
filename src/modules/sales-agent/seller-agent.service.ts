@@ -11,10 +11,20 @@ import { todayUtcDate } from '@/modules/reports/internal/range';
 import { nowBogota } from '@/common/utils/dayjs';
 
 import { buildSellerGreeting, timeOfDayFromHour } from './internal/greeting';
-import { buildSellerSystemPrompt, SELLER_ASSISTANT_NAME } from './internal/seller-prompt';
+import {
+  buildSellerSystemPrompt,
+  MAX_PROMPT_CATEGORIES,
+  SELLER_ASSISTANT_NAME,
+} from './internal/seller-prompt';
 import { SELLER_TOOLS } from './internal/seller-tools';
-import { SellerToolRunner, type SellerToolContext } from './internal/seller-tool-runner';
+import {
+  SELLABLE_SQL,
+  SellerToolRunner,
+  type SellerToolContext,
+} from './internal/seller-tool-runner';
+import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
 import type { ClosedOrder, SellerReply } from './internal/types';
+import { DEFAULT_SALES_BOT_DELIVERY_MODES } from './entities/sales-bot-settings.entity';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
 import { SellerCartService } from './seller-cart.service';
 import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
@@ -32,6 +42,8 @@ interface BusinessProfile {
   name: string;
   address: string | null;
   phone: string | null;
+  /** Categorías con productos vendibles (para responder "¿venden X?"). */
+  categories: string[];
 }
 
 /** Vigencia de la caché de datos del negocio (5 min). */
@@ -191,8 +203,14 @@ export class SalesAgentService {
     const config = this.config;
     const business = await this.businessProfile(context.companyId);
     const settings = await this.botSettings.get(context.companyId);
-    // Sin dirección no hay punto físico: todo pedido es a domicilio.
-    const pickupAvailable = Boolean(business.address);
+    // Entregas: las decide el dueño en "Ajustes del agente", nunca se deducen.
+    const deliveryModes = settings.delivery_modes ?? DEFAULT_SALES_BOT_DELIVERY_MODES;
+    const deliveryOptions = {
+      pickupAvailable: deliveryModes.includes('pickup'),
+      deliveryAvailable: deliveryModes.includes('delivery'),
+    };
+    // Dónde se recoge: la del ajuste o, si no la puso, la del negocio.
+    const pickupAddress = settings.pickup_address?.trim() || business.address;
     const cart = context.conversation ? await this.cart.get(context.conversation) : null;
     const model = this.gemini.resolveModel(config.model);
 
@@ -200,6 +218,7 @@ export class SalesAgentService {
       businessName: business.name,
       businessAddress: business.address,
       businessPhone: business.phone,
+      delivery: { ...deliveryOptions, pickupAddress },
       channel: context.channel,
       today: todayUtcDate(),
       customerName: context.chatDisplayName,
@@ -208,16 +227,22 @@ export class SalesAgentService {
       firstMessageOfDay: options.firstMessageOfDay,
       timeOfDay: timeOfDayFromHour(nowBogota().hour()),
       stockPolicy: settings.stock_policy,
-      cartBlock: context.conversation
-        ? describeCartForPrompt(cart, { pickupAvailable })
-        : undefined,
+      ownerStyle: {
+        greeting: settings.greeting_style,
+        selling: settings.selling_style,
+        closing: settings.closing_style,
+      },
+      paymentMethods: settings.payment_methods,
+      paymentInstructions: settings.payment_instructions,
+      catalogCategories: business.categories,
+      cartBlock: context.conversation ? describeCartForPrompt(cart, deliveryOptions) : undefined,
     });
     // Las herramientas también obedecen la política de stock (ocultan el stock
     // al modelo cuando el negocio pide ofrecer siempre).
     const toolContext: SellerToolContext = {
       ...context,
       stockPolicy: settings.stock_policy,
-      pickupAvailable,
+      ...deliveryOptions,
     };
 
     const body = buildGeminiRequest({
@@ -241,6 +266,8 @@ export class SalesAgentService {
     }
 
     const orders: ClosedOrder[] = [];
+    // Avisos de texto para el negocio (cancelación, solicitud sobre un pedido tomado).
+    const notices: string[] = [];
     const roundTexts: string[] = [];
     // Consumo del mensaje: SUMA de todas sus rondas; suma a la IA de la cuenta.
     let usage = EMPTY_USAGE;
@@ -257,7 +284,7 @@ export class SalesAgentService {
 
         if (result.error) {
           const partial = joinTexts(roundTexts);
-          return { reply: partial || FALLBACK_REPLY, orders };
+          return { reply: partial || FALLBACK_REPLY, orders, notices };
         }
 
         if (result.text.trim().length > 0) {
@@ -267,7 +294,7 @@ export class SalesAgentService {
         // Sin llamadas a herramientas → el vendedor ya respondió.
         if (result.functionCalls.length === 0) {
           const reply = joinTexts(roundTexts);
-          return { reply: reply || '¿Te puedo ayudar con algo más? 😊', orders };
+          return { reply: reply || '¿Te puedo ayudar con algo más? 😊', orders, notices };
         }
 
         // Ronda de herramientas: se reenvían las partes del modelo tal cual
@@ -284,6 +311,9 @@ export class SalesAgentService {
           if (execution.order) {
             orders.push(execution.order);
           }
+          if (execution.notice) {
+            notices.push(execution.notice);
+          }
           responseParts.push({
             functionResponse: { name: call.name, response: execution.response },
           });
@@ -296,6 +326,7 @@ export class SalesAgentService {
       return {
         reply: reply || 'Dame un momento para confirmarte y seguimos. 🙏',
         orders,
+        notices,
       };
     } finally {
       await this.access.recordUsage({
@@ -348,9 +379,34 @@ export class SalesAgentService {
       name: row?.name?.trim() || 'nuestro negocio',
       address: row?.address?.trim() || null,
       phone: row?.phone_number?.trim() || null,
+      categories: await this.catalogCategories(companyId),
     };
     this.profileCache.set(companyId, { profile, at: Date.now() });
     return profile;
+  }
+
+  /**
+   * Categorías que tienen al menos un producto vendible del negocio (propios o
+   * compartidos por otra sucursal). Si falla, el agente sigue sin la lista.
+   */
+  private async catalogCategories(companyId: number): Promise<string[]> {
+    try {
+      const access = accessibleProductsPredicate('p', companyId, 1);
+      const rows = await this.dataSource.query<Array<{ name: string | null }>>(
+        `SELECT DISTINCT cat.name
+           FROM products p
+           JOIN categories cat ON cat.id = p.category_id
+          WHERE ${access.sql}
+            AND ${SELLABLE_SQL}
+          ORDER BY cat.name ASC
+          LIMIT $${access.params.length + 1}`,
+        [...access.params, MAX_PROMPT_CATEGORIES],
+      );
+      return rows.map((r) => r.name?.trim() ?? '').filter((name) => name.length > 0);
+    } catch (error) {
+      this.logger.warn({ err: error }, 'No se pudieron leer las categorías del catálogo');
+      return [];
+    }
   }
 }
 

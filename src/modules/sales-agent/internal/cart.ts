@@ -17,6 +17,39 @@ export type DeliveryMode = 'domicilio' | 'recoger';
 
 export const DELIVERY_MODES: readonly DeliveryMode[] = ['domicilio', 'recoger'];
 
+/**
+ * Entregas que ofrece el negocio (ajuste "Entregas" del agente).
+ * `deliveryAvailable` omitido = sí hace domicilios (compatibilidad).
+ */
+export interface DeliveryOptions {
+  /** Se puede recoger en el negocio. */
+  pickupAvailable: boolean;
+  /** Hace envíos a domicilio. */
+  deliveryAvailable?: boolean;
+}
+
+const offersDelivery = (options: DeliveryOptions): boolean => options.deliveryAvailable !== false;
+
+/** ¿El negocio ofrece esta forma de entrega? */
+export const isDeliveryModeOffered = (mode: DeliveryMode, options: DeliveryOptions): boolean =>
+  mode === 'recoger' ? options.pickupAvailable : offersDelivery(options);
+
+/**
+ * Entrega del pedido según lo que ofrece el negocio: si ofrece una sola, es
+ * esa (sin preguntar); si ofrece las dos, la que eligió el cliente (o
+ * `undefined` si aún no la dijo). Un modo que el negocio no ofrece nunca sale.
+ */
+export const resolveDeliveryMode = (
+  details: OrderDetails,
+  options: DeliveryOptions,
+): DeliveryMode | undefined => {
+  const pickup = options.pickupAvailable;
+  const delivery = offersDelivery(options);
+  if (pickup && !delivery) return 'recoger';
+  if (!pickup) return 'domicilio';
+  return details.delivery_mode;
+};
+
 export interface CartItem {
   product_id: number;
   /** Nombre EXACTO del catálogo (lo que ve el dueño en el aviso). */
@@ -43,6 +76,8 @@ export interface OrderDetails {
 export interface LastPlacedOrder {
   /** Referencia corta del pedido ("P-4F2A9C1B"), para el cliente y el dueño. */
   reference: string;
+  /** Id en `sales_agent_orders` (para modificarlo o cancelarlo). Carritos viejos: no viene. */
+  order_id?: string;
   total: string;
   placed_at: string;
 }
@@ -53,6 +88,11 @@ export interface SellerCart {
   /** Identificador del PRÓXIMO pedido (UUID v4); se renueva tras cerrarlo. */
   operation_id: string;
   last_order?: LastPlacedOrder;
+  /**
+   * El carrito es una MODIFICACIÓN de un pedido ya cerrado (el cliente lo está
+   * cambiando antes de que lo tomen): al confirmar se actualiza ESE pedido.
+   */
+  amends?: { order_id: string; reference: string };
   /** Última modificación (ISO): un carrito abandonado vence (`CART_TTL_MS`). */
   updated_at: string;
 }
@@ -89,17 +129,45 @@ export const emptyCart = (now: Date = new Date()): SellerCart => ({
   updated_at: now.toISOString(),
 });
 
-/** Cantidad válida (> 0, ≤ tope, máx. 4 decimales) o `null`. `0` = quitar. */
+/**
+ * Cantidad válida o `null`. `0` = quitar.
+ *
+ * SIEMPRE unidades ENTERAS de la presentación: la presentación ya dice cuánto
+ * trae ("X MEDIA LIBRA" ya es media libra → 1). Una fracción ("0.5" para decir
+ * "media") cobraría media presentación; para fracciones se elige la
+ * presentación que corresponde (media libra, cuarto, gramo). Se acepta "2.0".
+ */
 export const readCartQuantity = (raw: unknown): Big | null => {
   const text = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.trim() : '';
-  if (!/^\d+(\.\d+)?$/.test(text)) {
+  if (!/^\d+(\.0+)?$/.test(text)) {
     return null;
   }
   const quantity = new Big(text);
-  if (quantity.gt(MAX_CART_QUANTITY) || !quantity.round(4).eq(quantity)) {
+  return quantity.gt(MAX_CART_QUANTITY) ? null : quantity;
+};
+
+/** `true` si la línea tiene una cantidad fraccionada (carritos de antes de la regla). */
+const isFractional = (item: CartItem): boolean =>
+  !new Big(item.quantity).round(0).eq(item.quantity);
+
+/**
+ * Valor TOTAL en pesos de un pedido "por valor" ("2000 de pimienta" → 2000), o
+ * `null` si no es un monto válido.
+ */
+export const readAmountRequested = (raw: unknown): Big | null => {
+  const cleaned =
+    typeof raw === 'number'
+      ? String(raw)
+      : typeof raw === 'string'
+        ? raw.replace(/[$\s]/g, '')
+        : '';
+  // Puntos solo como separador de miles ("2.000"); "20.5" no es un monto en pesos.
+  const text = /^\d{1,3}(\.\d{3})+$/.test(cleaned) ? cleaned.replace(/\./g, '') : cleaned;
+  if (!/^\d+$/.test(text)) {
     return null;
   }
-  return quantity;
+  const amount = new Big(text);
+  return amount.gt(0) && amount.lte(MAX_CART_QUANTITY.times(1000)) ? amount : null;
 };
 
 export const cartTotal = (cart: SellerCart): Big =>
@@ -162,18 +230,15 @@ export const mergeOrderDetails = (cart: SellerCart, patch: Record<string, unknow
 
 /**
  * Qué falta para poder crear el pedido, en palabras para el modelo. Vacío =
- * listo para cerrar. Sin punto físico (`pickupAvailable` false), el pedido es
- * siempre a domicilio.
+ * listo para cerrar. Si el negocio ofrece una sola forma de entrega, el pedido
+ * es con esa (solo recoger → nunca pide dirección).
  */
-export const missingForCheckout = (
-  cart: SellerCart,
-  options: { pickupAvailable: boolean },
-): string[] => {
+export const missingForCheckout = (cart: SellerCart, options: DeliveryOptions): string[] => {
   const missing: string[] = [];
   if (cart.items.length === 0) {
     missing.push('productos');
   }
-  const mode = options.pickupAvailable ? cart.details.delivery_mode : 'domicilio';
+  const mode = resolveDeliveryMode(cart.details, options);
   if (!mode) {
     missing.push('si es a domicilio o lo recoge');
   } else if (mode === 'domicilio' && !cart.details.delivery_address) {
@@ -181,6 +246,14 @@ export const missingForCheckout = (
   }
   if (!cart.details.customer_name) {
     missing.push('nombre de quien recibe');
+  }
+  // Un carrito armado antes de la regla de unidades enteras no se cierra sin
+  // corregirlo: cobraría fracciones de presentación.
+  const fractional = cart.items.filter(isFractional);
+  if (fractional.length > 0) {
+    missing.push(
+      `corregir cantidades fraccionadas (${fractional.map((item) => item.name).join(', ')}): van en unidades enteras de la presentación`,
+    );
   }
   return missing;
 };
@@ -197,10 +270,7 @@ const money = (value: Big | string): string => {
 };
 
 /** Vista del carrito que se le devuelve al modelo tras cada cambio. */
-export const cartView = (
-  cart: SellerCart,
-  options: { pickupAvailable: boolean },
-): Record<string, unknown> => ({
+export const cartView = (cart: SellerCart, options: DeliveryOptions): Record<string, unknown> => ({
   items: cart.items.map((item) => ({
     product_id: item.product_id,
     name: item.name,
@@ -219,11 +289,11 @@ export const cartView = (
  */
 export const describeCartForPrompt = (
   cart: SellerCart | null,
-  options: { pickupAvailable: boolean },
+  options: DeliveryOptions,
 ): string => {
   if (!cart || cart.items.length === 0) {
     const last = cart?.last_order
-      ? `\nYa le tomaste un pedido en esta conversación (${cart.last_order.reference}, ${money(cart.last_order.total)}). Si pide algo más, es un pedido NUEVO.`
+      ? `\nYa le tomaste un pedido en esta conversación (${cart.last_order.reference}, ${money(cart.last_order.total)}). Si quiere CAMBIAR algo de ESE pedido (quitar, agregar, cambiar cantidades, entrega o pago), usa modify_last_order; si quiere CANCELARLO, cancel_last_order. NUNCA armes un pedido nuevo para cambiar el anterior. Solo si pide una compra aparte, claramente distinta, es un pedido NUEVO.`
       : '';
     return `# Pedido en curso
 El carrito está vacío. Etapa: ENTENDER la necesidad y PROPONER.${last}`;
@@ -248,8 +318,11 @@ El carrito está vacío. Etapa: ENTENDER la necesidad y PROPONER.${last}`;
       ? 'LISTO PARA CERRAR: resume (productos, total, entrega) y pide el "sí" para crear el pedido.'
       : `ARMANDO EL PEDIDO. Falta: ${missing.join(', ')}. Pídelo de forma natural, una cosa a la vez.`;
 
+  const amending = cart.amends
+    ? `Estás MODIFICANDO el pedido ${cart.amends.reference} que el cliente ya había hecho (no es uno nuevo). Ajusta lo que pidió cambiar, muéstrale el resumen y, con su "sí", close_order lo ACTUALIZA con la misma referencia.\n`
+    : '';
   return `# Pedido en curso
-${lines.join('\n')}
+${amending}${lines.join('\n')}
 Total: ${money(cartTotal(cart))}
 ${known.length > 0 ? `Datos: ${known.join(' · ')}` : 'Datos de entrega: ninguno todavía.'}
 Etapa: ${stage}`;

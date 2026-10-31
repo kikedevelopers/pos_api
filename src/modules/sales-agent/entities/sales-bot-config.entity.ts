@@ -49,8 +49,7 @@ export const SALES_BOT_PERSONALITY_VALUES: readonly SalesBotPersonality[] = [
 ] as const;
 
 export const isSalesBotPersonality = (value: unknown): value is SalesBotPersonality =>
-  typeof value === 'string' &&
-  (SALES_BOT_PERSONALITY_VALUES as readonly string[]).includes(value);
+  typeof value === 'string' && (SALES_BOT_PERSONALITY_VALUES as readonly string[]).includes(value);
 
 /**
  * `sales_bot_configs` — configuración del bot VENDEDOR por negocio y canal.

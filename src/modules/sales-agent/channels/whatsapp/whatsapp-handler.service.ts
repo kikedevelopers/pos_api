@@ -117,6 +117,7 @@ export class WhatsappHandlerService {
         channel: CHANNEL,
         chatId: message.from,
         chatDisplayName: message.senderName,
+        channelAccount: message.displayPhoneNumber,
         conversation: sessionKey,
       },
       turns,
@@ -143,6 +144,19 @@ export class WhatsappHandlerService {
           { companyId, total: order.total, lines: order.items.length },
           'Pedido cerrado por WhatsApp; el negocio no configuró número de avisos (solo log).',
         );
+      }
+    }
+    // Avisos para el negocio (cancelación, solicitud sobre un pedido tomado).
+    for (const notice of result.notices ?? []) {
+      if (ownerChatId) {
+        await this.client.sendText({
+          phoneNumberId: message.phoneNumberId,
+          to: ownerChatId,
+          token,
+          text: notice,
+        });
+      } else {
+        this.logger.log({ companyId, notice }, 'Aviso al negocio sin número de avisos (solo log).');
       }
     }
   }

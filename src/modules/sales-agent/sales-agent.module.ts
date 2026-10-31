@@ -5,6 +5,7 @@ import { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
 import { CatalogKnowledgeModule } from '@/modules/catalog-knowledge/catalog-knowledge.module';
 import { SalesAgentAccessModule } from '@/modules/sales-agent-access/sales-agent-access.module';
+import { RealtimeModule } from '@/modules/realtime/realtime.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 
 import { TelegramBotManager } from './channels/telegram/telegram-bot.manager';
@@ -13,9 +14,12 @@ import { WhatsappWebhookController } from './channels/whatsapp/whatsapp.controll
 import { WhatsappWebRelayController } from './channels/whatsapp-web/whatsapp-web-relay.controller';
 import { WhatsappWebRelayService } from './channels/whatsapp-web/whatsapp-web-relay.service';
 import { SalesBotConfigEntity } from './entities/sales-bot-config.entity';
+import { SalesAgentOrderEntity } from './entities/sales-agent-order.entity';
 import { SalesBotConversationEntity } from './entities/sales-bot-conversation.entity';
 import { SalesBotSettingsEntity } from './entities/sales-bot-settings.entity';
 import { SalesBotTakeoverEntity } from './entities/sales-bot-takeover.entity';
+import { SalesAgentOrdersController } from './sales-agent-orders.controller';
+import { SalesAgentOrdersService } from './sales-agent-orders.service';
 import { SellerCartService } from './seller-cart.service';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
 import { SalesBotTakeoverService } from './sales-bot-takeover.service';
@@ -41,6 +45,8 @@ import { SalesAgentService } from './seller-agent.service';
  *
  * `sales_bot_configs` persiste la config por negocio y `sales_bot_conversations`
  * la memoria de conversación (`SellerSessionStore`), que sobrevive a reinicios.
+ * `sales_agent_orders` guarda los pedidos que cierra el agente: la bandeja del
+ * informe "Agente" (`SalesAgentOrdersService`), que se refresca en tiempo real.
  */
 @Module({
   imports: [
@@ -49,14 +55,17 @@ import { SalesAgentService } from './seller-agent.service';
       SalesBotSettingsEntity,
       SalesBotTakeoverEntity,
       SalesBotConversationEntity,
+      SalesAgentOrderEntity,
     ]),
     RolesModule,
+    RealtimeModule,
     CatalogKnowledgeModule,
     SalesAgentAccessModule,
   ],
   controllers: [
     SalesBotController,
     SalesAgentAccessController,
+    SalesAgentOrdersController,
     WhatsappWebhookController,
     WhatsappWebRelayController,
   ],
@@ -68,6 +77,7 @@ import { SalesAgentService } from './seller-agent.service';
     SellerToolRunner,
     SellerSessionStore,
     SellerCartService,
+    SalesAgentOrdersService,
     TelegramBotManager,
     WhatsappHandlerService,
     WhatsappWebRelayService,

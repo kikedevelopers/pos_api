@@ -247,7 +247,10 @@ describe('TelegramClient — notas de voz', () => {
 
   it('acepta también "audio" (archivo de audio) y pone MIME por defecto', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue(
-      okJson({ ok: true, result: [{ update_id: 31, message: { chat: { id: 5 }, audio: { file_id: 'F2' } } }] }),
+      okJson({
+        ok: true,
+        result: [{ update_id: 31, message: { chat: { id: 5 }, audio: { file_id: 'F2' } } }],
+      }),
     );
     const [message] = await new TelegramClient('token').getUpdates(0, 0);
     expect(message.voice).toEqual({ fileId: 'F2', mimeType: 'audio/ogg' });
@@ -256,7 +259,9 @@ describe('TelegramClient — notas de voz', () => {
   it('downloadFile: getFile + descarga → base64', async () => {
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(okJson({ ok: true, result: { file_path: 'voice/a.oga', file_size: 4 } }))
+      .mockResolvedValueOnce(
+        okJson({ ok: true, result: { file_path: 'voice/a.oga', file_size: 4 } }),
+      )
       .mockResolvedValueOnce({
         ok: true,
         arrayBuffer: async () => new Uint8Array([79, 103, 103, 83]).buffer,
@@ -267,11 +272,12 @@ describe('TelegramClient — notas de voz', () => {
   });
 
   it('downloadFile: archivo demasiado grande → null sin descargar', async () => {
-    const fetchMock = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(
-        okJson({ ok: true, result: { file_path: 'v.oga', file_size: MAX_TELEGRAM_FILE_BYTES + 1 } }),
-      );
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      okJson({
+        ok: true,
+        result: { file_path: 'v.oga', file_size: MAX_TELEGRAM_FILE_BYTES + 1 },
+      }),
+    );
     await expect(new TelegramClient('token').downloadFile('F1')).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

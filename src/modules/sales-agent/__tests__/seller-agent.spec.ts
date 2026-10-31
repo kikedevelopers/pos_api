@@ -85,7 +85,16 @@ const makeService = (): Harness => {
     cart,
     access,
   );
-  return { service, streamRound, execute, isEnabled, getSettings, getCart, dataSource, recordUsage };
+  return {
+    service,
+    streamRound,
+    execute,
+    isEnabled,
+    getSettings,
+    getCart,
+    dataSource,
+    recordUsage,
+  };
 };
 
 const turns: ChatTurn[] = [{ role: 'user', content: 'Hola, ¿tienes arroz?' }];
@@ -133,7 +142,8 @@ describe('SalesAgentService.handleMessage', () => {
     expect(execute).toHaveBeenCalledWith(call, {
       ...CONTEXT,
       stockPolicy: 'inform',
-      pickupAvailable: false,
+      pickupAvailable: true,
+      deliveryAvailable: true,
     });
     expect(result.reply).toContain('$ 3.000');
     expect(result.orders).toEqual([]);
@@ -154,10 +164,90 @@ describe('SalesAgentService.handleMessage', () => {
     expect(execute).toHaveBeenCalledWith(call, {
       ...CONTEXT,
       stockPolicy: 'offer_always',
-      pickupAvailable: false,
+      // Sin ajuste de entregas: los defaults (recoger + domicilio).
+      pickupAvailable: true,
+      deliveryAvailable: true,
     });
     const [body] = streamRound.mock.calls[0];
     expect(body.systemInstruction.parts[0].text).toMatch(/NUNCA hables de\s+existencias/);
+  });
+
+  it('entregas: "solo recoger" llega al prompt y a las herramientas (nunca pide dirección)', async () => {
+    const { service, streamRound, execute, getSettings } = makeService();
+    getSettings.mockResolvedValue({
+      stock_policy: 'inform',
+      delivery_modes: ['pickup'],
+      pickup_address: 'Calle 10 # 5-20',
+    });
+    const call = { name: 'search_products', args: { query: 'clavo' } };
+    streamRound
+      .mockResolvedValueOnce(round({ parts: [{ functionCall: call }], functionCalls: [call] }))
+      .mockResolvedValueOnce(round({ text: 'Listo' }));
+    execute.mockResolvedValue({ response: { products: [] } });
+
+    await service.handleMessage(CONTEXT, turns);
+
+    expect(execute).toHaveBeenCalledWith(
+      call,
+      expect.objectContaining({ pickupAvailable: true, deliveryAvailable: false }),
+    );
+    const prompt = streamRound.mock.calls[0][0].systemInstruction.parts[0].text as string;
+    expect(prompt).toContain('los pedidos SOLO se RECOGEN en Calle 10 # 5-20');
+    expect(prompt).toContain('NO hace\n  envíos a domicilio');
+  });
+
+  it('estilo propio y formas de pago del negocio llegan al prompt', async () => {
+    const { service, streamRound, getSettings } = makeService();
+    getSettings.mockResolvedValue({
+      bot_name: 'Diana',
+      personality: 'amable_profesional',
+      stock_policy: 'inform',
+      greeting_style: 'Saluda con ¡Hola, vecino!',
+      selling_style: '',
+      closing_style: 'Recuerda el domicilio gratis',
+      payment_methods: ['cash', 'debit_card'],
+      payment_instructions: 'Datáfono solo en domicilios',
+    });
+    streamRound.mockResolvedValueOnce(round({ text: '¡Hola, vecino!' }));
+
+    await service.handleMessage(CONTEXT, turns);
+
+    const [body] = streamRound.mock.calls[0];
+    const prompt = body.systemInstruction.parts[0].text as string;
+    expect(prompt).toContain('- Al saludar: «Saluda con ¡Hola, vecino!»');
+    expect(prompt).toContain('- Al cerrar la venta: «Recuerda el domicilio gratis»');
+    expect(prompt).not.toContain('Al asesorar y vender');
+    expect(prompt).toContain('ÚNICAMENTE: efectivo y tarjeta débito');
+    expect(prompt).toContain('«Datáfono solo en domicilios»');
+  });
+
+  it('las categorías del catálogo llegan al prompt', async () => {
+    const { service, streamRound, dataSource } = makeService();
+    (dataSource.query as jest.Mock).mockImplementation(async (sql: string) =>
+      /FROM categories|JOIN categories/.test(sql)
+        ? [{ name: 'Especias' }, { name: 'Productos Venezolanos' }, { name: null }]
+        : [{ name: 'Esencia & Grano' }],
+    );
+    streamRound.mockResolvedValueOnce(round({ text: 'Sí, tenemos mayonesa Mavesa' }));
+
+    await service.handleMessage(CONTEXT, turns);
+
+    const prompt = systemText(streamRound);
+    expect(prompt).toContain('estas categorías: Especias, Productos Venezolanos.');
+  });
+
+  it('si fallan las categorías, el agente responde igual (sin el bloque)', async () => {
+    const { service, streamRound, dataSource } = makeService();
+    (dataSource.query as jest.Mock).mockImplementation(async (sql: string) => {
+      if (/JOIN categories/.test(sql)) throw new Error('boom');
+      return [{ name: 'Esencia & Grano' }];
+    });
+    streamRound.mockResolvedValueOnce(round({ text: 'Hola' }));
+
+    const result = await service.handleMessage(CONTEXT, turns);
+
+    expect(result.reply).toBe('Hola');
+    expect(systemText(streamRound)).not.toContain('# Categorías de tu catálogo');
   });
 
   it('recoge el pedido cerrado por submit_order', async () => {
@@ -179,6 +269,23 @@ describe('SalesAgentService.handleMessage', () => {
     expect(result.orders).toHaveLength(1);
     expect(result.orders[0].total).toBe(6000);
     expect(result.reply).toContain('registrado');
+  });
+
+  it('recoge los avisos para el negocio (cancelación / solicitud sobre pedido tomado)', async () => {
+    const { service, streamRound, execute } = makeService();
+    const call = { name: 'cancel_last_order', args: {} };
+    streamRound
+      .mockResolvedValueOnce(round({ parts: [{ functionCall: call }], functionCalls: [call] }))
+      .mockResolvedValueOnce(round({ text: 'Listo, quedó cancelado.' }));
+    execute.mockResolvedValue({
+      notice: '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1',
+      response: { status: 'cancelled' },
+    });
+
+    const result = await service.handleMessage(CONTEXT, turns);
+
+    expect(result.notices).toEqual(['❌ EL CLIENTE CANCELÓ EL PEDIDO P-1']);
+    expect(result.orders).toEqual([]);
   });
 
   it('reintenta una ronda con fallo de transporte y se recupera', async () => {
@@ -325,7 +432,9 @@ describe('SalesAgentService.transcribeAudio', () => {
 
   it('rechaza sin llamar a la IA: sin IA, sin datos, MIME no-audio o audio enorme', async () => {
     const { service, streamRound, isEnabled } = makeService();
-    await expect(service.transcribeAudio({ companyId: 7, data: '', mime_type: 'audio/ogg' })).resolves.toBeNull();
+    await expect(
+      service.transcribeAudio({ companyId: 7, data: '', mime_type: 'audio/ogg' }),
+    ).resolves.toBeNull();
     await expect(
       service.transcribeAudio({ companyId: 7, data: 'eA==', mime_type: 'image/png' }),
     ).resolves.toBeNull();
@@ -354,7 +463,7 @@ describe('SalesAgentService — pedido en curso', () => {
         new Big(2),
       ),
     );
-    streamRound.mockResolvedValueOnce(round({ text: '¿A qué dirección te lo envío?' }));
+    streamRound.mockResolvedValueOnce(round({ text: '¿Lo recoges o te lo envío?' }));
 
     await service.handleMessage({ ...CONTEXT, conversation }, turns);
 
@@ -362,7 +471,8 @@ describe('SalesAgentService — pedido en curso', () => {
     const prompt = systemText(streamRound);
     expect(prompt).toContain('# Pedido en curso');
     expect(prompt).toContain('2 × UVA PASA X LIBRA (id 5)');
-    expect(prompt).toMatch(/Falta: dirección de entrega/);
+    // Recoger y domicilio (defaults): primero hay que saber cuál prefiere.
+    expect(prompt).toMatch(/Falta: si es a domicilio o lo recoge/);
   });
 
   it('sin conversación no consulta el carrito ni agrega el bloque', async () => {
@@ -389,8 +499,9 @@ describe('SalesAgentService — pedido en curso', () => {
     expect(toolContext).toMatchObject({ pickupAvailable: true, conversation });
   });
 
-  it('sin dirección del negocio, no se puede recoger', async () => {
-    const { service, streamRound, execute } = makeService();
+  it('solo domicilio (ajuste del dueño): no se puede recoger, aunque haya dirección', async () => {
+    const { service, streamRound, execute, getSettings } = makeService();
+    getSettings.mockResolvedValue({ stock_policy: 'inform', delivery_modes: ['delivery'] });
     streamRound
       .mockResolvedValueOnce(round({ functionCalls: [{ name: 'close_order', args: {} }] }))
       .mockResolvedValueOnce(round({ text: 'Listo' }));
@@ -398,7 +509,30 @@ describe('SalesAgentService — pedido en curso', () => {
 
     await service.handleMessage({ ...CONTEXT, companyId: 98, conversation }, turns);
 
-    expect(execute.mock.calls[0][1]).toMatchObject({ pickupAvailable: false });
+    expect(execute.mock.calls[0][1]).toMatchObject({
+      pickupAvailable: false,
+      deliveryAvailable: true,
+    });
+  });
+
+  it('la entrega ya NO se deduce de la dirección: sin dirección y "solo recoger", nunca pide dirección', async () => {
+    const { service, streamRound, getSettings, getCart } = makeService();
+    getSettings.mockResolvedValue({ stock_policy: 'inform', delivery_modes: ['pickup'] });
+    getCart.mockResolvedValue(
+      setCartItem(
+        emptyCart(),
+        { product_id: 5, name: 'UVA PASA X LIBRA', unit_price: new Big(8000) },
+        new Big(1),
+      ),
+    );
+    streamRound.mockResolvedValueOnce(round({ text: '¿A nombre de quién?' }));
+
+    await service.handleMessage({ ...CONTEXT, companyId: 98, conversation }, turns);
+
+    const prompt = systemText(streamRound);
+    expect(prompt).toMatch(/Falta: nombre de quien recibe/);
+    expect(prompt).not.toMatch(/Falta:.*dirección/);
+    expect(prompt).toMatch(/SOLO se RECOGEN/);
   });
 });
 
@@ -415,7 +549,10 @@ describe('SalesAgentService — consumo de IA (suma a la cuenta)', () => {
     const { service, streamRound, execute, recordUsage } = makeService();
     streamRound
       .mockResolvedValueOnce(
-        round({ functionCalls: [{ name: 'search_products', args: { query: 'arroz' } }], usage: usage(100) }),
+        round({
+          functionCalls: [{ name: 'search_products', args: { query: 'arroz' } }],
+          usage: usage(100),
+        }),
       )
       .mockResolvedValueOnce(round({ text: 'Claro', usage: usage(50) }));
     execute.mockResolvedValue({ response: { families: [] } });
@@ -434,7 +571,9 @@ describe('SalesAgentService — consumo de IA (suma a la cuenta)', () => {
 
   it('también registra cuando la IA falla a mitad (lo consumido se cobra)', async () => {
     const { service, streamRound, recordUsage } = makeService();
-    streamRound.mockResolvedValue(round({ error: 'boom', usage: usage(30) } as Partial<GeminiRoundResult>));
+    streamRound.mockResolvedValue(
+      round({ error: 'boom', usage: usage(30) } as Partial<GeminiRoundResult>),
+    );
     await service.handleMessage(CONTEXT, turns);
     expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ kind: 'sales_agent' }));
   });

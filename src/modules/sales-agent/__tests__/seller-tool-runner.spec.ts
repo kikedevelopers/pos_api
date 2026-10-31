@@ -8,6 +8,7 @@ import {
 import type { SellerCartService } from '../seller-cart.service';
 import type { CatalogSemanticService } from '@/modules/catalog-knowledge/catalog-semantic.service';
 import { emptyCart, setCartItem } from '../internal/cart';
+import { SELLER_TOOLS } from '../internal/seller-tools';
 import Big from 'big.js';
 
 const context: SellerToolContext = {
@@ -21,6 +22,9 @@ const makeCart = () => ({
   setItem: jest.fn(),
   setDetails: jest.fn(),
   close: jest.fn(),
+  reopenLastOrder: jest.fn(),
+  cancelLastOrder: jest.fn(),
+  requestOnLastOrder: jest.fn().mockResolvedValue(null),
 });
 
 const makeSemantic = () => ({ search: jest.fn().mockResolvedValue([]) });
@@ -136,6 +140,32 @@ describe('SellerToolRunner · search_products', () => {
     expect(params).toContain('%uva pasa%');
   });
 
+  it('también busca por la CATEGORÍA ("¿venden productos venezolanos?")', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    await makeRunner(query).execute(
+      { name: 'search_products', args: { query: 'Venezolanos' } },
+      context,
+    );
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toMatch(/FROM categories cat\s+WHERE cat\.id = p\.category_id/);
+    expect(params).toContain('%venezolanos%');
+  });
+
+  it('los que coinciden por nombre van antes que los que solo coinciden por categoría', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    await makeRunner(query).execute(
+      { name: 'search_products', args: { query: 'mavesa' } },
+      context,
+    );
+    const sql = query.mock.calls[0][0] as string;
+    const order = sql.slice(sql.indexOf('ORDER BY BOOL_OR('));
+    const prefix = order.indexOf('BOOL_OR(');
+    const contains = order.indexOf('BOOL_OR(', prefix + 1);
+    expect(prefix).toBeGreaterThan(-1);
+    expect(contains).toBeGreaterThan(prefix);
+    expect(order.indexOf('MIN(p.name) ASC')).toBeGreaterThan(contains);
+  });
+
   it('acota el número de familias a 1..15 (default 8)', async () => {
     const query = jest.fn().mockResolvedValue([]);
     const runner = makeRunner(query);
@@ -224,7 +254,7 @@ describe('SellerToolRunner · pedido en curso', () => {
       withConversation,
     );
 
-    expect(cart.setItem).toHaveBeenCalledWith(conversation, 5, 2);
+    expect(cart.setItem).toHaveBeenCalledWith(conversation, 5, 2, undefined);
     expect(result.response).toMatchObject({
       status: 'ok',
       cart: {
@@ -234,6 +264,27 @@ describe('SellerToolRunner · pedido en curso', () => {
       },
     });
     expect(result.order).toBeUndefined();
+  });
+
+  it('set_cart_item pasa el valor pedido y cuenta al agente lo que se anotó', async () => {
+    const cart = makeCart();
+    cart.setItem.mockResolvedValue({
+      status: 'ok',
+      cart: cartWithArroz(),
+      note: 'Pidió $ 2.000: se anotó 1 × PAQ.',
+    });
+    const runner = makeRunner(jest.fn(), cart);
+
+    const result = await runner.execute(
+      {
+        name: 'set_cart_item',
+        args: { product_id: 48446, amount_requested: 2000 },
+      },
+      withConversation,
+    );
+
+    expect(cart.setItem).toHaveBeenCalledWith(conversation, 48446, undefined, 2000);
+    expect(String(result.response.message)).toMatch(/^Pidió \$ 2\.000: se anotó 1 × PAQ\. /);
   });
 
   it('set_cart_item sin id válido no toca el pedido', async () => {
@@ -293,7 +344,7 @@ describe('SellerToolRunner · pedido en curso', () => {
 
     expect(cart.close).toHaveBeenCalledWith(
       conversation,
-      { pickupAvailable: true },
+      { pickupAvailable: true, deliveryAvailable: true },
       { channel: 'telegram', chatId: '999', chatDisplayName: 'María' },
     );
     expect(result.order).toBe(order);
@@ -337,11 +388,55 @@ describe('SellerToolRunner · pedido en curso', () => {
     expect(result.response).toMatchObject({ status: 'price_changed', cart: { total: 6000 } });
   });
 
-  it('por defecto (sin dato del negocio) no se puede recoger', async () => {
+  it('por defecto (sin dato del negocio) no se puede recoger y sí hay domicilio', async () => {
     const cart = makeCart();
     cart.close.mockResolvedValue({ status: 'missing_data', cart: emptyCart(), missing: [] });
     await makeRunner(jest.fn(), cart).execute({ name: 'close_order' }, withConversation);
-    expect(cart.close.mock.calls[0][1]).toEqual({ pickupAvailable: false });
+    expect(cart.close.mock.calls[0][1]).toEqual({
+      pickupAvailable: false,
+      deliveryAvailable: true,
+    });
+  });
+
+  it('set_order_details: si el negocio NO hace domicilios, rechaza "domicilio" y no guarda nada', async () => {
+    const cart = makeCart();
+    const runner = makeRunner(jest.fn(), cart);
+    const result = await runner.execute(
+      {
+        name: 'set_order_details',
+        args: { delivery_mode: 'domicilio', delivery_address: 'Cra 1', customer_name: 'Ana' },
+      },
+      { ...withConversation, pickupAvailable: true, deliveryAvailable: false },
+    );
+    expect(result.response).toMatchObject({ status: 'delivery_not_offered' });
+    expect(String(result.response.message)).toMatch(/NO hace envíos a domicilio/);
+    expect(String(result.response.message)).toMatch(/Nunca le pidas dirección/);
+    expect(cart.setDetails).not.toHaveBeenCalled();
+  });
+
+  it('set_order_details: si el negocio NO tiene recogida, rechaza "recoger"', async () => {
+    const cart = makeCart();
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'set_order_details', args: { delivery_mode: 'recoger' } },
+      { ...withConversation, pickupAvailable: false, deliveryAvailable: true },
+    );
+    expect(result.response).toMatchObject({ status: 'delivery_not_offered' });
+    expect(cart.setDetails).not.toHaveBeenCalled();
+  });
+
+  it('set_order_details: con un modo ofrecido (o sin modo) guarda normal', async () => {
+    const cart = makeCart();
+    cart.setDetails.mockResolvedValue(emptyCart());
+    const runner = makeRunner(jest.fn(), cart);
+    await runner.execute(
+      { name: 'set_order_details', args: { delivery_mode: 'recoger' } },
+      { ...withConversation, pickupAvailable: true, deliveryAvailable: false },
+    );
+    await runner.execute(
+      { name: 'set_order_details', args: { customer_name: 'Ana' } },
+      { ...withConversation, pickupAvailable: true, deliveryAvailable: false },
+    );
+    expect(cart.setDetails).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -601,5 +696,174 @@ describe('SellerToolRunner · búsqueda por necesidad y ficha del producto', () 
     const families = (result.response as { families: Array<Record<string, unknown>> }).families;
     expect(families[0]).toHaveProperty('profile');
     expect(families[1]).not.toHaveProperty('profile');
+  });
+});
+
+describe('SellerToolRunner · el cliente cambia o cancela su pedido', () => {
+  const conversation = { companyId: 7, channel: 'telegram', chatId: '999' };
+  const withConversation: SellerToolContext = { ...context, conversation };
+  const takenOrder = (patch: Record<string, unknown> = {}) => ({
+    reference: 'P-854A38BE',
+    status: 'taken',
+    ticket: { id: 1, type: 'ORDER', number: 'PED-8304', is_credit: false, is_voided: false },
+    cancelled_by_customer: false,
+    ...patch,
+  });
+
+  it('las herramientas existen', () => {
+    const names = SELLER_TOOLS.map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(['modify_last_order', 'cancel_last_order']));
+  });
+
+  it('modify_last_order por tomar: reabre el MISMO pedido para ajustarlo', async () => {
+    const cart = makeCart();
+    cart.reopenLastOrder.mockResolvedValue({
+      status: 'reopened',
+      cart: { ...emptyCart(), amends: { order_id: '77', reference: 'P-854A38BE' } },
+    });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'modify_last_order', args: { request: 'quitar la nuez' } },
+      withConversation,
+    );
+    expect(result.response).toMatchObject({ status: 'reopened' });
+    expect(String(result.response.message)).toMatch(
+      /P-854A38BE.*ACTUALIZA con la misma referencia/s,
+    );
+    expect(result.notice).toBeUndefined();
+  });
+
+  it('modify_last_order ya TOMADO: no lo cambia, deja la solicitud y avisa al negocio', async () => {
+    const cart = makeCart();
+    cart.reopenLastOrder.mockResolvedValue({ status: 'locked', order: takenOrder() });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'modify_last_order', args: { request: 'quitar la nuez' } },
+      withConversation,
+    );
+    expect(result.response).toMatchObject({ status: 'already_taken', reference: 'P-854A38BE' });
+    expect(String(result.response.message)).toMatch(/se está alistando/);
+    expect(String(result.response.message)).toMatch(/equipo de despacho/);
+    expect(cart.requestOnLastOrder).toHaveBeenCalledWith(
+      conversation,
+      'Cambiar el pedido: quitar la nuez',
+    );
+    expect(result.notice).toMatch(
+      /SOLICITUD DEL CLIENTE sobre P-854A38BE \(ya está en el ticket PED-8304\)/,
+    );
+    expect(result.notice).toMatch(/Quiere CAMBIAR el pedido/);
+    expect(result.notice).toMatch(/Pidió: quitar la nuez/);
+  });
+
+  it('modify_last_order sin pedido anterior o con otro pedido en curso', async () => {
+    const cart = makeCart();
+    cart.reopenLastOrder
+      .mockResolvedValueOnce({ status: 'none' })
+      .mockResolvedValueOnce({ status: 'cart_busy' });
+    const runner = makeRunner(jest.fn(), cart);
+    const none = await runner.execute(
+      { name: 'modify_last_order', args: { request: 'x' } },
+      withConversation,
+    );
+    const busy = await runner.execute(
+      { name: 'modify_last_order', args: { request: 'x' } },
+      withConversation,
+    );
+    expect(none.response).toMatchObject({ status: 'no_order' });
+    expect(busy.response).toMatchObject({ status: 'cart_busy' });
+  });
+
+  it('cancel_last_order por tomar: cancelado por el cliente y aviso al negocio', async () => {
+    const cart = makeCart();
+    cart.cancelLastOrder.mockResolvedValue({
+      status: 'cancelled',
+      reference: 'P-854A38BE',
+      cart: emptyCart(),
+    });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'cancel_last_order', args: { reason: 'ya no lo necesito' } },
+      withConversation,
+    );
+    expect(cart.cancelLastOrder).toHaveBeenCalledWith(conversation, 'ya no lo necesito');
+    expect(result.response).toMatchObject({ status: 'cancelled', reference: 'P-854A38BE' });
+    expect(result.notice).toBe(
+      '❌ EL CLIENTE CANCELÓ EL PEDIDO P-854A38BE (asistente de ventas)\nMotivo: ya no lo necesito',
+    );
+  });
+
+  it('cancel_last_order ya TOMADO: solicitud al equipo', async () => {
+    const cart = makeCart();
+    cart.cancelLastOrder.mockResolvedValue({
+      status: 'locked',
+      order: takenOrder({ ticket: null }),
+    });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'cancel_last_order', args: {} },
+      withConversation,
+    );
+    expect(result.response).toMatchObject({ status: 'already_taken' });
+    expect(cart.requestOnLastOrder).toHaveBeenCalledWith(conversation, 'Cancelar el pedido');
+    expect(result.notice).toMatch(/\(ya fue tomado\)/);
+    expect(result.notice).toMatch(/Quiere CANCELAR el pedido/);
+  });
+
+  it('pedido ya descartado: no se pide nada al equipo; sugiere uno nuevo', async () => {
+    const cart = makeCart();
+    cart.cancelLastOrder.mockResolvedValue({
+      status: 'locked',
+      order: takenOrder({ status: 'dismissed', ticket: null, cancelled_by_customer: true }),
+    });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'cancel_last_order', args: {} },
+      withConversation,
+    );
+    expect(result.response).toMatchObject({ status: 'already_dismissed' });
+    expect(String(result.response.message)).toMatch(/ya estaba cancelado/);
+    expect(cart.requestOnLastOrder).not.toHaveBeenCalled();
+    expect(result.notice).toBeUndefined();
+  });
+
+  it('close_order de una modificación: "updated" (no dice que es nuevo)', async () => {
+    const cart = makeCart();
+    cart.close.mockResolvedValue({
+      status: 'closed',
+      cart: emptyCart(),
+      order: {
+        reference: 'P-854A38BE',
+        items: [],
+        total: 26500,
+        channel: 'telegram',
+        chat_id: '999',
+        kind: 'updated',
+      },
+    });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'close_order' },
+      withConversation,
+    );
+    expect(result.response).toMatchObject({
+      status: 'updated',
+      reference: 'P-854A38BE',
+      total: 26500,
+    });
+    expect(String(result.response.message)).toMatch(/ACTUALIZADO \(misma referencia\)/);
+  });
+
+  it('close_order de una modificación que alguien tomó mientras tanto: solicitud al equipo', async () => {
+    const cart = makeCart();
+    cart.close.mockResolvedValue({ status: 'locked', cart: emptyCart(), order: takenOrder() });
+    const result = await makeRunner(jest.fn(), cart).execute(
+      { name: 'close_order' },
+      withConversation,
+    );
+    expect(result.response).toMatchObject({ status: 'already_taken' });
+    expect(result.order).toBeUndefined();
+    expect(result.notice).toMatch(/SOLICITUD DEL CLIENTE/);
+  });
+
+  it('sin conversación no están disponibles', async () => {
+    const result = await makeRunner(jest.fn(), makeCart()).execute(
+      { name: 'cancel_last_order', args: {} },
+      context,
+    );
+    expect(result.response).toMatchObject({ status: 'unavailable' });
   });
 });

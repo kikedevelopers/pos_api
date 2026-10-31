@@ -45,6 +45,23 @@ export class WhatsappWebReplyDto {
   @MaxLength(128)
   sender_name?: string;
 
+  @ApiPropertyOptional({
+    description: 'Número del WhatsApp del negocio conectado (identifica el canal en el pedido).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  business_phone?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Número del cliente (dígitos con indicativo), también en chats con identidad oculta (@lid).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  customer_phone?: string;
+
   @ApiProperty({ description: 'Id del mensaje en WhatsApp (dedupe).' })
   @IsString()
   @MinLength(1)
