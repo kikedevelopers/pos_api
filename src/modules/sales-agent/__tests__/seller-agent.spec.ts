@@ -1,3 +1,4 @@
+import type { ConversationGuardService } from '../conversation-guard.service';
 import type { ConfigService } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
 
@@ -5,7 +6,11 @@ import type { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import type { GeminiRoundResult } from '@/modules/ai/internal/gemini-client';
 import type { ChatTurn } from '@/modules/ai/internal/gemini.types';
 
-import { MAX_AUDIO_BASE64_LENGTH, SalesAgentService } from '../seller-agent.service';
+import {
+  MAX_AUDIO_BASE64_LENGTH,
+  ROUNDS_EXHAUSTED_REPLY,
+  SalesAgentService,
+} from '../seller-agent.service';
 import type { SalesBotSettingsService } from '../sales-bot-settings.service';
 import type { SellerCartService } from '../seller-cart.service';
 import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
@@ -29,6 +34,13 @@ const round = (overrides: Partial<GeminiRoundResult>): GeminiRoundResult => ({
 
 interface Harness {
   service: SalesAgentService;
+  guard: {
+    get: jest.Mock;
+    addStrike: jest.Mock;
+    resetStrikes: jest.Mock;
+    mute: jest.Mock;
+    unmute: jest.Mock;
+  };
   streamRound: jest.Mock;
   execute: jest.Mock;
   isEnabled: jest.Mock;
@@ -76,6 +88,14 @@ const makeService = (): Harness => {
   const recordUsage = jest.fn().mockResolvedValue(undefined);
   const access = { recordUsage } as unknown as SalesAgentAccessService;
 
+  const guard = {
+    get: jest.fn().mockResolvedValue({ strikes: 0, muted: false }),
+    addStrike: jest.fn().mockResolvedValue(1),
+    resetStrikes: jest.fn().mockResolvedValue(undefined),
+    mute: jest.fn().mockResolvedValue(undefined),
+    unmute: jest.fn().mockResolvedValue(undefined),
+  };
+
   const service = new SalesAgentService(
     configService,
     gemini,
@@ -84,9 +104,11 @@ const makeService = (): Harness => {
     botSettings,
     cart,
     access,
+    guard as unknown as ConversationGuardService,
   );
   return {
     service,
+    guard,
     streamRound,
     execute,
     isEnabled,
@@ -589,5 +611,130 @@ describe('SalesAgentService — consumo de IA (suma a la cuenta)', () => {
       usage: expect.objectContaining({ total_tokens: 40 }),
       rounds: 1,
     });
+  });
+});
+
+describe('SalesAgentService · filtro de mensajes fuera de tema', () => {
+  const conversation = { companyId: 7, channel: 'whatsapp-web', chatId: '57300@s.whatsapp.net' };
+  const ctx = { ...CONTEXT, conversation };
+  const trollTurns: ChatTurn[] = [{ role: 'user', content: '¿Tienes sentimientos?' }];
+
+  it('en silencio y el clasificador dice NO: no corre el agente y responde en silencio', async () => {
+    const { service, streamRound, guard, recordUsage } = makeService();
+    guard.get.mockResolvedValue({ strikes: 3, muted: true });
+    streamRound.mockResolvedValueOnce(round({ text: 'NO' }));
+
+    const result = await service.handleMessage(ctx, trollTurns);
+
+    expect(result).toEqual({ reply: '', orders: [], silent: true });
+    // Una sola llamada: el clasificador (barato), no el agente.
+    expect(streamRound).toHaveBeenCalledTimes(1);
+    const [body] = streamRound.mock.calls[0];
+    expect(body.tools).toBeUndefined();
+    expect(body.contents[0].parts[0].text).toContain('Mensaje: «¿Tienes sentimientos?»');
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'sales_agent', rounds: 1 }),
+    );
+    expect(guard.unmute).not.toHaveBeenCalled();
+  });
+
+  it('en silencio y el clasificador dice SÍ: sale del silencio y atiende normal', async () => {
+    const { service, streamRound, guard } = makeService();
+    guard.get.mockResolvedValue({ strikes: 3, muted: true });
+    streamRound
+      .mockResolvedValueOnce(round({ text: 'Sí' }))
+      .mockResolvedValueOnce(round({ text: 'La canela la tengo a $ 12.000.' }));
+
+    const result = await service.handleMessage(ctx, [{ role: 'user', content: '¿Tienes canela?' }]);
+
+    expect(guard.unmute).toHaveBeenCalledWith(conversation);
+    expect(result.reply).toBe('La canela la tengo a $ 12.000.');
+    expect(result.silent).toBeUndefined();
+  });
+
+  it('si el clasificador falla, sigue en silencio', async () => {
+    const { service, streamRound, guard } = makeService();
+    guard.get.mockResolvedValue({ strikes: 3, muted: true });
+    streamRound.mockResolvedValue(round({ error: 'boom' }));
+    await expect(service.handleMessage(ctx, trollTurns)).resolves.toMatchObject({ silent: true });
+  });
+
+  it('un turno sin fuera de tema reinicia el conteo; uno marcado no', async () => {
+    const normal = makeService();
+    normal.streamRound.mockResolvedValueOnce(round({ text: 'Hola' }));
+    await normal.service.handleMessage(ctx, turns);
+    expect(normal.guard.resetStrikes).toHaveBeenCalledWith(conversation);
+
+    const flagged = makeService();
+    const call = { name: 'flag_off_topic', args: { reason: 'drogas' } };
+    flagged.streamRound
+      .mockResolvedValueOnce(round({ parts: [{ functionCall: call }], functionCalls: [call] }))
+      .mockResolvedValueOnce(round({ text: 'Por aquí solo especias. ¿Te ayudo con algo?' }));
+    flagged.execute.mockResolvedValue({ offTopic: true, response: { status: 'noted' } });
+    await flagged.service.handleMessage(ctx, trollTurns);
+    expect(flagged.guard.resetStrikes).not.toHaveBeenCalled();
+  });
+
+  it('el límite del negocio llega a las herramientas', async () => {
+    const { service, streamRound, execute, getSettings } = makeService();
+    getSettings.mockResolvedValue({ stock_policy: 'inform', off_topic_limit: 5 });
+    const call = { name: 'flag_off_topic', args: {} };
+    streamRound
+      .mockResolvedValueOnce(round({ parts: [{ functionCall: call }], functionCalls: [call] }))
+      .mockResolvedValueOnce(round({ text: 'ok' }));
+    execute.mockResolvedValue({ offTopic: true, response: {} });
+    await service.handleMessage(ctx, trollTurns);
+    expect(execute).toHaveBeenCalledWith(call, expect.objectContaining({ offTopicLimit: 5 }));
+  });
+
+  it('sin conversación (sin memoria) no consulta el filtro', async () => {
+    const { service, streamRound, guard } = makeService();
+    streamRound.mockResolvedValueOnce(round({ text: 'Hola' }));
+    await service.handleMessage(CONTEXT, turns);
+    expect(guard.get).not.toHaveBeenCalled();
+  });
+
+  it('isMuted', async () => {
+    const { service, guard } = makeService();
+    guard.get.mockResolvedValue({ strikes: 3, muted: true });
+    await expect(service.isMuted(conversation)).resolves.toBe(true);
+  });
+});
+
+describe('SalesAgentService · nunca deja al cliente esperando', () => {
+  const call = { name: 'search_products', args: { query: 'aromática' } };
+  const toolRound = () => round({ parts: [{ functionCall: call }], functionCalls: [call] });
+
+  it('la ÚLTIMA ronda obliga a responder con texto (functionCallingConfig NONE)', async () => {
+    const { service, streamRound, execute } = makeService();
+    // maxToolRounds = 4 en la config de prueba: rondas 0..3 con herramientas.
+    streamRound
+      .mockResolvedValueOnce(toolRound())
+      .mockResolvedValueOnce(toolRound())
+      .mockResolvedValueOnce(toolRound())
+      .mockResolvedValueOnce(toolRound())
+      .mockResolvedValueOnce(round({ text: 'Te agregué las 2 cajitas de manzanilla.' }));
+    execute.mockResolvedValue({ response: { products: [] } });
+
+    const result = await service.handleMessage(CONTEXT, turns);
+
+    expect(result.reply).toBe('Te agregué las 2 cajitas de manzanilla.');
+    const lastBody = streamRound.mock.calls[4][0];
+    expect(lastBody.toolConfig).toEqual({ functionCallingConfig: { mode: 'NONE' } });
+    // Las herramientas siguen declaradas (el historial las usa).
+    expect(lastBody.tools).toBeDefined();
+    const firstBody = streamRound.mock.calls[0][0];
+    expect(firstBody.toolConfig).toBeUndefined();
+  });
+
+  it('si aun así no hay texto, NO promete "dame un momento": pide confirmar', async () => {
+    const { service, streamRound, execute } = makeService();
+    streamRound.mockResolvedValue(toolRound());
+    execute.mockResolvedValue({ response: { products: [] } });
+
+    const result = await service.handleMessage(CONTEXT, turns);
+
+    expect(result.reply).toBe(ROUNDS_EXHAUSTED_REPLY);
+    expect(result.reply).not.toMatch(/momento|ya te confirmo/i);
   });
 });

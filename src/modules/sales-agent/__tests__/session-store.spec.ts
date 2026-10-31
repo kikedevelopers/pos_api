@@ -202,3 +202,30 @@ describe('SellerSessionStore', () => {
     });
   });
 });
+
+describe('SellerSessionStore.reset · filtro fuera de tema', () => {
+  it('en silencio NO borra la conversación: limpia la charla pero conserva el silencio', async () => {
+    const repo = {
+      findOne: jest.fn().mockResolvedValue({ id: '5', muted_at: new Date() }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      delete: jest.fn(),
+    };
+    const store = new SellerSessionStore(repo as never);
+    await store.reset({ companyId: 7, channel: 'telegram', chatId: '1' });
+    expect(repo.delete).not.toHaveBeenCalled();
+    expect(repo.update).toHaveBeenCalledWith(
+      { id: '5' },
+      { turns: [], cart: null, order_signatures: [], last_day: null },
+    );
+  });
+
+  it('sin silencio la borra como siempre', async () => {
+    const repo = {
+      findOne: jest.fn().mockResolvedValue({ id: '5', muted_at: null }),
+      delete: jest.fn(),
+    };
+    const store = new SellerSessionStore(repo as never);
+    await store.reset({ companyId: 7, channel: 'telegram', chatId: '1' });
+    expect(repo.delete).toHaveBeenCalled();
+  });
+});

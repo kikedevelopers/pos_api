@@ -22,6 +22,7 @@ import { SalesBotTakeoverEntity } from './entities/sales-bot-takeover.entity';
 import { SalesAgentOrdersController } from './sales-agent-orders.controller';
 import { SalesAgentOrdersService } from './sales-agent-orders.service';
 import { SellerCartService } from './seller-cart.service';
+import { ConversationGuardService } from './conversation-guard.service';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
 import { SalesBotTakeoverService } from './sales-bot-takeover.service';
 import { SellerSessionStore } from './internal/session-store';
@@ -79,6 +80,7 @@ import { SalesAgentService } from './seller-agent.service';
     SellerToolRunner,
     SellerSessionStore,
     SellerCartService,
+    ConversationGuardService,
     SalesAgentOrdersService,
     TelegramBotManager,
     WhatsappHandlerService,

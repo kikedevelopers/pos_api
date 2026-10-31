@@ -99,6 +99,10 @@ export const DEFAULT_SALES_BOT_DELIVERY_MODES: readonly SalesBotDeliveryMode[] =
 
 export const MAX_SALES_BOT_PICKUP_ADDRESS_LEN = 250;
 
+/** Mensajes fuera de tema antes de que el agente se despida (0 = filtro apagado). */
+export const DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT = 3;
+export const MAX_SALES_BOT_OFF_TOPIC_LIMIT = 10;
+
 export const MAX_SALES_BOT_STYLE_LEN = 500;
 
 /** Largo máximo de las indicaciones de pago (cuentas, datáfono, etc.). */
@@ -128,6 +132,7 @@ export const MAX_SALES_BOT_PAYMENT_INSTRUCTIONS_LEN = 300;
   `cardinality("delivery_modes") >= 1 AND "delivery_modes" <@ ARRAY['pickup', 'delivery']::text[]`,
 )
 @Check('chk_sales_bot_settings_pickup_address_len', 'length("pickup_address") <= 250')
+@Check('chk_sales_bot_settings_off_topic_limit', '"off_topic_limit" BETWEEN 0 AND 10')
 export class SalesBotSettingsEntity {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -182,6 +187,10 @@ export class SalesBotSettingsEntity {
   /** Dónde se recoge. Vacío = la dirección del negocio (`companies.address`). */
   @Column({ type: 'text', default: '' })
   pickup_address!: string;
+
+  /** Mensajes fuera de tema antes de despedirse y callar (0 = filtro apagado). */
+  @Column({ type: 'integer', default: DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT })
+  off_topic_limit!: number;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

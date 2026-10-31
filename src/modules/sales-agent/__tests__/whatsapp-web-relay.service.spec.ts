@@ -23,6 +23,7 @@ const order: ClosedOrder = {
 };
 
 interface Harness {
+  isMuted: jest.Mock;
   relay: WhatsappWebRelayService;
   accessEnabled: jest.Mock;
   assertEnabled: jest.Mock;
@@ -45,11 +46,13 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   const greeting = jest.fn().mockResolvedValue(GREETING);
   const isReady = jest.fn().mockReturnValue(true);
   const transcribeAudio = jest.fn().mockResolvedValue('¿tienes uva pasa?');
+  const isMuted = jest.fn().mockResolvedValue(false);
   const agent = {
     isReady,
     handleMessage,
     greeting,
     transcribeAudio,
+    isMuted,
   } as unknown as SalesAgentService;
 
   const reset = jest.fn();
@@ -77,6 +80,7 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   const relay = new WhatsappWebRelayService(agent, sessions, botConfig, takeovers, access);
   return {
     relay,
+    isMuted,
     accessEnabled,
     assertEnabled,
     transcribeAudio,
@@ -378,5 +382,44 @@ describe('WhatsappWebRelayService — agente inhabilitado desde el panel', () =>
     expect(result.notifications).toEqual([
       { to: '573001112233', text: '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1' },
     ]);
+  });
+});
+
+describe('WhatsappWebRelayService · filtro de mensajes fuera de tema', () => {
+  it('conversación en silencio: el agente decide (silent) y no se responde ni se guarda', async () => {
+    const h = makeRelay(enabled());
+    h.handleMessage.mockResolvedValue({ reply: '', orders: [], silent: true });
+    await expect(h.relay.reply(7, incoming({ message_id: 'S1' }))).resolves.toEqual({
+      reply: null,
+      notifications: [],
+    });
+  });
+
+  it('en silencio NO transcribe notas de voz (no gasta) ni atiende "/reiniciar"', async () => {
+    const h = makeRelay(enabled());
+    h.isMuted.mockResolvedValue(true);
+    await expect(
+      h.relay.reply(7, {
+        chat_id: '573001112233@s.whatsapp.net',
+        message_id: 'V1',
+        audio_base64: 'T2dn',
+      }),
+    ).resolves.toEqual({ reply: null, notifications: [] });
+    await expect(
+      h.relay.reply(7, incoming({ text: '/reiniciar', message_id: 'R9' })),
+    ).resolves.toEqual({
+      reply: null,
+      notifications: [],
+    });
+    expect(h.transcribeAudio).not.toHaveBeenCalled();
+    expect(h.reset).not.toHaveBeenCalled();
+    expect(h.handleMessage).not.toHaveBeenCalled();
+  });
+
+  it('en silencio, un texto normal sí llega al agente (él lo clasifica)', async () => {
+    const h = makeRelay(enabled());
+    h.isMuted.mockResolvedValue(true);
+    await h.relay.reply(7, incoming({ text: '¿tienes canela?', message_id: 'T1' }));
+    expect(h.handleMessage).toHaveBeenCalled();
   });
 });

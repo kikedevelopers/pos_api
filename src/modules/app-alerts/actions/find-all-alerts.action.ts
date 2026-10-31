@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Like, MoreThanOrEqual, Not, type FindOptionsWhere, type Repository } from 'typeorm';
+import { MoreThanOrEqual, type Repository } from 'typeorm';
 
 import { AppAlert } from '../entities/app-alert.entity';
+import { scopeWhere, type AlertScope } from '../internal/alert-scope';
 
 /** Las LEÍDAS solo se listan si son de los últimos días (las no leídas, siempre). */
 export const READ_ALERTS_RETENTION_DAYS = 7;
@@ -12,8 +13,6 @@ export interface FindAllAlertsParams {
   limit: number;
   /** "Ahora" (inyectable en tests). */
   now?: Date;
-  /** Tipos que este usuario no ve (p. ej. `AGENT_ORDER_`); omitido = todos. */
-  hiddenTypePrefix?: string | null;
 }
 
 export interface FindAllAlertsResult {
@@ -47,23 +46,21 @@ export class FindAllAlertsAction {
     private readonly repo: Repository<AppAlert>,
   ) {}
 
-  async execute(companyId: number, params: FindAllAlertsParams): Promise<FindAllAlertsResult> {
-    const baseWhere: FindOptionsWhere<AppAlert> = {
-      company_id: String(companyId),
-      ...(params.hiddenTypePrefix ? { type: Not(Like(`${params.hiddenTypePrefix}%`)) } : {}),
-    };
-    const unread: FindOptionsWhere<AppAlert> = { ...baseWhere, is_read: false };
+  async execute(scope: AlertScope, params: FindAllAlertsParams): Promise<FindAllAlertsResult> {
+    const unread = scopeWhere(scope, { is_read: false });
     const since = new Date(
       (params.now ?? new Date()).getTime() - READ_ALERTS_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     );
     // Arreglo = OR: no leídas (siempre) o leídas recientes.
     const where = params.unreadOnly
       ? unread
-      : [unread, { ...baseWhere, is_read: true, created_at: MoreThanOrEqual(since) }];
+      : [...unread, ...scopeWhere(scope, { is_read: true, created_at: MoreThanOrEqual(since) })];
 
     const [alerts, unread_count] = await Promise.all([
       this.repo.find({
         where,
+        // El nombre del negocio: una alerta de otra sucursal lo muestra.
+        relations: { company: true },
         order: { created_at: 'DESC' },
         take: params.limit,
       }),

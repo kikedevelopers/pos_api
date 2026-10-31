@@ -129,6 +129,11 @@ export class TelegramBotWorker {
 
     // Nota de voz → se transcribe y se atiende como si la hubiera escrito.
     if (update.text.length === 0 && update.voice) {
+      // En silencio (fuera de tema) no se gasta en transcribir.
+      const sessionKey = SellerSessionStore.key(companyId, CHANNEL, conversationId);
+      if (await this.params.agent.isMuted(sessionKey)) {
+        return;
+      }
       const text = await this.transcribe(update.voice);
       if (!text) {
         await this.client.sendMessage(
@@ -169,6 +174,10 @@ export class TelegramBotWorker {
     // Comandos de control: reinician la conversación con un saludo que presenta
     // al bot (nombre, negocio y tono de su personalidad).
     if (RESET_COMMANDS.has(update.text.toLowerCase())) {
+      // En silencio por fuera de tema, reiniciar no sirve para saltarse el filtro.
+      if (await agent.isMuted(sessionKey)) {
+        return;
+      }
       await sessions.reset(sessionKey);
       const greeting = await agent.greeting(companyId);
       await sessions.markDay(sessionKey, today);
@@ -196,6 +205,11 @@ export class TelegramBotWorker {
 
     // Mientras la IA pensaba, una persona pudo tomar el chat: no la pisamos.
     if (await takeovers.isPaused(companyId, CHANNEL, conversationId)) {
+      return;
+    }
+
+    // En silencio y el mensaje tampoco era del negocio: no se responde nada.
+    if (result.silent) {
       return;
     }
 

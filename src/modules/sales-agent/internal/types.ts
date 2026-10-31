@@ -31,4 +31,9 @@ export interface SellerReply {
   orders: ClosedOrder[];
   /** Avisos para el negocio (el cliente canceló, pide un cambio de un pedido tomado...). */
   notices?: string[];
+  /**
+   * La conversación está EN SILENCIO por mensajes fuera de tema y este tampoco
+   * era del negocio: el canal NO responde nada.
+   */
+  silent?: boolean;
 }

@@ -25,8 +25,8 @@ const detail = (id: number, name: string, price: string) => ({
   stock: '10',
   parent_id: null,
   parent_stock: null,
-  packaging_name: null,
-  packaging_value: null,
+  packaging_name: null as string | null,
+  packaging_value: null as string | null,
   prices: [{ id: 1, name: 'Base', sale_price: price }],
 });
 
@@ -282,6 +282,111 @@ describe('SellerCartService.setItem · pedido por valor ("2000 de pimienta")', (
     const h = makeService();
     withLine(h, []);
     expect((await h.service.setItem(key, 999, 1, 2000)).status).toBe('not_found');
+  });
+});
+
+describe('SellerCartService.setItem · pedido por peso ("1 @ de maní")', () => {
+  const withLine = (h: ReturnType<typeof makeService>, lineIds: number[]) => {
+    (h.query as jest.Mock).mockImplementation(async (sql: string, params: unknown[]) => {
+      if (sql.includes('LIMIT 40')) {
+        return lineIds.map((id) => ({ id: String(id) }));
+      }
+      const ids = (params[params.length - 1] as string[]).map(Number);
+      return ids.map((id) => h.products.get(id)).filter(Boolean);
+    });
+  };
+  const weighed = (id: number, name: string, price: string, packaging: string, value: string) => ({
+    ...detail(id, name, price),
+    packaging_name: packaging,
+    packaging_value: value,
+  });
+  const LIBRA = () => weighed(45924, 'MANI TOSTADO LIBRA CON SAL', '8600', 'GRAMO', '500');
+  const MEDIA = () => weighed(47046, 'MANI TOSTADO 1/2 LIBRA CON SAL', '4300', 'GRAMOS', '250');
+  const withMani = () => {
+    const h = makeService();
+    h.products.set(45924, LIBRA());
+    h.products.set(47046, MEDIA());
+    withLine(h, [45924, 47046]);
+    return h;
+  };
+
+  it('1 @ sin presentación de arroba: NO anota y ofrece 25 libras con precio y total', async () => {
+    const h = withMani();
+
+    const result = await h.service.setItem(key, 47046, 1, undefined, {
+      quantity: 1,
+      unit: 'arroba',
+    });
+
+    expect(result.status).toBe('weight_offer');
+    const message = result.status !== 'ok' ? result.message : '';
+    expect(message).toMatch(/NO se anotó todavía/);
+    expect(message).toMatch(/1 arroba = 25 × MANI TOSTADO LIBRA CON SAL a \$ 8\.600 cada una/);
+    expect(message).toMatch(/\$ 215\.000/);
+    expect(message).toMatch(/product_id 45924 y quantity 25/);
+    expect(h.current()).toBeNull();
+  });
+
+  it('3 libras: anota 3 × libra (misma medida) y lo cuenta en la nota', async () => {
+    const h = withMani();
+
+    const result = await h.service.setItem(key, 47046, 1, undefined, {
+      quantity: 3,
+      unit: 'libra',
+    });
+
+    expect(result.status).toBe('ok');
+    expect(h.current()?.items).toEqual([
+      expect.objectContaining({ product_id: 45924, quantity: '3.0000', total: '25800.00' }),
+    ]);
+    expect(result.status === 'ok' && result.note).toMatch(/Pidió 3 libras/);
+  });
+
+  it('media libra: anota la presentación de media libra', async () => {
+    const h = withMani();
+
+    await h.service.setItem(key, 45924, 2, undefined, { quantity: 1, unit: 'media_libra' });
+
+    expect(h.current()?.items).toEqual([
+      expect.objectContaining({ product_id: 47046, quantity: '1.0000' }),
+    ]);
+  });
+
+  it('nada cuadra: NO anota y pide preguntar con las opciones', async () => {
+    const h = withMani();
+
+    const result = await h.service.setItem(key, 45924, 1, undefined, {
+      quantity: 1,
+      unit: 'cuarto',
+    });
+
+    expect(result.status).toBe('weight_unavailable');
+    expect(result.status !== 'ok' && result.message).toMatch(/pregúntale cuál prefiere/);
+    expect(h.current()).toBeNull();
+  });
+
+  it('peso inválido: NO toca el pedido', async () => {
+    const h = withMani();
+    const result = await h.service.setItem(key, 45924, 1, undefined, { quantity: 1, unit: '@' });
+    expect(result.status).toBe('invalid_weight');
+    expect(h.query).not.toHaveBeenCalled();
+    expect(h.current()).toBeNull();
+  });
+
+  it('el pedido por valor manda sobre el peso', async () => {
+    const h = withMani();
+    await h.service.setItem(key, 45924, 1, 4300, { quantity: 1, unit: 'arroba' });
+    expect(h.current()?.items).toEqual([
+      expect.objectContaining({ product_id: 47046, quantity: '1.0000' }),
+    ]);
+  });
+
+  it('producto inexistente → not_found', async () => {
+    const h = makeService();
+    withLine(h, []);
+    expect(
+      (await h.service.setItem(key, 999, 1, undefined, { quantity: 1, unit: 'libra' })).status,
+    ).toBe('not_found');
   });
 });
 

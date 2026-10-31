@@ -20,8 +20,6 @@ import {
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import type { AuthUser } from '@/common/types/jwt-payload.type';
-import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
-import { PERMISSION_KEYS } from '@/modules/roles/internal/permission-catalog';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { AppAlertsService } from './app-alerts.service';
@@ -32,7 +30,7 @@ import {
   toAppAlertResponseDto,
 } from './dto/app-alert-response.dto';
 import { ListAlertsQueryDto } from './dto/list-alerts-query.dto';
-import { hiddenAlertPrefixFor } from './internal/alert-visibility';
+import { ResolveAlertScopeAction } from './internal/resolve-alert-scope';
 
 /**
  * Endpoints `/app-alerts`. Espejo PlacePos `app-alerts.routes.ts`.
@@ -51,17 +49,8 @@ import { hiddenAlertPrefixFor } from './internal/alert-visibility';
 export class AppAlertsController {
   constructor(
     private readonly appAlertsService: AppAlertsService,
-    private readonly resolvePermissions: ResolveEffectivePermissionsAction,
+    private readonly resolveScope: ResolveAlertScopeAction,
   ) {}
-
-  /**
-   * Tipos que este usuario no ve: las alertas del agente de ventas son de nivel
-   * administrador (mismo público que el informe "Agente").
-   */
-  private async hiddenPrefix(user: AuthUser): Promise<string | null> {
-    const granted = new Set<string>(await this.resolvePermissions.execute(user));
-    return hiddenAlertPrefixFor(PERMISSION_KEYS.every((key) => granted.has(key)));
-  }
 
   @Get()
   @Roles('owner', 'manager', 'employee')
@@ -80,9 +69,9 @@ export class AppAlertsController {
     const params = {
       unreadOnly: query.unread_only ?? false,
       limit: query.limit ?? 50,
-      hiddenTypePrefix: await this.hiddenPrefix(user),
     };
-    const result = await this.appAlertsService.findAll(companyId, params);
+    const scope = await this.resolveScope.execute(user, companyId);
+    const result = await this.appAlertsService.findAll(scope, params);
     return {
       alerts: result.alerts.map(toAppAlertResponseDto),
       unread_count: result.unread_count,
@@ -98,7 +87,9 @@ export class AppAlertsController {
     @CurrentCompany() companyId: number,
     @CurrentUser() user: AuthUser,
   ): Promise<UnreadCountResponseDto> {
-    const count = await this.appAlertsService.countUnread(companyId, await this.hiddenPrefix(user));
+    const count = await this.appAlertsService.countUnread(
+      await this.resolveScope.execute(user, companyId),
+    );
     return { count };
   }
 
@@ -114,8 +105,11 @@ export class AppAlertsController {
   })
   @ApiResponse({ status: HttpStatus.OK, type: MarkAllReadResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  async markAllRead(@CurrentCompany() companyId: number): Promise<MarkAllReadResponseDto> {
-    return this.appAlertsService.markAllRead(companyId);
+  async markAllRead(
+    @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
+  ): Promise<MarkAllReadResponseDto> {
+    return this.appAlertsService.markAllRead(await this.resolveScope.execute(user, companyId));
   }
 
   @Put(':id/read')
@@ -133,8 +127,9 @@ export class AppAlertsController {
   async markRead(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
   ): Promise<null> {
-    await this.appAlertsService.markRead(id, companyId);
+    await this.appAlertsService.markRead(id, await this.resolveScope.execute(user, companyId));
     return null;
   }
 }

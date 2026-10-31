@@ -26,6 +26,9 @@ import { accessibleProductsPredicate } from '@/modules/products/internal/accessi
 import type { ClosedOrder, SellerReply } from './internal/types';
 import { DEFAULT_SALES_BOT_DELIVERY_MODES } from './entities/sales-bot-settings.entity';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
+import { ConversationGuardService } from './conversation-guard.service';
+import type { SessionKey } from './internal/session-store';
+import { buildOffTopicClassifierPrompt, parseOffTopicVerdict } from './internal/off-topic';
 import { SellerCartService } from './seller-cart.service';
 import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 import { addUsage, EMPTY_USAGE } from '@/modules/ai/internal/ai-usage';
@@ -70,6 +73,14 @@ const TRANSCRIBE_INSTRUCTION =
   'Transcribe literalmente lo que dice esta nota de voz (español de Colombia). Devuelve SOLO el texto dicho, sin comillas, etiquetas ni comentarios. Si no hay voz o no se entiende nada, responde exactamente: [inaudible]';
 
 /** Último recurso cuando el servidor no tiene IA o algo falla feo. */
+/**
+ * Se agotaron las rondas sin respuesta del modelo. NUNCA promete volver ("dame
+ * un momento"): el agente no puede escribir por su cuenta; le pide al cliente
+ * que lo repita para seguir.
+ */
+export const ROUNDS_EXHAUSTED_REPLY =
+  'Quiero asegurarme de anotarlo bien: ¿me confirmas de nuevo lo último que necesitas, por favor? 🙏';
+
 const FALLBACK_REPLY =
   'Disculpa, en este momento no puedo atenderte por aquí. Por favor intenta de nuevo en unos minutos. 🙏';
 
@@ -92,6 +103,7 @@ export class SalesAgentService {
     private readonly botSettings: SalesBotSettingsService,
     private readonly cart: SellerCartService,
     private readonly access: SalesAgentAccessService,
+    private readonly guard: ConversationGuardService,
   ) {}
 
   private get config(): SalesBotConfig {
@@ -118,7 +130,26 @@ export class SalesAgentService {
     }
 
     try {
-      return await this.run(context, turns, options);
+      // Filtro anti-troll: una conversación EN SILENCIO no pasa por el agente
+      // (miles de tokens); un clasificador mínimo decide si volvió a ser algo
+      // del negocio. Si no, no se responde nada.
+      if (context.conversation) {
+        const state = await this.guard.get(context.conversation);
+        if (state.muted) {
+          if (!(await this.isAboutBusiness(context.companyId, lastUserText(turns)))) {
+            return { reply: '', orders: [], silent: true };
+          }
+          await this.guard.unmute(context.conversation);
+        }
+      }
+
+      const turn = { offTopic: false };
+      const result = await this.run(context, turns, options, turn);
+      // Un mensaje del negocio reinicia el conteo de fuera de tema.
+      if (context.conversation && !turn.offTopic) {
+        await this.guard.resetStrikes(context.conversation);
+      }
+      return result;
     } catch (error) {
       this.logger.error(
         { err: error, companyId: context.companyId, channel: context.channel },
@@ -195,10 +226,68 @@ export class SalesAgentService {
     });
   }
 
+  /** ¿La conversación está en silencio por mensajes fuera de tema? */
+  async isMuted(conversation: SessionKey): Promise<boolean> {
+    return (await this.guard.get(conversation)).muted;
+  }
+
+  /**
+   * Clasificador mínimo (unas decenas de tokens): ¿el mensaje es para el
+   * negocio? Solo un "SI" claro cuenta; ante un fallo, NO (sigue en silencio).
+   */
+  private async isAboutBusiness(companyId: number, message: string): Promise<boolean> {
+    if (!message.trim()) {
+      return false;
+    }
+    const business = await this.businessProfile(companyId);
+    const budget = this.config.thinkingBudget;
+    const body = {
+      contents: [
+        {
+          role: 'user' as const,
+          parts: [
+            {
+              text: buildOffTopicClassifierPrompt({
+                businessName: business.name,
+                categories: business.categories,
+                message,
+              }),
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        topP: 1,
+        maxOutputTokens: budget + 16,
+        thinkingConfig: { thinkingBudget: budget },
+      },
+    };
+    const model = this.gemini.resolveModel(this.config.model);
+    try {
+      const result = await this.streamRoundWithRetry(body, model);
+      await this.access.recordUsage({
+        companyId,
+        kind: 'sales_agent',
+        model,
+        usage: result.usage,
+        rounds: 1,
+      });
+      return !result.error && parseOffTopicVerdict(result.text);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, companyId },
+        'No pude clasificar el mensaje (sigue en silencio).',
+      );
+      return false;
+    }
+  }
+
   private async run(
     context: SellerToolContext,
     turns: ChatTurn[],
     options: SellerMessageOptions,
+    turn: { offTopic: boolean } = { offTopic: false },
   ): Promise<SellerReply> {
     const config = this.config;
     const business = await this.businessProfile(context.companyId);
@@ -242,6 +331,7 @@ export class SalesAgentService {
     const toolContext: SellerToolContext = {
       ...context,
       stockPolicy: settings.stock_policy,
+      offTopicLimit: settings.off_topic_limit,
       ...deliveryOptions,
     };
 
@@ -276,7 +366,13 @@ export class SalesAgentService {
     try {
       for (let round = 0; round <= config.maxToolRounds; round += 1) {
         const isLastRound = round === config.maxToolRounds;
-        const roundBody = isLastRound ? { ...body, tools: undefined } : body;
+        // Última ronda: las herramientas siguen declaradas (el historial las
+        // usa) pero con `NONE` el modelo TIENE que responder con texto. Antes se
+        // quitaban y a veces igual devolvía otra llamada, y el cliente recibía
+        // un "dame un momento" que nunca tenía seguimiento.
+        const roundBody: typeof body = isLastRound
+          ? { ...body, toolConfig: { functionCallingConfig: { mode: 'NONE' } } }
+          : body;
 
         const result = await this.streamRoundWithRetry(roundBody, model);
         usage = addUsage(usage, result.usage);
@@ -314,6 +410,9 @@ export class SalesAgentService {
           if (execution.notice) {
             notices.push(execution.notice);
           }
+          if (execution.offTopic) {
+            turn.offTopic = true;
+          }
           responseParts.push({
             functionResponse: { name: call.name, response: execution.response },
           });
@@ -324,7 +423,9 @@ export class SalesAgentService {
       // Se agotaron las rondas: devuelve lo que haya dicho, o un cierre cordial.
       const reply = joinTexts(roundTexts);
       return {
-        reply: reply || 'Dame un momento para confirmarte y seguimos. 🙏',
+        // Sin promesas de "ya te confirmo": el agente solo habla cuando el
+        // cliente escribe, así que se le pide a él que confirme.
+        reply: reply || ROUNDS_EXHAUSTED_REPLY,
         orders,
         notices,
       };
@@ -417,3 +518,13 @@ const joinTexts = (texts: string[]): string =>
     .filter((text) => text.length > 0)
     .join('\n\n')
     .trim();
+
+/** Texto del último mensaje del cliente. */
+const lastUserText = (turns: readonly ChatTurn[]): string => {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index].role === 'user') {
+      return turns[index].content ?? '';
+    }
+  }
+  return '';
+};

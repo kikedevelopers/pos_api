@@ -114,6 +114,13 @@ export class WhatsappWebRelayService {
 
     const sessionKey = SellerSessionStore.key(companyId, 'whatsapp-web', chatId);
 
+    // En silencio por fuera de tema: no se gasta en transcribir notas de voz ni
+    // se atiende "/reiniciar" (no es una forma de saltarse el filtro).
+    const muted = await this.agent.isMuted(sessionKey);
+    if (muted && (!typed || RESET_COMMANDS.has(typed.toLowerCase()))) {
+      return NO_REPLY;
+    }
+
     // Nota de voz → se transcribe y se atiende como si la hubiera escrito.
     const text =
       typed ||
@@ -155,6 +162,11 @@ export class WhatsappWebRelayService {
 
     // Si el humano intervino MIENTRAS el agente pensaba, se descarta la respuesta.
     if (await this.takeovers.isPaused(companyId, CHANNEL, chatId)) {
+      return NO_REPLY;
+    }
+
+    // En silencio y el mensaje tampoco era del negocio: no se responde nada.
+    if (result.silent) {
       return NO_REPLY;
     }
 

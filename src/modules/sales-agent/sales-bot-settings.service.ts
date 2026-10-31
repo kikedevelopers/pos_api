@@ -9,6 +9,8 @@ import {
 } from './entities/sales-bot-config.entity';
 import {
   DEFAULT_SALES_BOT_DELIVERY_MODES,
+  DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT,
+  MAX_SALES_BOT_OFF_TOPIC_LIMIT,
   DEFAULT_SALES_BOT_PAYMENT_METHODS,
   MAX_SALES_BOT_PAYMENT_INSTRUCTIONS_LEN,
   MAX_SALES_BOT_PICKUP_ADDRESS_LEN,
@@ -43,6 +45,8 @@ export interface SalesBotSettings {
   delivery_modes: SalesBotDeliveryMode[];
   /** Dónde se recoge. Vacío = la dirección del negocio. */
   pickup_address: string;
+  /** Mensajes fuera de tema antes de despedirse y callar (0 = filtro apagado). */
+  off_topic_limit: number;
 }
 
 /**
@@ -62,6 +66,7 @@ export const DEFAULT_SALES_BOT_SETTINGS: SalesBotSettings = {
   payment_instructions: '',
   delivery_modes: [...DEFAULT_SALES_BOT_DELIVERY_MODES],
   pickup_address: '',
+  off_topic_limit: DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT,
 };
 
 export const MAX_SALES_BOT_NAME_LEN = 60;
@@ -165,6 +170,18 @@ export class SalesBotSettingsService {
       );
     }
 
+    const offTopicLimit = input.off_topic_limit;
+    if (
+      offTopicLimit !== undefined &&
+      (!Number.isInteger(offTopicLimit) ||
+        offTopicLimit < 0 ||
+        offTopicLimit > MAX_SALES_BOT_OFF_TOPIC_LIMIT)
+    ) {
+      throw new BadRequestException(
+        `El límite de mensajes fuera de tema va de 0 (apagado) a ${MAX_SALES_BOT_OFF_TOPIC_LIMIT}.`,
+      );
+    }
+
     const existing = await this.repo.findOne({ where: { company_id: String(companyId) } });
     const entity = existing ?? this.repo.create({ company_id: String(companyId) });
     if (botName !== undefined) {
@@ -193,6 +210,9 @@ export class SalesBotSettingsService {
     }
     if (pickupAddress !== undefined) {
       entity.pickup_address = pickupAddress;
+    }
+    if (offTopicLimit !== undefined) {
+      entity.off_topic_limit = offTopicLimit;
     }
     const saved = await this.repo.save(entity);
     return toSettings(saved);
@@ -223,5 +243,15 @@ const toSettings = (entity: SalesBotSettingsEntity | null): SalesBotSettings => 
     delivery_modes:
       deliveryModes.length > 0 ? deliveryModes : [...DEFAULT_SALES_BOT_DELIVERY_MODES],
     pickup_address: entity?.pickup_address?.trim() ?? '',
+    off_topic_limit: readOffTopicLimit(entity?.off_topic_limit),
   };
 };
+
+/** Límite guardado o el default si viene vacío o fuera de rango. */
+const readOffTopicLimit = (value: unknown): number =>
+  typeof value === 'number' &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value <= MAX_SALES_BOT_OFF_TOPIC_LIMIT
+    ? value
+    : DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT;

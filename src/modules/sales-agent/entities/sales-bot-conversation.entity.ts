@@ -58,6 +58,14 @@ export class SalesBotConversationEntity {
   @Column({ type: 'jsonb', nullable: true })
   cart!: SellerCart | null;
 
+  /** Mensajes fuera de tema seguidos (un mensaje del negocio lo reinicia). */
+  @Column({ type: 'integer', default: 0 })
+  off_topic_strikes!: number;
+
+  /** En silencio por fuera de tema: el agente no responde hasta que sea algo del negocio. */
+  @Column({ type: 'timestamptz', nullable: true })
+  muted_at!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 

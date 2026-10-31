@@ -96,7 +96,19 @@ export class SellerSessionStore {
   }
 
   /** Olvida la conversación (p. ej. el cliente escribió /reiniciar). */
+  /**
+   * Olvida la conversación. Si está EN SILENCIO por mensajes fuera de tema, se
+   * conserva ese estado: reiniciar no es una forma de saltarse el filtro.
+   */
   async reset(key: SessionKey): Promise<void> {
+    const row = await this.find(key);
+    if (row?.muted_at) {
+      await this.repo.update(
+        { id: row.id },
+        { turns: [], cart: null, order_signatures: [], last_day: null },
+      );
+      return;
+    }
     await this.repo.delete(where(key));
   }
 

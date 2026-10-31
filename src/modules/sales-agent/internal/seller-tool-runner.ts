@@ -14,6 +14,9 @@ import { CatalogSemanticService } from '@/modules/catalog-knowledge/catalog-sema
 import { SellerCartService, type CartOptions } from '../seller-cart.service';
 import { cartView, isDeliveryModeOffered } from './cart';
 import { formatCancelledNotice, formatTakenRequestNotice } from './order-format';
+import { offTopicToolMessage } from './off-topic';
+import { ConversationGuardService } from '../conversation-guard.service';
+import { DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT } from '../entities/sales-bot-settings.entity';
 import type { AgentOrderView } from '../sales-agent-orders.service';
 import { SELLABLE_SQL } from './sellable-sql';
 import type { SessionKey } from './session-store';
@@ -44,6 +47,8 @@ export interface SellerToolContext {
    * productos sin existencias. Default: `inform`.
    */
   stockPolicy?: SalesBotStockPolicy;
+  /** Mensajes fuera de tema antes de despedirse (0 = filtro apagado). Default: 3. */
+  offTopicLimit?: number;
 }
 
 const FAMILIES_NOTE =
@@ -85,6 +90,8 @@ export interface SellerToolResult {
   order?: ClosedOrder;
   /** Aviso de texto para el negocio (cancelación, solicitud sobre un pedido tomado). */
   notice?: string;
+  /** El agente marcó el mensaje como fuera de tema (no reinicia el conteo). */
+  offTopic?: boolean;
 }
 
 const num = (value: string | number | null | undefined): number => {
@@ -288,6 +295,7 @@ export class SellerToolRunner {
     private readonly dataSource: DataSource,
     private readonly cart: SellerCartService,
     private readonly semantic: CatalogSemanticService,
+    private readonly guard: ConversationGuardService,
   ) {}
 
   async execute(call: GeminiFunctionCall, context: SellerToolContext): Promise<SellerToolResult> {
@@ -315,6 +323,8 @@ export class SellerToolRunner {
         return this.modifyLastOrder(args, context);
       case 'cancel_last_order':
         return this.cancelLastOrder(args, context);
+      case 'flag_off_topic':
+        return this.flagOffTopic(context);
       default:
         return { response: { error: `Herramienta no disponible: ${call.name}` } };
     }
@@ -551,6 +561,7 @@ export class SellerToolRunner {
       productId,
       args.quantity,
       args.amount_requested,
+      args.weight_requested,
     );
     if (result.status !== 'ok') {
       return { status: result.status, message: result.message };
@@ -634,6 +645,35 @@ export class SellerToolRunner {
         message: updated
           ? 'Pedido ACTUALIZADO (misma referencia) y enviado al negocio. Confírmale al cliente en una o dos frases que su pedido quedó actualizado, con la referencia y el nuevo total. NO digas que es un pedido nuevo. No vuelvas a llamar close_order para este pedido.'
           : 'Pedido TOMADO y enviado al negocio. Confírmale al cliente en una o dos frases (referencia y total, sin repetir toda la lista) y dile que el negocio le confirma en un momento la entrega y el pago. NO digas que quedó "registrado en el sistema" ni facturado. No vuelvas a llamar close_order para este pedido.',
+      },
+    };
+  }
+
+  /**
+   * El mensaje del cliente no es para el negocio (molestar, provocar, sin
+   * sentido). Suma al conteo; al llegar al límite, el agente se despide y la
+   * conversación queda en silencio (solo vuelve a responder si es del negocio).
+   */
+  private async flagOffTopic(context: SellerToolContext): Promise<SellerToolResult> {
+    const limit = context.offTopicLimit ?? DEFAULT_SALES_BOT_OFF_TOPIC_LIMIT;
+    if (!context.conversation || limit <= 0) {
+      return {
+        offTopic: true,
+        response: {
+          status: 'noted',
+          message: 'Responde en una frase amable y redirige a lo que vende el negocio.',
+        },
+      };
+    }
+    const strikes = await this.guard.addStrike(context.conversation);
+    if (strikes >= limit) {
+      await this.guard.mute(context.conversation);
+    }
+    return {
+      offTopic: true,
+      response: {
+        status: strikes >= limit ? 'goodbye' : 'noted',
+        message: offTopicToolMessage(strikes, limit),
       },
     };
   }

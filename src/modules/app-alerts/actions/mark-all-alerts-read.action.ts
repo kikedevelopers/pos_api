@@ -2,36 +2,30 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { AppAlert } from '../entities/app-alert.entity';
+import { scopeWhere, type AlertScope } from '../internal/alert-scope';
 
 export interface MarkAllAlertsReadResult {
   marked_count: number;
 }
 
 /**
- * Marca como leídas todas las alertas no leídas de una company.
- *
- * Endpoint `PUT /app-alerts/read-all`. Espejo PlacePos: las alertas son del
- * negocio, no personales — "leer todas" las cierra para todos los usuarios
- * de la company.
- *
- * Devuelve `{ marked_count }`. Si no había alertas no leídas, `marked_count = 0`
- * (idempotente).
- *
- * Transacción para garantizar que el UPDATE masivo sea atómico frente a
- * lecturas concurrentes del unread_count.
+ * Marca como leídas TODAS las no leídas del alcance del usuario (su negocio y,
+ * si es dueño, los pedidos del agente de sus otras sucursales: lo mismo que ve
+ * en la campana). Idempotente: sin pendientes, `marked_count = 0`.
  */
 @Injectable()
 export class MarkAllAlertsReadAction {
   constructor(private readonly dataSource: DataSource) {}
 
-  async execute(companyId: number): Promise<MarkAllAlertsReadResult> {
+  async execute(scope: AlertScope): Promise<MarkAllAlertsReadResult> {
     return this.dataSource.transaction<MarkAllAlertsReadResult>(async (manager) => {
-      const result = await manager.update(
-        AppAlert,
-        { company_id: String(companyId), is_read: false },
-        { is_read: true },
-      );
-      return { marked_count: result.affected ?? 0 };
+      let marked = 0;
+      // `update` no acepta un OR: una actualización por condición del alcance.
+      for (const where of scopeWhere(scope, { is_read: false })) {
+        const result = await manager.update(AppAlert, where, { is_read: true });
+        marked += result.affected ?? 0;
+      }
+      return { marked_count: marked };
     });
   }
 }

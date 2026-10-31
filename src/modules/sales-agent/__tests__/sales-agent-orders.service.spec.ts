@@ -118,7 +118,11 @@ const makeService = (
     findOne: jest.fn(() => Promise.resolve(options.findOne ?? null)),
     update: jest.fn(() => Promise.resolve({ affected: options.affected ?? 1 })),
   };
-  const realtime = { emitAgentOrdersChanged: jest.fn(), emitAlertCreated: jest.fn() };
+  const realtime = {
+    emitAgentOrdersChanged: jest.fn(),
+    emitAlertCreated: jest.fn(),
+    emitToUsers: jest.fn(),
+  };
   const alerts = {
     create: jest.fn((partial: Record<string, unknown>) => ({ ...partial })),
     save: jest.fn((entity: Record<string, unknown>) => Promise.resolve({ id: '500', ...entity })),
@@ -715,5 +719,54 @@ describe('SalesAgentOrdersService · notificaciones de la campana', () => {
     h.alerts.save.mockRejectedValueOnce(new Error('db'));
     await expect(h.service.record(7, record)).resolves.toEqual({ id: '10', inserted: true });
     expect(h.realtime.emitAlertCreated).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesAgentOrdersService · aviso a los dueños (sucursales)', () => {
+  it('pedido nuevo en una sucursal: avisa a sus dueños por su room de usuario, con el nombre', async () => {
+    const h = makeService({ qbResult: { entities: [], raw: [], insertRaw: [{ id: '10' }] } });
+    h.repo.query.mockResolvedValueOnce([{ user_id: '1', company_name: 'Esencia & Grano - la 28' }]);
+
+    await h.service.record(20, record);
+
+    const [sql, params] = h.repo.query.mock.calls[0] as unknown as [string, unknown[]];
+    expect(sql).toContain("cm.role = 'owner' AND cm.is_active = true");
+    expect(params).toEqual([20]);
+    expect(h.realtime.emitToUsers).toHaveBeenCalledWith([1], 'alert:created', {
+      companyId: 20,
+      alertType: 'AGENT_ORDER_NEW',
+      severity: 'INFO',
+    });
+    expect(h.realtime.emitToUsers).toHaveBeenCalledWith([1], 'agent-orders:changed', {
+      companyId: 20,
+      reason: 'created',
+      reference: 'P-7B0F3C1E',
+      order_id: 10,
+      company_id: 20,
+      company_name: 'Esencia & Grano - la 28',
+      customer_name: 'Ana',
+      total: 18000,
+      items_count: 1,
+    });
+  });
+
+  it('cada evento del cliente lleva su reason', async () => {
+    const h = makeService({ findOne: entity() });
+    h.repo.query
+      .mockResolvedValueOnce([[eventRow()], 1]) // cancelByCustomer
+      .mockResolvedValueOnce([{ user_id: '1', company_name: 'X' }]);
+    await h.service.cancelByCustomer(20, '10', null);
+    expect(h.realtime.emitToUsers).toHaveBeenCalledWith(
+      [1],
+      'agent-orders:changed',
+      expect.objectContaining({ reason: 'cancelled' }),
+    );
+  });
+
+  it('sin dueños (o ids raros): no emite', async () => {
+    const h = makeService({ qbResult: { entities: [], raw: [], insertRaw: [{ id: '10' }] } });
+    h.repo.query.mockResolvedValueOnce([{ user_id: 'x', company_name: 'X' }]);
+    await h.service.record(20, record);
+    expect(h.realtime.emitToUsers).not.toHaveBeenCalled();
   });
 });

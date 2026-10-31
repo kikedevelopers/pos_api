@@ -12,6 +12,7 @@ const EXTRAS = {
   payment_instructions: '',
   delivery_modes: ['pickup', 'delivery'],
   pickup_address: '',
+  off_topic_limit: 3,
 };
 const DEFAULTS = {
   bot_name: '',
@@ -324,5 +325,29 @@ describe('SalesBotSettingsService · entregas', () => {
   it('valores corruptos en BD caen al default', async () => {
     const { service } = makeService({ delivery_modes: ['drone'] as never });
     await expect(service.get(7)).resolves.toMatchObject({ delivery_modes: ['pickup', 'delivery'] });
+  });
+});
+
+describe('SalesBotSettingsService · límite de mensajes fuera de tema', () => {
+  it('default 3; guarda el límite elegido (0 = apagado)', async () => {
+    expect((await makeService(null).service.get(7)).off_topic_limit).toBe(3);
+    const { service } = makeService(null);
+    expect((await service.update(7, { off_topic_limit: 0 })).off_topic_limit).toBe(0);
+    expect((await service.update(7, { off_topic_limit: 5 })).off_topic_limit).toBe(5);
+  });
+
+  it('rechaza fuera de rango o no entero, sin guardar', async () => {
+    for (const value of [-1, 11, 2.5]) {
+      const { service, repo } = makeService(null);
+      await expect(service.update(7, { off_topic_limit: value })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    }
+  });
+
+  it('valor corrupto en BD cae al default', async () => {
+    const { service } = makeService({ off_topic_limit: 99 } as never);
+    expect((await service.get(7)).off_topic_limit).toBe(3);
   });
 });

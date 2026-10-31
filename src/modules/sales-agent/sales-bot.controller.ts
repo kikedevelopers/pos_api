@@ -66,6 +66,7 @@ export class SalesBotController {
       payment_instructions: dto.payment_instructions,
       delivery_modes: dto.delivery_modes,
       pickup_address: dto.pickup_address,
+      off_topic_limit: dto.off_topic_limit,
     });
   }
 

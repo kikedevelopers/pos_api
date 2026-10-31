@@ -21,9 +21,16 @@ import {
   isPerGramProduct,
   productLineStem,
   resolveAmountRequest,
-  type AmountCandidate,
 } from './internal/amount-request';
 import { SELLABLE_SQL } from './internal/sellable-sql';
+import {
+  presentationGrams,
+  readWeightRequested,
+  resolveWeightRequest,
+  weightLabel,
+  type WeightCandidate,
+  type WeightRequest,
+} from './internal/weight-request';
 import {
   MAX_CART_ITEMS,
   cartTotal,
@@ -69,6 +76,9 @@ export type SetItemResult =
         | 'invalid_quantity'
         | 'invalid_amount'
         | 'amount_unavailable'
+        | 'invalid_weight'
+        | 'weight_unavailable'
+        | 'weight_offer'
         | 'not_found'
         | 'no_price'
         | 'too_many_items';
@@ -164,12 +174,17 @@ export class SellerCartService {
    * TOTAL en pesos. Entonces el SERVIDOR elige la presentación y la cantidad
    * (`resolveAmountRequest`): primero la de precio exacto, luego por gramos y
    * por último unidades fijas que sumen exacto. La cantidad del modelo se ignora.
+   *
+   * `rawWeight`: si pidió POR PESO en una medida ("1 @ de maní"), `{ quantity,
+   * unit }`. El SERVIDOR busca la presentación de ese peso o su equivalencia
+   * (`resolveWeightRequest`). La cantidad del modelo se ignora.
    */
   async setItem(
     key: SessionKey,
     productId: number,
     rawQuantity: unknown,
     rawAmount?: unknown,
+    rawWeight?: unknown,
   ): Promise<SetItemResult> {
     if (rawAmount !== undefined && rawAmount !== null && rawAmount !== '') {
       const amount = readAmountRequested(rawAmount);
@@ -181,6 +196,17 @@ export class SellerCartService {
         };
       }
       return this.setItemByAmount(key, productId, amount);
+    }
+    if (rawWeight !== undefined && rawWeight !== null) {
+      const weight = readWeightRequested(rawWeight);
+      if (weight === null) {
+        return {
+          status: 'invalid_weight',
+          message:
+            'NO se cambió el pedido. "weight_requested" es { quantity, unit } con unit = gramo, cuarto, media_libra, libra, kilo o arroba (ej. 1 @ = { quantity: 1, unit: "arroba" }).',
+        };
+      }
+      return this.setItemByWeight(key, productId, weight);
     }
 
     const quantity = readCartQuantity(rawQuantity);
@@ -274,6 +300,64 @@ export class SellerCartService {
   }
 
   /**
+   * Pedido por peso: anota la presentación de ese peso (o la misma medida en
+   * unidades); si solo cuadra una equivalencia (1 @ = 25 libras), NO la anota:
+   * le dice al agente que se la ofrezca al cliente.
+   */
+  private async setItemByWeight(
+    key: SessionKey,
+    productId: number,
+    weight: WeightRequest,
+  ): Promise<SetItemResult> {
+    const chosen = await this.fetchProduct(key.companyId, productId);
+    if (!chosen) {
+      return NOT_FOUND;
+    }
+    const asked = weightLabel(weight.quantity, weight.unit);
+    const stem = productLineStem(chosen.name);
+    const candidates = await this.lineCandidates(key.companyId, chosen);
+    const resolution = resolveWeightRequest(weight, candidates, chosen.id);
+    if (resolution.kind === 'none') {
+      const options = candidates
+        .filter((candidate) => !candidate.per_gram)
+        .map((candidate) => `${candidate.name} (${cop(candidate.unit_price)})`)
+        .join('; ');
+      return {
+        status: 'weight_unavailable',
+        message: `NO se cambió el pedido. No hay forma de dar EXACTAMENTE ${asked} de ${stem} con las presentaciones que hay. Díselo al cliente y pregúntale cuál prefiere${options ? `: ${options}` : ''}. No escojas tú.`,
+      };
+    }
+
+    const { product, quantity, total } = resolution;
+    const how =
+      resolution.kind === 'by_gram'
+        ? `${quantity.toString()} gramos (${product.name}) a ${cop(product.unit_price)} el gramo`
+        : `${quantity.toString()} × ${product.name} a ${cop(product.unit_price)} cada una`;
+
+    if (!resolution.same_measure) {
+      return {
+        status: 'weight_offer',
+        message: `NO se anotó todavía. ${stem} no se vende por esa medida: no hay presentación de ${asked}. Lo que sí hay: ${asked} = ${how} = ${cop(total)}. Explícaselo al cliente en pocas palabras (que por esa medida no se vende, pero sí así; cuánto le sale cada una, que eso suma ${asked} y el total) y pregúntale si así lo quiere. Si acepta, set_cart_item con product_id ${product.id} y quantity ${quantity.toString()}. No lo anotes sin su sí.`,
+      };
+    }
+
+    const cart = (await this.get(key)) ?? emptyCart();
+    if (this.isFull(cart, product.id)) {
+      return TOO_MANY_ITEMS;
+    }
+    const next = setCartItem(
+      cart,
+      { product_id: product.id, name: product.name, unit_price: product.unit_price },
+      quantity,
+    );
+    return {
+      status: 'ok',
+      cart: await this.save(key, next),
+      note: `Pidió ${asked}: se anotaron ${how} = ${cop(total)}.`,
+    };
+  }
+
+  /**
    * Presentaciones de la misma línea de producto que la elegida: su familia
    * (`parent_id`) y los productos sueltos con el mismo nombre base
    * ("PIMIENTA NEGRA MOLIDA …"), con su precio por defecto.
@@ -281,7 +365,7 @@ export class SellerCartService {
   private async lineCandidates(
     companyId: number,
     chosen: SellableProduct,
-  ): Promise<AmountCandidate[]> {
+  ): Promise<WeightCandidate[]> {
     const access = accessibleProductsPredicate('p', companyId, 1);
     const stem = productLineStem(chosen.name).toLowerCase();
     const params: unknown[] = [
@@ -317,6 +401,7 @@ export class SellerCartService {
               name: product.name,
               unit_price: unitPrice,
               per_gram: isPerGramProduct(product),
+              grams: presentationGrams(product),
             },
           ]
         : [];

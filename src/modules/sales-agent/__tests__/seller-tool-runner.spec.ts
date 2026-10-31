@@ -6,6 +6,7 @@ import {
   type SellerToolContext,
 } from '../internal/seller-tool-runner';
 import type { SellerCartService } from '../seller-cart.service';
+import type { ConversationGuardService } from '../conversation-guard.service';
 import type { CatalogSemanticService } from '@/modules/catalog-knowledge/catalog-semantic.service';
 import { emptyCart, setCartItem } from '../internal/cart';
 import { SELLER_TOOLS } from '../internal/seller-tools';
@@ -29,11 +30,22 @@ const makeCart = () => ({
 
 const makeSemantic = () => ({ search: jest.fn().mockResolvedValue([]) });
 
-const makeRunner = (queryImpl: jest.Mock, cart = makeCart(), semantic = makeSemantic()) =>
+const makeGuard = () => ({
+  addStrike: jest.fn().mockResolvedValue(1),
+  mute: jest.fn().mockResolvedValue(undefined),
+});
+
+const makeRunner = (
+  queryImpl: jest.Mock,
+  cart = makeCart(),
+  semantic = makeSemantic(),
+  guard = makeGuard(),
+) =>
   new SellerToolRunner(
     { query: queryImpl } as unknown as DataSource,
     cart as unknown as SellerCartService,
     semantic as unknown as CatalogSemanticService,
+    guard as unknown as ConversationGuardService,
   );
 
 describe('SellerToolRunner · search_products', () => {
@@ -254,7 +266,7 @@ describe('SellerToolRunner · pedido en curso', () => {
       withConversation,
     );
 
-    expect(cart.setItem).toHaveBeenCalledWith(conversation, 5, 2, undefined);
+    expect(cart.setItem).toHaveBeenCalledWith(conversation, 5, 2, undefined, undefined);
     expect(result.response).toMatchObject({
       status: 'ok',
       cart: {
@@ -283,8 +295,29 @@ describe('SellerToolRunner · pedido en curso', () => {
       withConversation,
     );
 
-    expect(cart.setItem).toHaveBeenCalledWith(conversation, 48446, undefined, 2000);
+    expect(cart.setItem).toHaveBeenCalledWith(conversation, 48446, undefined, 2000, undefined);
     expect(String(result.response.message)).toMatch(/^Pidió \$ 2\.000: se anotó 1 × PAQ\. /);
+  });
+
+  it('set_cart_item pasa el peso pedido y devuelve la oferta sin anotar', async () => {
+    const cart = makeCart();
+    cart.setItem.mockResolvedValue({
+      status: 'weight_offer',
+      message: 'NO se anotó todavía. 1 arroba = 25 × MANI LIBRA',
+    });
+    const runner = makeRunner(jest.fn(), cart);
+    const weight = { quantity: 1, unit: 'arroba' };
+
+    const result = await runner.execute(
+      { name: 'set_cart_item', args: { product_id: 45924, weight_requested: weight } },
+      withConversation,
+    );
+
+    expect(cart.setItem).toHaveBeenCalledWith(conversation, 45924, undefined, undefined, weight);
+    expect(result.response).toEqual({
+      status: 'weight_offer',
+      message: 'NO se anotó todavía. 1 arroba = 25 × MANI LIBRA',
+    });
   });
 
   it('set_cart_item sin id válido no toca el pedido', async () => {
@@ -865,5 +898,62 @@ describe('SellerToolRunner · el cliente cambia o cancela su pedido', () => {
       context,
     );
     expect(result.response).toMatchObject({ status: 'unavailable' });
+  });
+});
+
+describe('SellerToolRunner · flag_off_topic (anti-troll)', () => {
+  const conversation = { companyId: 7, channel: 'telegram', chatId: '999' };
+  const withConversation: SellerToolContext = { ...context, conversation, offTopicLimit: 3 };
+
+  it('existe la herramienta', () => {
+    expect(SELLER_TOOLS.map((tool) => tool.name)).toContain('flag_off_topic');
+  });
+
+  it('antes del límite: suma y pide redirigir, sin silenciar', async () => {
+    const guard = makeGuard();
+    guard.addStrike.mockResolvedValue(2);
+    const result = await makeRunner(jest.fn(), makeCart(), makeSemantic(), guard).execute(
+      { name: 'flag_off_topic', args: { reason: 'drogas' } },
+      withConversation,
+    );
+    expect(guard.addStrike).toHaveBeenCalledWith(conversation);
+    expect(guard.mute).not.toHaveBeenCalled();
+    expect(result.offTopic).toBe(true);
+    expect(result.response).toMatchObject({ status: 'noted' });
+  });
+
+  it('al llegar al límite: silencia y pide despedirse', async () => {
+    const guard = makeGuard();
+    guard.addStrike.mockResolvedValue(3);
+    const result = await makeRunner(jest.fn(), makeCart(), makeSemantic(), guard).execute(
+      { name: 'flag_off_topic', args: {} },
+      withConversation,
+    );
+    expect(guard.mute).toHaveBeenCalledWith(conversation);
+    expect(result.response).toMatchObject({ status: 'goodbye' });
+    expect(String(result.response.message)).toMatch(/Despídete/);
+  });
+
+  it('filtro apagado (límite 0) o sin conversación: no cuenta ni silencia', async () => {
+    const guard = makeGuard();
+    const runner = makeRunner(jest.fn(), makeCart(), makeSemantic(), guard);
+    const off = await runner.execute(
+      { name: 'flag_off_topic', args: {} },
+      { ...withConversation, offTopicLimit: 0 },
+    );
+    const noConv = await runner.execute({ name: 'flag_off_topic', args: {} }, context);
+    expect(guard.addStrike).not.toHaveBeenCalled();
+    expect(off.offTopic).toBe(true);
+    expect(noConv.response).toMatchObject({ status: 'noted' });
+  });
+
+  it('sin límite configurado usa el default (3)', async () => {
+    const guard = makeGuard();
+    guard.addStrike.mockResolvedValue(3);
+    await makeRunner(jest.fn(), makeCart(), makeSemantic(), guard).execute(
+      { name: 'flag_off_topic', args: {} },
+      { ...context, conversation },
+    );
+    expect(guard.mute).toHaveBeenCalled();
   });
 });

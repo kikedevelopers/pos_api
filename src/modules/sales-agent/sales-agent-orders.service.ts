@@ -9,7 +9,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository, type SelectQueryBuilder } from 'typeorm';
 
 import { parseUtcRange } from '@/modules/reports/internal/range';
-import { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
+import {
+  AGENT_ORDERS_CHANGED_EVENT,
+  ALERT_CREATED_EVENT,
+  RealtimeGateway,
+} from '@/modules/realtime/realtime.gateway';
 
 import {
   SalesAgentOrderEntity,
@@ -589,12 +593,56 @@ export class SalesAgentOrdersService {
         alertType: alert.type,
         severity: alert.severity,
       });
+      await this.notifyOwners(companyId, kind, data, alert);
     } catch (error) {
       this.logger.warn(
         { err: error, companyId, kind },
         'No pude crear la notificación del pedido.',
       );
     }
+  }
+
+  /**
+   * Avisa a los DUEÑOS del negocio por su room de usuario: les llega aunque
+   * estén parados en otra sucursal (la campana se enciende y sale la
+   * notificación del sistema con el nombre de la sucursal). Lleva lo justo para
+   * la notificación, porque ese pedido no es del negocio que tienen abierto.
+   */
+  private async notifyOwners(
+    companyId: number,
+    kind: AgentOrderEventKind,
+    data: AgentOrderAlertData,
+    alert: { type: string; severity: string },
+  ): Promise<void> {
+    const owners = await this.repo.query<Array<{ user_id: string; company_name: string }>>(
+      `SELECT cm.user_id, c.name AS company_name
+         FROM company_members cm
+         JOIN companies c ON c.id = cm.company_id
+        WHERE cm.company_id = $1 AND cm.role = 'owner' AND cm.is_active = true`,
+      [companyId],
+    );
+    const userIds = owners
+      .map((owner) => Number(owner.user_id))
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+    if (userIds.length === 0) {
+      return;
+    }
+    this.realtime.emitToUsers(userIds, ALERT_CREATED_EVENT, {
+      companyId,
+      alertType: alert.type,
+      severity: alert.severity,
+    });
+    this.realtime.emitToUsers(userIds, AGENT_ORDERS_CHANGED_EVENT, {
+      companyId,
+      reason: EVENT_REASON[kind],
+      reference: data.reference,
+      order_id: Number(data.order_id),
+      company_id: companyId,
+      company_name: owners[0].company_name,
+      customer_name: data.customer_name,
+      total: data.total,
+      items_count: data.items_count,
+    });
   }
 
   /** Señal de tiempo real; un fallo de socket nunca rompe la operación. */
@@ -676,3 +724,11 @@ const eventData = (row: EventRow): AgentOrderAlertData => ({
   customer_name: row.customer_name ?? row.chat_display_name,
   channel: row.channel,
 });
+
+/** Evento del cliente → `reason` del aviso en tiempo real. */
+const EVENT_REASON: Record<AgentOrderEventKind, string> = {
+  new: 'created',
+  updated: 'updated',
+  cancelled: 'cancelled',
+  request: 'customer_request',
+};

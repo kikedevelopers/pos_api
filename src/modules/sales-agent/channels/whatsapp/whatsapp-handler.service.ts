@@ -101,6 +101,8 @@ export class WhatsappHandlerService {
     const today = todayUtcDate();
 
     if (RESET_COMMANDS.has(message.text.toLowerCase())) {
+      // En silencio por fuera de tema, reiniciar no sirve para saltarse el filtro.
+      if (await this.agent.isMuted(sessionKey)) return;
       await this.sessions.reset(sessionKey);
       const greeting = await this.agent.greeting(companyId);
       await this.sessions.markDay(sessionKey, today);
@@ -123,6 +125,9 @@ export class WhatsappHandlerService {
       turns,
       { firstMessageOfDay },
     );
+
+    // En silencio y el mensaje tampoco era del negocio: no se responde nada.
+    if (result.silent) return;
 
     await this.sessions.append(sessionKey, { role: 'assistant', content: result.reply });
     await this.client.sendText({ ...send, text: result.reply });

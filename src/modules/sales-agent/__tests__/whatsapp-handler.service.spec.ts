@@ -57,6 +57,7 @@ const makeHandler = (tenantRow: SalesBotConfigEntity | null): Harness => {
     .mockResolvedValue({ reply: 'Claro, ¿cuánto llevas?', orders: [] });
   const agent = {
     isReady: jest.fn().mockReturnValue(true),
+    isMuted: jest.fn().mockResolvedValue(false),
     handleMessage,
     greeting: jest
       .fn()
@@ -181,5 +182,14 @@ describe('WhatsappHandlerService.process', () => {
 
     expect(handleMessage).not.toHaveBeenCalled();
     expect(sendText).not.toHaveBeenCalled();
+  });
+});
+
+describe('WhatsappHandlerService · filtro de mensajes fuera de tema', () => {
+  it('silent: no envía nada', async () => {
+    const h = makeHandler(tenant());
+    h.handleMessage.mockResolvedValue({ reply: '', orders: [], silent: true });
+    await h.handler.process([message({ messageId: 'wamid.silent' })]);
+    expect(h.sendText).not.toHaveBeenCalled();
   });
 });

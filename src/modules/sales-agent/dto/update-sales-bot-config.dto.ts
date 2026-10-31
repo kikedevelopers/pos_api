@@ -5,7 +5,10 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
+  Max,
+  Min,
   IsString,
   MaxLength,
 } from 'class-validator';
@@ -15,6 +18,7 @@ import {
   type SalesBotPersonality,
 } from '../entities/sales-bot-config.entity';
 import {
+  MAX_SALES_BOT_OFF_TOPIC_LIMIT,
   MAX_SALES_BOT_PICKUP_ADDRESS_LEN,
   SALES_BOT_DELIVERY_MODE_VALUES,
   type SalesBotDeliveryMode,
@@ -130,6 +134,19 @@ export class UpdateSalesBotSettingsDto {
   @IsString()
   @MaxLength(MAX_SALES_BOT_PICKUP_ADDRESS_LEN)
   pickup_address?: string;
+
+  @ApiPropertyOptional({
+    example: 3,
+    minimum: 0,
+    maximum: MAX_SALES_BOT_OFF_TOPIC_LIMIT,
+    description:
+      'Mensajes fuera de tema (molestar, preguntas sin sentido) antes de que el agente se despida y deje de responder hasta que sea algo del negocio. 0 = filtro apagado.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_SALES_BOT_OFF_TOPIC_LIMIT)
+  off_topic_limit?: number;
 }
 
 /** Payload de `PUT /sales-bot/config` — configura el bot de Telegram del negocio. */

@@ -9,6 +9,21 @@ import {
 } from '../internal/seller-prompt';
 
 describe('buildSellerSystemPrompt', () => {
+  it('nunca promete volver después: resuelve en el mismo mensaje', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('# Responde siempre en este mensaje');
+    expect(prompt).toContain('NUNCA prometas volver');
+  });
+
+  it('mensajes que no son para el negocio: flag_off_topic, sin debatir; preguntar de buena fe no cuenta', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('# Mensajes que no son para el negocio');
+    expect(prompt).toContain('llama flag_off_topic');
+    expect(prompt).toContain(
+      'Preguntar de buena fe por un producto que no vendemos NO es molestar',
+    );
+  });
+
   it('después de cerrar: cambiar o cancelar el MISMO pedido, nunca uno nuevo', () => {
     const prompt = buildSellerSystemPrompt(base);
     expect(prompt).toContain('# Después de cerrar: cambios y cancelaciones');
@@ -27,6 +42,15 @@ describe('buildSellerSystemPrompt', () => {
     expect(prompt).toContain('primero la\n    presentación de ese precio exacto');
     expect(prompt).toContain('"2 paquetes de mil" NO es por valor');
     expect(prompt).toContain('cita las cantidades y los totales del pedido en');
+  });
+
+  it('pedido por peso: medidas de Colombia y ofrecer la equivalencia (1 @ = 25 libras)', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('PEDIDO POR PESO');
+    expect(prompt).toContain('weight_requested');
+    expect(prompt).toContain('"@" = arroba = 25 libras; 1 kilo = 2 libras');
+    expect(prompt).toContain('anótala solo cuando acepte');
+    expect(prompt).toContain('1 @ NO es media libra');
   });
 
   const base = { businessName: 'Granero La 21', today: '2026-10-29' };

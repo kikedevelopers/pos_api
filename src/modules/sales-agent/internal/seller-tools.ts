@@ -18,6 +18,7 @@ export const SELLER_TOOL_NAMES = [
   'close_order',
   'modify_last_order',
   'cancel_last_order',
+  'flag_off_topic',
 ] as const;
 
 export type SellerToolName = (typeof SELLER_TOOL_NAMES)[number];
@@ -95,6 +96,20 @@ export const SELLER_TOOLS: readonly GeminiFunctionDeclaration[] = [
           description:
             'SOLO si el cliente pidió POR VALOR ("2000 de pimienta", "dame 5000 de comino"): el valor TOTAL en pesos (2000). Envía el "id" de cualquier presentación de ESE producto (molida ≠ en pepa) y el negocio elige: 1) la presentación de ese precio exacto; 2) si no hay, gramos sin pasarse; 3) si no, unidades fijas que sumen exacto. quantity se ignora. Si pidió por presentación o cantidad ("2 paquetes de mil"), NO lo envíes.',
         },
+        weight_requested: {
+          type: 'object',
+          description:
+            'SOLO si el cliente pidió POR PESO en una medida ("1 @ de maní", "2 kilos de arroz", "3 libras de uva pasa"): la cantidad y la medida TAL CUAL las dijo. "@" = arroba (25 libras); kilo = 2 libras; libra = 500 g. Envía el "id" de cualquier presentación de ESE producto y el negocio busca la presentación de ese peso; si no la hay, te devuelve la equivalencia (1 arroba = 25 × libra) para que se la OFREZCAS. quantity se ignora.',
+          properties: {
+            quantity: { type: 'number', description: 'Cuántas de esa medida (1 para "una arroba").' },
+            unit: {
+              type: 'string',
+              enum: ['gramo', 'cuarto', 'media_libra', 'libra', 'kilo', 'arroba'],
+              description: 'La medida que dijo el cliente.',
+            },
+          },
+          required: ['quantity', 'unit'],
+        },
       },
       required: ['product_id'],
     },
@@ -157,6 +172,20 @@ export const SELLER_TOOLS: readonly GeminiFunctionDeclaration[] = [
         reason: {
           type: 'string',
           description: 'Por qué lo cancela, si lo dijo.',
+        },
+      },
+    },
+  },
+  {
+    name: 'flag_off_topic',
+    description:
+      'Llámala cuando el mensaje del cliente NO es para el negocio: molestar o provocar (preguntas sobre ti, si eres un bot, si tienes sentimientos), drogas, sexo, insultos, bromas o mensajes sin sentido, o insistir con eso después de que ya le dijiste a qué se dedica el negocio. NO la uses por preguntar de buena fe por un producto que no venden, ni por saludar, ni por preguntas del negocio (horario, ubicación, pagos, entregas). Te dice cómo responder.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'Por qué no es para el negocio, en pocas palabras.',
         },
       },
     },
