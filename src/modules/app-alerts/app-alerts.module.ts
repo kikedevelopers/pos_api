@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { RolesModule } from '@/modules/roles/roles.module';
+
 import { CountUnreadAlertsAction } from './actions/count-unread-alerts.action';
 import { FindAllAlertsAction } from './actions/find-all-alerts.action';
 import { MarkAlertReadAction } from './actions/mark-alert-read.action';
@@ -13,7 +15,7 @@ import { AppAlert } from './entities/app-alert.entity';
  * Módulo `app-alerts`. CRUD básico — los evaluators viven en Fase 11.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([AppAlert])],
+  imports: [TypeOrmModule.forFeature([AppAlert]), RolesModule],
   controllers: [AppAlertsController],
   providers: [
     AppAlertsService,

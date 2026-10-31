@@ -28,8 +28,8 @@ export class AppAlertsService {
     return this.findAllAction.execute(companyId, params);
   }
 
-  countUnread(companyId: number): Promise<number> {
-    return this.countUnreadAction.execute(companyId);
+  countUnread(companyId: number, hiddenTypePrefix: string | null = null): Promise<number> {
+    return this.countUnreadAction.execute(companyId, hiddenTypePrefix);
   }
 
   markRead(id: number, companyId: number): Promise<void> {

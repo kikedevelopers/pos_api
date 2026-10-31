@@ -6,6 +6,19 @@ import type { RealtimeGateway } from '@/modules/realtime/realtime.gateway';
 import type { SalesAgentOrderEntity } from '../entities/sales-agent-order.entity';
 import type { AgentOrderRecord } from '../internal/agent-order';
 import { SalesAgentOrdersService } from '../sales-agent-orders.service';
+import type { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
+
+/** Fila que devuelven los UPDATE de eventos del cliente. */
+const eventRow = (patch: Record<string, unknown> = {}) => ({
+  id: '10',
+  reference: 'P-7B0F3C1E',
+  total: '18000.00',
+  items_count: 1,
+  customer_name: 'Ana',
+  chat_display_name: null,
+  channel: 'telegram',
+  ...patch,
+});
 
 const record: AgentOrderRecord = {
   operation_id: '7b0f3c1e-1111-4222-8333-444455556666',
@@ -105,12 +118,17 @@ const makeService = (
     findOne: jest.fn(() => Promise.resolve(options.findOne ?? null)),
     update: jest.fn(() => Promise.resolve({ affected: options.affected ?? 1 })),
   };
-  const realtime = { emitAgentOrdersChanged: jest.fn() };
+  const realtime = { emitAgentOrdersChanged: jest.fn(), emitAlertCreated: jest.fn() };
+  const alerts = {
+    create: jest.fn((partial: Record<string, unknown>) => ({ ...partial })),
+    save: jest.fn((entity: Record<string, unknown>) => Promise.resolve({ id: '500', ...entity })),
+  };
   const service = new SalesAgentOrdersService(
     repo as unknown as Repository<SalesAgentOrderEntity>,
     realtime as unknown as RealtimeGateway,
+    alerts as unknown as Repository<AppAlert>,
   );
-  return { service, repo, realtime, qb, calls };
+  return { service, repo, realtime, alerts, qb, calls };
 };
 
 describe('SalesAgentOrdersService.record', () => {
@@ -124,6 +142,27 @@ describe('SalesAgentOrdersService.record', () => {
     expect(h.realtime.emitAgentOrdersChanged).toHaveBeenCalledWith(7, {
       reason: 'created',
       reference: 'P-7B0F3C1E',
+      order_id: 10,
+    });
+    // Notificación de la campana.
+    expect(h.alerts.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        company_id: '7',
+        type: 'AGENT_ORDER_NEW',
+        severity: 'INFO',
+        title: 'Nuevo pedido del agente',
+        message: 'Ana hizo el pedido P-7B0F3C1E por $ 18.000 (1 producto).',
+        metadata: expect.objectContaining({
+          order_id: 10,
+          reference: 'P-7B0F3C1E',
+          event: 'new',
+        }) as unknown,
+      }),
+    );
+    expect(h.realtime.emitAlertCreated).toHaveBeenCalledWith(7, {
+      companyId: 7,
+      alertType: 'AGENT_ORDER_NEW',
+      severity: 'INFO',
     });
   });
 
@@ -526,7 +565,7 @@ describe('SalesAgentOrdersService · ticket enlazado', () => {
 describe('SalesAgentOrdersService · cambios del cliente', () => {
   it('amendByCustomer: actualiza el MISMO pedido solo si sigue por tomar y sin ticket', async () => {
     const h = makeService();
-    h.repo.query.mockResolvedValueOnce([[{ reference: 'P-7B0F3C1E' }], 1]);
+    h.repo.query.mockResolvedValueOnce([[eventRow()], 1]);
 
     await expect(h.service.amendByCustomer(7, '10', record)).resolves.toBe('updated');
 
@@ -537,7 +576,14 @@ describe('SalesAgentOrdersService · cambios del cliente', () => {
     expect(h.realtime.emitAgentOrdersChanged).toHaveBeenCalledWith(7, {
       reason: 'updated',
       reference: 'P-7B0F3C1E',
+      order_id: 10,
     });
+    expect(h.alerts.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'AGENT_ORDER_UPDATED',
+        title: 'Pedido actualizado por el cliente',
+      }),
+    );
   });
 
   it('amendByCustomer: ya tomado → locked, sin aviso', async () => {
@@ -549,7 +595,7 @@ describe('SalesAgentOrdersService · cambios del cliente', () => {
 
   it('cancelByCustomer: descartado POR EL CLIENTE con su motivo, solo si nadie lo tomó', async () => {
     const h = makeService();
-    h.repo.query.mockResolvedValueOnce([[{ reference: 'P-7B0F3C1E' }], 1]);
+    h.repo.query.mockResolvedValueOnce([[eventRow()], 1]);
 
     await expect(h.service.cancelByCustomer(7, '10', 'ya no lo necesito')).resolves.toBe(
       'cancelled',
@@ -563,7 +609,9 @@ describe('SalesAgentOrdersService · cambios del cliente', () => {
 
   it('cancelByCustomer: sin motivo deja la nota genérica; ya tomado → locked', async () => {
     const h = makeService();
-    h.repo.query.mockResolvedValueOnce([[{ reference: 'P-1' }], 1]).mockResolvedValueOnce([[], 0]);
+    h.repo.query
+      .mockResolvedValueOnce([[eventRow({ reference: 'P-1' })], 1])
+      .mockResolvedValueOnce([[], 0]);
     await h.service.cancelByCustomer(7, '10', null);
     expect((h.repo.query.mock.calls[0] as unknown as [string, unknown[]])[1][2]).toBe(
       'Cancelado por el cliente',
@@ -584,7 +632,17 @@ describe('SalesAgentOrdersService · cambios del cliente', () => {
     expect(h.realtime.emitAgentOrdersChanged).toHaveBeenCalledWith(7, {
       reason: 'customer_request',
       reference: 'P-7B0F3C1E',
+      order_id: 10,
     });
+    expect(h.alerts.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'AGENT_ORDER_REQUEST',
+        severity: 'WARNING',
+        metadata: expect.objectContaining({
+          detail: 'Cambiar el pedido: quitar la nuez',
+        }) as unknown,
+      }),
+    );
   });
 
   it('recordCustomerRequest: texto vacío no hace nada', async () => {
@@ -614,5 +672,48 @@ describe('SalesAgentOrdersService · cambios del cliente', () => {
       customer_request: 'Cancelar el pedido',
       customer_request_at: '2026-10-31T13:07:00.000Z',
     });
+  });
+});
+
+describe('SalesAgentOrdersService · notificaciones de la campana', () => {
+  it('cancelación del cliente: alerta WARNING con el motivo y aviso en tiempo real', async () => {
+    const h = makeService();
+    h.repo.query.mockResolvedValueOnce([[eventRow()], 1]);
+    await h.service.cancelByCustomer(7, '10', 'ya no lo necesito');
+    expect(h.realtime.emitAgentOrdersChanged).toHaveBeenCalledWith(7, {
+      reason: 'cancelled',
+      reference: 'P-7B0F3C1E',
+      order_id: 10,
+    });
+    expect(h.alerts.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'AGENT_ORDER_CANCELLED',
+        severity: 'WARNING',
+        message: 'Ana canceló el pedido P-7B0F3C1E: «ya no lo necesito»',
+      }),
+    );
+  });
+
+  it('pedido ya tomado (locked): no crea notificación', async () => {
+    const h = makeService();
+    h.repo.query.mockResolvedValueOnce([[], 0]);
+    await h.service.amendByCustomer(7, '10', record);
+    expect(h.alerts.save).not.toHaveBeenCalled();
+  });
+
+  it('idempotente: un pedido que ya existía no notifica de nuevo', async () => {
+    const h = makeService({
+      qbResult: { entities: [], raw: [], insertRaw: [] },
+      findOne: entity(),
+    });
+    await h.service.record(7, record);
+    expect(h.alerts.save).not.toHaveBeenCalled();
+  });
+
+  it('si guardar la notificación falla, el pedido sigue (best-effort)', async () => {
+    const h = makeService({ qbResult: { entities: [], raw: [], insertRaw: [{ id: '10' }] } });
+    h.alerts.save.mockRejectedValueOnce(new Error('db'));
+    await expect(h.service.record(7, record)).resolves.toEqual({ id: '10', inserted: true });
+    expect(h.realtime.emitAlertCreated).not.toHaveBeenCalled();
   });
 });

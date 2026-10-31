@@ -298,6 +298,8 @@ export const AGENT_ORDERS_CHANGED_EVENT = 'agent-orders:changed';
  */
 export interface AgentOrdersChangedPayload {
   companyId?: number;
-  reason?: 'created' | 'status_changed' | 'updated' | 'customer_request';
+  reason?: 'created' | 'status_changed' | 'updated' | 'cancelled' | 'customer_request';
   reference?: string;
+  /** Id del pedido, para abrirlo desde un aviso (los datos se piden aparte, con permisos). */
+  order_id?: number;
 }

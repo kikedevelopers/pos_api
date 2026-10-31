@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Repository } from 'typeorm';
+import { Not, Like, type Repository } from 'typeorm';
 
 import { AppAlert } from '../entities/app-alert.entity';
 
@@ -19,9 +19,13 @@ export class CountUnreadAlertsAction {
     private readonly repo: Repository<AppAlert>,
   ) {}
 
-  async execute(companyId: number): Promise<number> {
+  async execute(companyId: number, hiddenTypePrefix: string | null = null): Promise<number> {
     return this.repo.count({
-      where: { company_id: String(companyId), is_read: false },
+      where: {
+        company_id: String(companyId),
+        is_read: false,
+        ...(hiddenTypePrefix ? { type: Not(Like(`${hiddenTypePrefix}%`)) } : {}),
+      },
     });
   }
 }

@@ -17,6 +17,12 @@ import {
   type SalesAgentOrderStatus,
 } from './entities/sales-agent-order.entity';
 import { canTransition, normalizeStatusNote, type AgentOrderRecord } from './internal/agent-order';
+import {
+  buildAgentOrderAlert,
+  type AgentOrderAlertData,
+  type AgentOrderEventKind,
+} from './internal/agent-alerts';
+import { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
 
 /** Filtro de estado del listado (`all` = todos). */
 export type AgentOrderStatusFilter = SalesAgentOrderStatus | 'all';
@@ -137,6 +143,8 @@ export class SalesAgentOrdersService {
     @InjectRepository(SalesAgentOrderEntity)
     private readonly repo: Repository<SalesAgentOrderEntity>,
     private readonly realtime: RealtimeGateway,
+    @InjectRepository(AppAlert)
+    private readonly alerts: Repository<AppAlert>,
   ) {}
 
   /**
@@ -159,8 +167,21 @@ export class SalesAgentOrdersService {
     // ON CONFLICT DO NOTHING no devuelve fila: vacío = ya estaba guardado.
     const rows = Array.isArray(result.raw) ? (result.raw as Array<{ id: string }>) : [];
     if (rows[0]) {
-      this.notify(companyId, { reason: 'created', reference: record.reference });
-      return { id: String(rows[0].id), inserted: true };
+      const id = String(rows[0].id);
+      this.notify(companyId, {
+        reason: 'created',
+        reference: record.reference,
+        order_id: Number(id),
+      });
+      await this.alert(companyId, 'new', {
+        order_id: id,
+        reference: record.reference,
+        total: Number(record.total),
+        items_count: record.items_count,
+        customer_name: record.customer_name ?? record.chat_display_name,
+        channel: record.channel,
+      });
+      return { id, inserted: true };
     }
     const existing = await this.repo.findOne({
       where: { company_id: String(companyId), operation_id: record.operation_id },
@@ -179,7 +200,7 @@ export class SalesAgentOrdersService {
     orderId: string,
     record: AgentOrderRecord,
   ): Promise<'updated' | 'locked'> {
-    const rows = await this.repo.query<[Array<{ reference: string }>, number]>(
+    const rows = await this.repo.query<[EventRow[], number]>(
       `UPDATE sales_agent_orders
           SET items = $3::jsonb, items_count = $4, total = $5,
               customer_name = $6, customer_phone = $7, delivery_mode = $8,
@@ -187,7 +208,7 @@ export class SalesAgentOrdersService {
               customer_updated_at = now(), updated_at = now()
         WHERE id = $1 AND company_id = $2
           AND status = 'pending' AND sale_invoice_id IS NULL
-        RETURNING reference`,
+        RETURNING id, reference, total, items_count, customer_name, chat_display_name, channel`,
       [
         orderId,
         companyId,
@@ -207,7 +228,12 @@ export class SalesAgentOrdersService {
     if (!updated[0]) {
       return 'locked';
     }
-    this.notify(companyId, { reason: 'updated', reference: updated[0].reference });
+    this.notify(companyId, {
+      reason: 'updated',
+      reference: updated[0].reference,
+      order_id: Number(updated[0].id),
+    });
+    await this.alert(companyId, 'updated', eventData(updated[0]));
     return 'updated';
   }
 
@@ -223,20 +249,25 @@ export class SalesAgentOrdersService {
     const note = normalizeStatusNote(
       reason ? `Cancelado por el cliente: ${reason}` : 'Cancelado por el cliente',
     );
-    const rows = await this.repo.query<[Array<{ reference: string }>, number]>(
+    const rows = await this.repo.query<[EventRow[], number]>(
       `UPDATE sales_agent_orders
           SET status = 'dismissed', cancelled_by_customer = true, status_note = $3,
               status_changed_at = now(), status_changed_by_user_id = NULL, updated_at = now()
         WHERE id = $1 AND company_id = $2
           AND status = 'pending' AND sale_invoice_id IS NULL
-        RETURNING reference`,
+        RETURNING id, reference, total, items_count, customer_name, chat_display_name, channel`,
       [orderId, companyId, note],
     );
     const updated = Array.isArray(rows[0]) ? rows[0] : [];
     if (!updated[0]) {
       return 'locked';
     }
-    this.notify(companyId, { reason: 'status_changed', reference: updated[0].reference });
+    this.notify(companyId, {
+      reason: 'cancelled',
+      reference: updated[0].reference,
+      order_id: Number(updated[0].id),
+    });
+    await this.alert(companyId, 'cancelled', { ...eventData(updated[0]), detail: reason });
     return 'cancelled';
   }
 
@@ -256,9 +287,23 @@ export class SalesAgentOrdersService {
     if (result.affected) {
       const order = await this.repo.findOne({
         where: { id: orderId, company_id: String(companyId) },
-        select: { reference: true },
       });
-      this.notify(companyId, { reason: 'customer_request', reference: order?.reference ?? '' });
+      this.notify(companyId, {
+        reason: 'customer_request',
+        reference: order?.reference ?? '',
+        order_id: Number(orderId),
+      });
+      if (order) {
+        await this.alert(companyId, 'request', {
+          order_id: order.id,
+          reference: order.reference,
+          total: Number(order.total),
+          items_count: order.items_count,
+          customer_name: order.customer_name ?? order.chat_display_name,
+          channel: order.channel,
+          detail: text,
+        });
+      }
     }
   }
 
@@ -517,12 +562,48 @@ export class SalesAgentOrdersService {
     return { dateStart, dateEnd };
   }
 
+  /**
+   * Notificación de la campana por un evento del CLIENTE (pedido nuevo,
+   * actualizado, cancelado o solicitud). Best-effort: si falla, el pedido sigue
+   * su curso (la bandeja ya lo muestra).
+   */
+  private async alert(
+    companyId: number,
+    kind: AgentOrderEventKind,
+    data: AgentOrderAlertData,
+  ): Promise<void> {
+    try {
+      const alert = buildAgentOrderAlert(kind, data);
+      await this.alerts.save(
+        this.alerts.create({
+          company_id: String(companyId),
+          type: alert.type,
+          severity: alert.severity,
+          title: alert.title,
+          message: alert.message,
+          metadata: alert.metadata,
+        }),
+      );
+      this.realtime.emitAlertCreated(companyId, {
+        companyId,
+        alertType: alert.type,
+        severity: alert.severity,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, companyId, kind },
+        'No pude crear la notificación del pedido.',
+      );
+    }
+  }
+
   /** Señal de tiempo real; un fallo de socket nunca rompe la operación. */
   private notify(
     companyId: number,
     payload: {
-      reason: 'created' | 'status_changed' | 'updated' | 'customer_request';
+      reason: 'created' | 'status_changed' | 'updated' | 'cancelled' | 'customer_request';
       reference: string;
+      order_id?: number;
     },
   ): void {
     try {
@@ -575,3 +656,23 @@ const toTicket = (row: OrderRow): AgentOrderTicket | null => {
     is_voided: row.ticket_is_voided === true,
   };
 };
+
+/** Fila que devuelven los UPDATE de eventos del cliente. */
+interface EventRow {
+  id: string;
+  reference: string;
+  total: string;
+  items_count: number;
+  customer_name: string | null;
+  chat_display_name: string | null;
+  channel: string;
+}
+
+const eventData = (row: EventRow): AgentOrderAlertData => ({
+  order_id: String(row.id),
+  reference: row.reference,
+  total: Number(row.total),
+  items_count: Number(row.items_count),
+  customer_name: row.customer_name ?? row.chat_display_name,
+  channel: row.channel,
+});

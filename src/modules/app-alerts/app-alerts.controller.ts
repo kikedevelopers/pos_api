@@ -18,6 +18,10 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
+import { ResolveEffectivePermissionsAction } from '@/modules/roles/actions/resolve-effective-permissions.action';
+import { PERMISSION_KEYS } from '@/modules/roles/internal/permission-catalog';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { AppAlertsService } from './app-alerts.service';
@@ -28,6 +32,7 @@ import {
   toAppAlertResponseDto,
 } from './dto/app-alert-response.dto';
 import { ListAlertsQueryDto } from './dto/list-alerts-query.dto';
+import { hiddenAlertPrefixFor } from './internal/alert-visibility';
 
 /**
  * Endpoints `/app-alerts`. Espejo PlacePos `app-alerts.routes.ts`.
@@ -44,7 +49,19 @@ import { ListAlertsQueryDto } from './dto/list-alerts-query.dto';
 @ApiBearerAuth('bearer')
 @Controller('app-alerts')
 export class AppAlertsController {
-  constructor(private readonly appAlertsService: AppAlertsService) {}
+  constructor(
+    private readonly appAlertsService: AppAlertsService,
+    private readonly resolvePermissions: ResolveEffectivePermissionsAction,
+  ) {}
+
+  /**
+   * Tipos que este usuario no ve: las alertas del agente de ventas son de nivel
+   * administrador (mismo público que el informe "Agente").
+   */
+  private async hiddenPrefix(user: AuthUser): Promise<string | null> {
+    const granted = new Set<string>(await this.resolvePermissions.execute(user));
+    return hiddenAlertPrefixFor(PERMISSION_KEYS.every((key) => granted.has(key)));
+  }
 
   @Get()
   @Roles('owner', 'manager', 'employee')
@@ -56,12 +73,14 @@ export class AppAlertsController {
   async findAll(
     @Query() query: ListAlertsQueryDto,
     @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
   ): Promise<ListAlertsResponseDto> {
     // Defaults se aplican aquí porque los query params pueden llegar
     // undefined incluso con `@IsOptional()`.
     const params = {
       unreadOnly: query.unread_only ?? false,
       limit: query.limit ?? 50,
+      hiddenTypePrefix: await this.hiddenPrefix(user),
     };
     const result = await this.appAlertsService.findAll(companyId, params);
     return {
@@ -75,8 +94,11 @@ export class AppAlertsController {
   @ApiOperation({ summary: 'Devuelve el contador de alertas no leídas (badge UI)' })
   @ApiResponse({ status: HttpStatus.OK, type: UnreadCountResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  async unreadCount(@CurrentCompany() companyId: number): Promise<UnreadCountResponseDto> {
-    const count = await this.appAlertsService.countUnread(companyId);
+  async unreadCount(
+    @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
+  ): Promise<UnreadCountResponseDto> {
+    const count = await this.appAlertsService.countUnread(companyId, await this.hiddenPrefix(user));
     return { count };
   }
 
