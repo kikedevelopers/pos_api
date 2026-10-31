@@ -28,6 +28,10 @@ export interface WhatsappWebIncoming {
   /** Nota de voz en base64 (el escritorio la descarga de WhatsApp). */
   audio_base64?: string;
   audio_mime_type?: string;
+  /** Número del WhatsApp del negocio conectado por QR (dígitos con indicativo). */
+  business_phone?: string;
+  /** Número del cliente que resolvió el escritorio (sirve en chats `@lid`). */
+  customer_phone?: string;
 }
 
 /** Aviso que el escritorio debe enviar (p. ej. pedido cerrado → dueño). */
@@ -110,6 +114,13 @@ export class WhatsappWebRelayService {
 
     const sessionKey = SellerSessionStore.key(companyId, 'whatsapp-web', chatId);
 
+    // En silencio por fuera de tema: no se gasta en transcribir notas de voz ni
+    // se atiende "/reiniciar" (no es una forma de saltarse el filtro).
+    const muted = await this.agent.isMuted(sessionKey);
+    if (muted && (!typed || RESET_COMMANDS.has(typed.toLowerCase()))) {
+      return NO_REPLY;
+    }
+
     // Nota de voz → se transcribe y se atiende como si la hubiera escrito.
     const text =
       typed ||
@@ -141,6 +152,8 @@ export class WhatsappWebRelayService {
         channel: CHANNEL,
         chatId,
         chatDisplayName: input.sender_name,
+        channelAccount: input.business_phone?.replace(/\D/g, '') || undefined,
+        chatPhone: input.customer_phone?.replace(/\D/g, '') || undefined,
         conversation: sessionKey,
       },
       turns,
@@ -149,6 +162,11 @@ export class WhatsappWebRelayService {
 
     // Si el humano intervino MIENTRAS el agente pensaba, se descarta la respuesta.
     if (await this.takeovers.isPaused(companyId, CHANNEL, chatId)) {
+      return NO_REPLY;
+    }
+
+    // En silencio y el mensaje tampoco era del negocio: no se responde nada.
+    if (result.silent) {
       return NO_REPLY;
     }
 
@@ -168,6 +186,14 @@ export class WhatsappWebRelayService {
           { companyId, total: order.total, lines: order.items.length },
           'Pedido cerrado por WhatsApp (QR); el negocio no configuró número de avisos.',
         );
+      }
+    }
+    // Avisos para el negocio (cancelación, solicitud sobre un pedido tomado).
+    for (const notice of result.notices ?? []) {
+      if (ownerNumber) {
+        notifications.push({ to: ownerNumber, text: notice });
+      } else {
+        this.logger.log({ companyId, notice }, 'Aviso al negocio sin número de avisos (QR).');
       }
     }
     return { reply: result.reply, notifications };

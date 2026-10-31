@@ -21,7 +21,10 @@ const textEvent = (overrides?: {
               phone_number_id: overrides?.phoneNumberId ?? '111222333',
             },
             contacts: [
-              { profile: { name: overrides?.name ?? 'María' }, wa_id: overrides?.from ?? '573009998877' },
+              {
+                profile: { name: overrides?.name ?? 'María' },
+                wa_id: overrides?.from ?? '573009998877',
+              },
             ],
             messages: [
               {
@@ -44,12 +47,23 @@ describe('parseWhatsappWebhook', () => {
     expect(parseWhatsappWebhook(textEvent())).toEqual([
       {
         phoneNumberId: '111222333',
+        displayPhoneNumber: '573001112233',
         from: '573009998877',
         text: 'Hola, ¿tienes arroz?',
         senderName: 'María',
         messageId: 'wamid.ABC',
       },
     ]);
+  });
+
+  it('sin display_phone_number en metadata, omite displayPhoneNumber', () => {
+    const event = textEvent() as {
+      entry: Array<{ changes: Array<{ value: { metadata: Record<string, unknown> } }> }>;
+    };
+    delete event.entry[0].changes[0].value.metadata.display_phone_number;
+    const [message] = parseWhatsappWebhook(event);
+    expect(message).toBeDefined();
+    expect(message).not.toHaveProperty('displayPhoneNumber');
   });
 
   it('ignora eventos de estado (statuses) sin mensajes', () => {
@@ -97,7 +111,13 @@ describe('parseWhatsappWebhook', () => {
 
   it('sin phone_number_id no devuelve nada', () => {
     const noMeta = {
-      entry: [{ changes: [{ value: { messages: [{ from: '1', id: 'a', type: 'text', text: { body: 'hola' } }] } }] }],
+      entry: [
+        {
+          changes: [
+            { value: { messages: [{ from: '1', id: 'a', type: 'text', text: { body: 'hola' } }] } },
+          ],
+        },
+      ],
     };
     expect(parseWhatsappWebhook(noMeta)).toEqual([]);
   });
@@ -125,7 +145,13 @@ describe('parseWhatsappWebhook', () => {
       ],
     };
     expect(parseWhatsappWebhook(noContact)).toEqual([
-      { phoneNumberId: '999', from: '57301', text: 'hola', senderName: undefined, messageId: 'wamid.N' },
+      {
+        phoneNumberId: '999',
+        from: '57301',
+        text: 'hola',
+        senderName: undefined,
+        messageId: 'wamid.N',
+      },
     ]);
   });
 });

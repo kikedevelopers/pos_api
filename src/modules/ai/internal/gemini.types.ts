@@ -72,6 +72,11 @@ export interface GeminiRequestBody {
     maxOutputTokens: number;
   };
   tools?: [{ functionDeclarations: GeminiFunctionDeclaration[] }];
+  /**
+   * Cómo puede usar las herramientas. `NONE` obliga a responder con TEXTO
+   * aunque estén declaradas (p. ej. en la última ronda permitida).
+   */
+  toolConfig?: { functionCallingConfig: { mode: 'AUTO' | 'ANY' | 'NONE' } };
 }
 
 /** Un evento SSE ya parseado del stream de Gemini. */

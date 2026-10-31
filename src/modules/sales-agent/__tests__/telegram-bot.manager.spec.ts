@@ -66,9 +66,7 @@ const makeManager = (env: SalesBotConfig): Harness => {
 
   // Los workers no deben tocar la red en el test.
   const startSpy = jest.spyOn(TelegramBotWorker.prototype, 'start').mockImplementation(() => {});
-  const stopSpy = jest
-    .spyOn(TelegramBotWorker.prototype, 'stop')
-    .mockResolvedValue(undefined);
+  const stopSpy = jest.spyOn(TelegramBotWorker.prototype, 'stop').mockResolvedValue(undefined);
 
   const takeovers = {} as unknown as SalesBotTakeoverService;
 
@@ -110,7 +108,16 @@ describe('TelegramBotManager.onModuleInit', () => {
 
   it('arranca el bot legacy por env si su negocio NO está en BD', async () => {
     const h = makeManager(
-      envConfig({ enabled: true, companyId: 99, telegram: { token: 'env-tkn', pollIntervalMs: 1500, longPollTimeoutSec: 30, ownerChatId: '' } }),
+      envConfig({
+        enabled: true,
+        companyId: 99,
+        telegram: {
+          token: 'env-tkn',
+          pollIntervalMs: 1500,
+          longPollTimeoutSec: 30,
+          ownerChatId: '',
+        },
+      }),
     );
     h.listRunnable.mockResolvedValue([dbConfig(7)]);
     await h.manager.onModuleInit();
@@ -120,7 +127,16 @@ describe('TelegramBotManager.onModuleInit', () => {
 
   it('NO duplica el bot legacy por env si el negocio ya está en BD', async () => {
     const h = makeManager(
-      envConfig({ enabled: true, companyId: 7, telegram: { token: 'env-tkn', pollIntervalMs: 1500, longPollTimeoutSec: 30, ownerChatId: '' } }),
+      envConfig({
+        enabled: true,
+        companyId: 7,
+        telegram: {
+          token: 'env-tkn',
+          pollIntervalMs: 1500,
+          longPollTimeoutSec: 30,
+          ownerChatId: '',
+        },
+      }),
     );
     h.listRunnable.mockResolvedValue([dbConfig(7)]);
     await h.manager.onModuleInit();
@@ -177,7 +193,16 @@ describe('TelegramBotManager — agente inhabilitado desde el panel', () => {
 
   it('tampoco levanta el bot legacy por env si su negocio está inhabilitado', async () => {
     const h = makeManager(
-      envConfig({ enabled: true, companyId: 99, telegram: { token: 'env-tkn', pollIntervalMs: 1500, longPollTimeoutSec: 30, ownerChatId: '' } }),
+      envConfig({
+        enabled: true,
+        companyId: 99,
+        telegram: {
+          token: 'env-tkn',
+          pollIntervalMs: 1500,
+          longPollTimeoutSec: 30,
+          ownerChatId: '',
+        },
+      }),
     );
     h.enabledIds.mockResolvedValue([]);
     await h.manager.onModuleInit();
@@ -199,4 +224,3 @@ describe('TelegramBotManager — agente inhabilitado desde el panel', () => {
     expect(h.getEntity).not.toHaveBeenCalled();
   });
 });
-

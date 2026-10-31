@@ -101,6 +101,8 @@ export class WhatsappHandlerService {
     const today = todayUtcDate();
 
     if (RESET_COMMANDS.has(message.text.toLowerCase())) {
+      // En silencio por fuera de tema, reiniciar no sirve para saltarse el filtro.
+      if (await this.agent.isMuted(sessionKey)) return;
       await this.sessions.reset(sessionKey);
       const greeting = await this.agent.greeting(companyId);
       await this.sessions.markDay(sessionKey, today);
@@ -117,11 +119,15 @@ export class WhatsappHandlerService {
         channel: CHANNEL,
         chatId: message.from,
         chatDisplayName: message.senderName,
+        channelAccount: message.displayPhoneNumber,
         conversation: sessionKey,
       },
       turns,
       { firstMessageOfDay },
     );
+
+    // En silencio y el mensaje tampoco era del negocio: no se responde nada.
+    if (result.silent) return;
 
     await this.sessions.append(sessionKey, { role: 'assistant', content: result.reply });
     await this.client.sendText({ ...send, text: result.reply });
@@ -143,6 +149,19 @@ export class WhatsappHandlerService {
           { companyId, total: order.total, lines: order.items.length },
           'Pedido cerrado por WhatsApp; el negocio no configuró número de avisos (solo log).',
         );
+      }
+    }
+    // Avisos para el negocio (cancelación, solicitud sobre un pedido tomado).
+    for (const notice of result.notices ?? []) {
+      if (ownerChatId) {
+        await this.client.sendText({
+          phoneNumberId: message.phoneNumberId,
+          to: ownerChatId,
+          token,
+          text: notice,
+        });
+      } else {
+        this.logger.log({ companyId, notice }, 'Aviso al negocio sin número de avisos (solo log).');
       }
     }
   }

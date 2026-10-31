@@ -24,6 +24,21 @@ export class AppAlertResponseDto {
   @ApiProperty({ example: 'FIXED_EXPENSE_DUE' })
   alert_type!: string;
 
+  @ApiProperty({ example: 'Nuevo pedido del agente', description: 'Título corto de la alerta.' })
+  title!: string;
+
+  @ApiProperty({ example: 'INFO', enum: ['INFO', 'WARNING', 'CRITICAL'] })
+  severity!: string;
+
+  @ApiProperty({
+    example: 13,
+    description: 'Negocio de la alerta (un dueño ve pedidos de sus sucursales).',
+  })
+  company_id!: number;
+
+  @ApiPropertyOptional({ example: 'Esencia & Grano - la 28', nullable: true })
+  company_name!: string | null;
+
   @ApiProperty({
     type: Object,
     description: 'Payload tipado por `alert_type`. Incluye `message` y campos propios del tipo.',
@@ -49,6 +64,10 @@ export function toAppAlertResponseDto(alert: AppAlert): AppAlertResponseDto {
   return {
     id: Number(alert.id),
     alert_type: alert.type,
+    title: alert.title,
+    severity: alert.severity,
+    company_id: Number(alert.company_id),
+    company_name: alert.company?.name ?? null,
     // El `message` siempre gana sobre cualquier clave homónima del metadata.
     payload: { ...(alert.metadata ?? {}), message: alert.message },
     is_read: alert.is_read,

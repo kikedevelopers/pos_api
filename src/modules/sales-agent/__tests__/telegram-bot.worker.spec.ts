@@ -43,7 +43,13 @@ const makeWorker = (ownerChatId: string | null = '111') => {
   const handleMessage = jest.fn().mockResolvedValue({ reply: 'Claro, ¿cuánto?', orders: [] });
   const greeting = jest.fn().mockResolvedValue('¡Hola! Soy Diana.');
   const transcribeAudio = jest.fn().mockResolvedValue('¿tienes maní dulce?');
-  const agent = { handleMessage, greeting, transcribeAudio } as unknown as SalesAgentService;
+  const isMuted = jest.fn().mockResolvedValue(false);
+  const agent = {
+    handleMessage,
+    greeting,
+    transcribeAudio,
+    isMuted,
+  } as unknown as SalesAgentService;
 
   const reset = jest.fn();
   const markDay = jest.fn().mockReturnValue(true);
@@ -69,6 +75,7 @@ const makeWorker = (ownerChatId: string | null = '111') => {
 
   return {
     worker,
+    isMuted,
     downloadFile,
     transcribeAudio,
     sendMessage,
@@ -146,6 +153,24 @@ describe('TelegramBotWorker.process — chat directo', () => {
   it('sin chat del dueño no intenta avisar', async () => {
     const h = makeWorker(null);
     h.handleMessage.mockResolvedValue({ reply: 'Listo', orders: [order] });
+    await h.worker.process(clientMessage());
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('envía al dueño los avisos del negocio (cliente canceló / pide cambio)', async () => {
+    const h = makeWorker();
+    h.handleMessage.mockResolvedValue({
+      reply: 'Listo',
+      orders: [],
+      notices: ['❌ EL CLIENTE CANCELÓ EL PEDIDO P-1'],
+    });
+    await h.worker.process(clientMessage());
+    expect(h.sendMessage).toHaveBeenCalledWith('111', '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1');
+  });
+
+  it('sin chat del dueño, los avisos no se envían', async () => {
+    const h = makeWorker(null);
+    h.handleMessage.mockResolvedValue({ reply: 'Listo', orders: [], notices: ['aviso'] });
     await h.worker.process(clientMessage());
     expect(h.sendMessage).toHaveBeenCalledTimes(1);
   });
@@ -267,5 +292,28 @@ describe('TelegramBotWorker.process — notas de voz', () => {
     );
     expect(h.pause).toHaveBeenCalled();
     expect(h.downloadFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('TelegramBotWorker.process — filtro de mensajes fuera de tema', () => {
+  it('silent: no responde ni guarda la respuesta', async () => {
+    const h = makeWorker();
+    h.handleMessage.mockResolvedValue({ reply: '', orders: [], silent: true });
+    await h.worker.process(clientMessage());
+    expect(h.sendMessage).not.toHaveBeenCalled();
+    expect(h.append).toHaveBeenCalledTimes(1); // solo el mensaje del cliente
+  });
+
+  it('en silencio: /start no reinicia ni saluda; la nota de voz no se transcribe', async () => {
+    const h = makeWorker();
+    h.isMuted.mockResolvedValue(true);
+    await h.worker.process(clientMessage({ text: '/start' }));
+    await h.worker.process(
+      clientMessage({ text: '', voice: { fileId: 'F1', mimeType: 'audio/ogg' } }),
+    );
+    expect(h.reset).not.toHaveBeenCalled();
+    expect(h.greeting).not.toHaveBeenCalled();
+    expect(h.downloadFile).not.toHaveBeenCalled();
+    expect(h.sendMessage).not.toHaveBeenCalled();
   });
 });

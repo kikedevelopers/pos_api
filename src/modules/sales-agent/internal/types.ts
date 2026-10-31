@@ -10,6 +10,8 @@ export interface ClosedOrderItem {
 export interface ClosedOrder {
   /** Referencia corta del pedido ("P-4F2A9C1B"). */
   reference?: string;
+  /** `updated`: el cliente modificó un pedido que ya había hecho (misma referencia). */
+  kind?: 'new' | 'updated';
   items: ClosedOrderItem[];
   total: number;
   customer_name?: string;
@@ -27,4 +29,11 @@ export interface ClosedOrder {
 export interface SellerReply {
   reply: string;
   orders: ClosedOrder[];
+  /** Avisos para el negocio (el cliente canceló, pide un cambio de un pedido tomado...). */
+  notices?: string[];
+  /**
+   * La conversación está EN SILENCIO por mensajes fuera de tema y este tampoco
+   * era del negocio: el canal NO responde nada.
+   */
+  silent?: boolean;
 }

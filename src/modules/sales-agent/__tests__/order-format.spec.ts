@@ -1,4 +1,9 @@
-import { formatCop, formatOrderForOwner } from '../internal/order-format';
+import {
+  formatCancelledNotice,
+  formatCop,
+  formatOrderForOwner,
+  formatTakenRequestNotice,
+} from '../internal/order-format';
 import type { ClosedOrder } from '../internal/types';
 
 describe('formatCop', () => {
@@ -71,5 +76,42 @@ describe('formatOrderForOwner — referencia y pago', () => {
   it('incluye la forma de pago solo si se dio', () => {
     expect(formatOrderForOwner({ ...base, payment_method: 'Nequi' })).toContain('Pago: Nequi');
     expect(formatOrderForOwner(base)).not.toContain('Pago:');
+  });
+});
+
+describe('avisos de cambios del cliente', () => {
+  it('pedido actualizado: título propio con la misma referencia', () => {
+    const text = formatOrderForOwner({
+      reference: 'P-854A38BE',
+      kind: 'updated',
+      items: [{ name: 'ALMENDRA', quantity: 1, unit_price: 26500, line_total: 26500 }],
+      total: 26500,
+      channel: 'whatsapp',
+      chat_id: '1',
+    });
+    expect(text.split('\n')[0]).toBe(
+      '✏️ PEDIDO ACTUALIZADO POR EL CLIENTE P-854A38BE (asistente de ventas)',
+    );
+  });
+
+  it('cancelación con y sin motivo', () => {
+    expect(formatCancelledNotice('P-1', 'ya no')).toBe(
+      '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1 (asistente de ventas)\nMotivo: ya no',
+    );
+    expect(formatCancelledNotice('P-1', null)).toBe(
+      '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1 (asistente de ventas)',
+    );
+  });
+
+  it('solicitud sobre pedido tomado: dice dónde está y qué pidió', () => {
+    expect(
+      formatTakenRequestNotice(
+        { reference: 'P-1', status: 'taken', ticket: { number: 'VTA-9' } },
+        'change',
+        'quitar la nuez',
+      ),
+    ).toBe(
+      '⚠️ SOLICITUD DEL CLIENTE sobre P-1 (ya está en el ticket VTA-9)\nQuiere CAMBIAR el pedido.\nPidió: quitar la nuez\nContáctalo para atenderla.',
+    );
   });
 });

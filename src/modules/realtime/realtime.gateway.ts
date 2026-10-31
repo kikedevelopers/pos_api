@@ -86,6 +86,11 @@ export class RealtimeGateway implements OnGatewayConnection {
     // SIEMPRE: room propio del usuario dentro de su company.
     void client.join(this.userRoom(companyId, userId));
 
+    // SIEMPRE: room del usuario SIN importar el negocio activo. Lo usan avisos
+    // que cruzan sucursales (un pedido del agente en la sucursal X le llega al
+    // dueño aunque esté parado en el principal o en la sucursal Y).
+    void client.join(this.globalUserRoom(userId));
+
     // SIEMPRE: room company-wide — TODO socket del tenant (empleados incluidos).
     // Lo usan las señales que interesan a toda la company sin distinción de rol,
     // p. ej. `tables:changed` (un mesero debe enterarse de que otra mesa se
@@ -192,6 +197,35 @@ export class RealtimeGateway implements OnGatewayConnection {
     this.server.to(this.allRoom(companyId)).emit(ALERT_CREATED_EVENT, body);
   }
 
+  /**
+   * Emite `agent-orders:changed` a la room company-wide `company:<id>`: el
+   * agente de ventas cerró un pedido nuevo o cambió el estado de uno. El informe
+   * "Agente" y el contador del menú se refrescan al instante. Va company-wide (no
+   * solo `:all`) porque un EMPLEADO con rol Administrador también ve el informe;
+   * la señal no lleva datos del cliente y el front solo la atiende si tiene
+   * acceso.
+   *
+   * Best-effort: el llamador envuelve en try/catch; un fallo de socket nunca
+   * rompe el cierre del pedido.
+   */
+  emitAgentOrdersChanged(companyId: number, payload: AgentOrdersChangedPayload = {}): void {
+    const body: AgentOrdersChangedPayload = { ...payload, companyId };
+    this.server.to(this.companyRoom(companyId)).emit(AGENT_ORDERS_CHANGED_EVENT, body);
+  }
+
+  /**
+   * Emite `event` a ciertos USUARIOS, estén en el negocio que estén (room
+   * `user:<id>`). Para avisos que cruzan sucursales; el llamador decide a quién
+   * (p. ej. los dueños del negocio donde pasó). Best-effort.
+   */
+  emitToUsers(userIds: readonly number[], event: string, payload: Record<string, unknown>): void {
+    const rooms = [...new Set(userIds)].filter((id) => id > 0).map((id) => this.globalUserRoom(id));
+    if (rooms.length === 0) {
+      return;
+    }
+    this.server.to(rooms).emit(event, payload);
+  }
+
   private extractToken(client: Socket): string | null {
     // `handshake.auth` es `{ [key: string]: any }` en los typings de socket.io;
     // tipamos el acceso para evitar propagar `any` (no-unsafe-assignment).
@@ -210,6 +244,10 @@ export class RealtimeGateway implements OnGatewayConnection {
 
   private userRoom(companyId: number, userId: number): string {
     return `company:${companyId}:user:${userId}`;
+  }
+
+  private globalUserRoom(userId: number): string {
+    return `user:${userId}`;
   }
 
   private allRoom(companyId: number): string {
@@ -270,4 +308,29 @@ export interface AlertCreatedPayload {
   companyId: number;
   alertType: string;
   severity?: string;
+}
+
+/** Evento de invalidación de la bandeja de pedidos del agente de ventas. */
+export const AGENT_ORDERS_CHANGED_EVENT = 'agent-orders:changed';
+
+/**
+ * Señal mínima: `reason` = `created` (pedido nuevo del agente) o
+ * `status_changed`. Con `created` el cliente puede mostrar un aviso; el detalle
+ * lo trae `GET /sales-agent-orders`.
+ */
+export interface AgentOrdersChangedPayload {
+  companyId?: number;
+  reason?: 'created' | 'status_changed' | 'updated' | 'cancelled' | 'customer_request';
+  reference?: string;
+  /** Id del pedido, para abrirlo desde un aviso (los datos se piden aparte, con permisos). */
+  order_id?: number;
+  /**
+   * Solo en el aviso a los DUEÑOS (room `user:<id>`): el negocio donde pasó y
+   * lo justo para la notificación sin pedir el pedido (es de otra sucursal).
+   */
+  company_id?: number;
+  company_name?: string;
+  customer_name?: string | null;
+  total?: number;
+  items_count?: number;
 }

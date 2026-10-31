@@ -58,11 +58,16 @@ export default registerAs<SalesBotConfig>('salesBot', () => {
     model: process.env.SALES_BOT_MODEL?.trim() || '',
     temperature: Number.parseFloat(process.env.SALES_BOT_TEMPERATURE ?? '0.8'),
     maxOutputTokens: Number.parseInt(process.env.SALES_BOT_MAX_OUTPUT_TOKENS ?? '2048', 10),
-    maxToolRounds: Number.parseInt(process.env.SALES_BOT_MAX_TOOL_ROUNDS ?? '4', 10),
+    // Cambiar un pedido ya hecho encadena varias herramientas (reabrir, buscar
+    // dos productos, agregar): con 4 rondas se quedaba corto.
+    maxToolRounds: Number.parseInt(process.env.SALES_BOT_MAX_TOOL_ROUNDS ?? '6', 10),
     thinkingBudget: Number.parseInt(process.env.SALES_BOT_THINKING_BUDGET ?? '128', 10),
     telegram: {
       token: process.env.SALES_BOT_TELEGRAM_TOKEN?.trim() ?? '',
-      pollIntervalMs: Number.parseInt(process.env.SALES_BOT_TELEGRAM_POLL_INTERVAL_MS ?? '1500', 10),
+      pollIntervalMs: Number.parseInt(
+        process.env.SALES_BOT_TELEGRAM_POLL_INTERVAL_MS ?? '1500',
+        10,
+      ),
       longPollTimeoutSec: Number.parseInt(
         process.env.SALES_BOT_TELEGRAM_LONG_POLL_TIMEOUT_SEC ?? '30',
         10,

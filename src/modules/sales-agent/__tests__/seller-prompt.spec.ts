@@ -1,10 +1,58 @@
 import {
   buildBusinessInfoBlock,
+  buildCategoriesBlock,
+  buildOwnerStyleBlock,
+  MAX_PROMPT_CATEGORIES,
+  buildPaymentBlock,
   buildSellerSystemPrompt,
   SELLER_ASSISTANT_NAME,
 } from '../internal/seller-prompt';
 
 describe('buildSellerSystemPrompt', () => {
+  it('nunca promete volver después: resuelve en el mismo mensaje', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('# Responde siempre en este mensaje');
+    expect(prompt).toContain('NUNCA prometas volver');
+  });
+
+  it('mensajes que no son para el negocio: flag_off_topic, sin debatir; preguntar de buena fe no cuenta', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('# Mensajes que no son para el negocio');
+    expect(prompt).toContain('llama flag_off_topic');
+    expect(prompt).toContain(
+      'Preguntar de buena fe por un producto que no vendemos NO es molestar',
+    );
+  });
+
+  it('después de cerrar: cambiar o cancelar el MISMO pedido, nunca uno nuevo', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('# Después de cerrar: cambios y cancelaciones');
+    expect(prompt).toContain('usa modify_last_order. NUNCA armes');
+    expect(prompt).toContain('cancel_last_order');
+    expect(prompt).toContain('equipo de\n  despacho');
+  });
+
+  it('precisión del pedido: unidades enteras de la presentación y pedido por valor exacto', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('PRECISIÓN DEL PEDIDO');
+    expect(prompt).toContain(
+      '"media libra de clavo" = 1 de la presentación MEDIA LIBRA (nunca 0.5',
+    );
+    expect(prompt).toContain('PEDIDO POR VALOR');
+    expect(prompt).toContain('primero la\n    presentación de ese precio exacto');
+    expect(prompt).toContain('"2 paquetes de mil" NO es por valor');
+    expect(prompt).toContain('cita las cantidades y los totales del pedido en');
+  });
+
+  it('pedido por peso: medidas de Colombia y ofrecer la equivalencia (1 @ = 25 libras)', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toContain('PEDIDO POR PESO');
+    expect(prompt).toContain('weight_requested');
+    expect(prompt).toContain('"@" = arroba = 25 libras; 1 kilo = 2 libras');
+    expect(prompt).toContain('anótala solo cuando acepte');
+    expect(prompt).toContain('1 @ NO es media libra');
+  });
+
   const base = { businessName: 'Granero La 21', today: '2026-10-29' };
 
   it('se presenta como Place, vendedor del negocio por su nombre', () => {
@@ -183,34 +231,81 @@ describe('Datos del negocio en el prompt', () => {
     expect(prompt).not.toMatch(/NO tiene una dirección/);
   });
 
-  it('sin dirección NO inventa: orienta al pedido con envío a domicilio', () => {
-    const block = buildBusinessInfoBlock({ businessName: 'Esencia & Grano', address: '   ' });
-    expect(block).toMatch(/NO tiene una dirección/);
+  it('sin dirección NO inventa una ubicación (ni asume domicilio si el negocio no lo hace)', () => {
+    const block = buildBusinessInfoBlock({
+      businessName: 'Esencia & Grano',
+      address: '   ',
+      delivery: { pickupAvailable: true, deliveryAvailable: false, pickupAddress: null },
+    });
+    expect(block).toMatch(/NO tiene una dirección registrada/);
     expect(block).toMatch(/NO inventes una ubicación/);
-    expect(block).toMatch(/envío a domicilio/);
+    expect(block).toMatch(/SOLO se RECOGEN en el negocio/);
+    expect(block).toMatch(/no hay una dirección registrada: si preguntan dónde, NO inventes/);
+    expect(block).not.toMatch(/pídele la dirección/);
   });
 
-  it('sin dirección por WhatsApp: invita a pedir por este mismo chat', () => {
+  it('solo recoger: prohíbe ofrecer envío y pedir dirección', () => {
     const block = buildBusinessInfoBlock({
       businessName: 'X',
-      address: null,
+      address: 'Cra 10 #20-30',
+      delivery: {
+        pickupAvailable: true,
+        deliveryAvailable: false,
+        pickupAddress: 'Local 3, Centro',
+      },
+    });
+    expect(block).toMatch(/SOLO se RECOGEN en Local 3, Centro/);
+    expect(block).toMatch(
+      /NO hace\s+envíos a domicilio: nunca ofrezcas envío ni pidas una dirección/,
+    );
+  });
+
+  it('solo domicilio: pide la dirección y no ofrece recogida', () => {
+    const block = buildBusinessInfoBlock({
+      businessName: 'X',
+      address: 'Cra 10',
+      delivery: { pickupAvailable: false, deliveryAvailable: true },
+    });
+    expect(block).toMatch(/SOLO con ENVÍO A DOMICILIO/);
+    expect(block).toMatch(/Pídele la dirección de entrega/);
+    expect(block).not.toMatch(/RECOGER su pedido/);
+  });
+
+  it('ambas: pregunta cuál prefiere', () => {
+    const block = buildBusinessInfoBlock({
+      businessName: 'X',
+      delivery: { pickupAvailable: true, deliveryAvailable: true, pickupAddress: 'Calle 1' },
+    });
+    expect(block).toMatch(/RECOGER su pedido en Calle 1 o pedir ENVÍO A\s+DOMICILIO/);
+    expect(block).toMatch(/Pregúntale cuál prefiere/);
+  });
+
+  it('sin ajuste de entregas (clientes viejos): recoge solo si hay dirección', () => {
+    expect(buildBusinessInfoBlock({ businessName: 'X', address: 'Calle 1' })).toMatch(
+      /RECOGER su pedido en Calle 1 o pedir ENVÍO/,
+    );
+    expect(buildBusinessInfoBlock({ businessName: 'X' })).toMatch(/SOLO con ENVÍO A DOMICILIO/);
+  });
+
+  it('por WhatsApp: los pedidos van por este mismo chat', () => {
+    const block = buildBusinessInfoBlock({
+      businessName: 'X',
       phone: '3001234567',
       channel: 'whatsapp',
     });
-    expect(block).toMatch(/este mismo chat de WhatsApp/);
+    expect(block).toMatch(/por este mismo chat de WhatsApp/);
   });
 
-  it('sin dirección por Telegram con teléfono: invita a pedir por WhatsApp a ese número', () => {
+  it('por Telegram con teléfono: también por WhatsApp a ese número', () => {
     const block = buildBusinessInfoBlock({
       businessName: 'X',
-      address: null,
       phone: '3001234567',
       channel: 'telegram',
     });
     expect(block).toMatch(/por WhatsApp al 3001234567/);
   });
 
-  it('sin dirección ni teléfono por Telegram: invita a pedir por este chat', () => {
+  it('sin teléfono por Telegram: por este chat', () => {
     const block = buildBusinessInfoBlock({ businessName: 'X', channel: 'telegram' });
     expect(block).toMatch(/por este mismo chat\./);
     expect(block).not.toMatch(/Teléfono del negocio/);
@@ -300,5 +395,164 @@ describe('Búsqueda por necesidad', () => {
   it('ante un requisito nuevo vuelve a buscar con la necesidad completa y considera el upgrade', () => {
     expect(prompt).toMatch(/necesidad COMPLETA actualizada/);
     expect(prompt).toMatch(/relacionado "upgrade"/);
+  });
+});
+
+describe('Formas de pago', () => {
+  const base = { businessName: 'Granero La 21', today: '2026-10-29' };
+
+  it('sin configurar: efectivo y transferencia (comportamiento anterior)', () => {
+    const block = buildPaymentBlock({});
+    expect(block).toContain('ÚNICAMENTE: efectivo y transferencia o consignación bancaria');
+    expect(block).toMatch(
+      /tarjeta débito y tarjeta de crédito, dile con amabilidad que\s+por ahora no la manejan/,
+    );
+  });
+
+  it('solo ofrece las formas que acepta el negocio', () => {
+    const block = buildPaymentBlock({ methods: ['cash', 'debit_card', 'credit_card'] });
+    expect(block).toContain('ÚNICAMENTE: efectivo, tarjeta débito y tarjeta de crédito');
+    expect(block).toContain('pagar con transferencia o consignación bancaria');
+    expect(block).toMatch(/pregunta cómo va a pagar/);
+  });
+
+  it('con una sola forma de pago no la pregunta: la informa', () => {
+    const block = buildPaymentBlock({ methods: ['bank_transfer'] });
+    expect(block).toMatch(/NO le preguntes al cliente cómo va a pagar/);
+    expect(block).toContain('el pago es en transferencia o consignación bancaria');
+  });
+
+  it('con todas las formas no menciona ninguna rechazada', () => {
+    const block = buildPaymentBlock({
+      methods: ['cash', 'bank_transfer', 'debit_card', 'credit_card'],
+    });
+    expect(block).not.toMatch(/no la manejan/);
+  });
+
+  it('ignora valores desconocidos y cae al default si no queda ninguno', () => {
+    const block = buildPaymentBlock({ methods: ['bitcoin' as never] });
+    expect(block).toContain('ÚNICAMENTE: efectivo y transferencia o consignación bancaria');
+  });
+
+  it('comparte las indicaciones de pago tal cual', () => {
+    const block = buildPaymentBlock({
+      methods: ['bank_transfer'],
+      instructions: ' Nequi 300 123 4567 ',
+    });
+    expect(block).toContain('«Nequi 300 123 4567»');
+    expect(block).not.toMatch(/Nunca los inventes/);
+  });
+
+  it('sin indicaciones prohíbe inventar cuentas', () => {
+    expect(buildPaymentBlock({})).toMatch(/Nunca los inventes/);
+  });
+
+  it('el prompt incluye el bloque y el cierre pide el pago según esas formas', () => {
+    const prompt = buildSellerSystemPrompt({ ...base, paymentMethods: ['credit_card'] });
+    expect(prompt).toContain('# Formas de pago');
+    expect(prompt).toContain('ÚNICAMENTE: tarjeta de crédito');
+    expect(prompt).toContain('la forma de pago según "Formas de pago"');
+  });
+});
+
+describe('Estilo propio del dueño', () => {
+  const base = { businessName: 'Granero La 21', today: '2026-10-29' };
+
+  it('sin indicaciones no agrega la sección', () => {
+    expect(buildOwnerStyleBlock()).toBeNull();
+    expect(buildOwnerStyleBlock({ greeting: '  ', selling: '', closing: undefined })).toBeNull();
+    expect(buildSellerSystemPrompt(base)).not.toContain('Estilo propio del negocio');
+  });
+
+  it('incluye solo las etapas definidas', () => {
+    const block = buildOwnerStyleBlock({ selling: 'Recomienda lo de la casa' }) ?? '';
+    expect(block).toContain('- Al asesorar y vender: «Recomienda lo de la casa»');
+    expect(block).not.toContain('Al saludar');
+    expect(block).not.toContain('Al cerrar la venta');
+  });
+
+  it('las reglas de oro siguen mandando sobre el estilo del dueño', () => {
+    const block = buildOwnerStyleBlock({ closing: 'Ofrece 50% de descuento' }) ?? '';
+    expect(block).toMatch(/NUNCA sobre las Reglas de oro/);
+    expect(block).toMatch(/gana la regla/);
+  });
+
+  it('colapsa saltos de línea y neutraliza las comillas de cita', () => {
+    const block = buildOwnerStyleBlock({ greeting: 'Hola\n\n«vecino»' }) ?? '';
+    expect(block).toContain('- Al saludar: «Hola "vecino"»');
+  });
+
+  it('el prompt ubica el estilo después de la personalidad', () => {
+    const prompt = buildSellerSystemPrompt({
+      ...base,
+      ownerStyle: {
+        greeting: 'Saluda con ¡Hola, vecino!',
+        closing: 'Recuerda el domicilio gratis',
+      },
+    });
+    const personality = prompt.indexOf('# Tu personalidad');
+    const style = prompt.indexOf('# Estilo propio del negocio');
+    expect(personality).toBeGreaterThan(-1);
+    expect(style).toBeGreaterThan(personality);
+    expect(prompt).toContain('- Al cerrar la venta: «Recuerda el domicilio gratis»');
+  });
+
+  it('con saludo propio, el ejemplo del preset queda solo de referencia', () => {
+    const prompt = buildSellerSystemPrompt({
+      ...base,
+      firstMessageOfDay: true,
+      ownerStyle: { greeting: 'Saluda con ¡Hola, vecino!' },
+    });
+    expect(prompt).toMatch(/Saluda como lo pidió el dueño/);
+    expect(prompt).not.toMatch(/Ejemplo de tono:/);
+  });
+
+  it('sin saludo propio conserva el ejemplo de tono del preset', () => {
+    const prompt = buildSellerSystemPrompt({
+      ...base,
+      firstMessageOfDay: true,
+      ownerStyle: { selling: 'Lo de la casa' },
+    });
+    expect(prompt).toMatch(/Ejemplo de tono:/);
+    expect(prompt).not.toMatch(/Saluda como lo pidió el dueño/);
+  });
+});
+
+describe('Categorías del catálogo', () => {
+  const base = { businessName: 'Esencia & Grano', today: '2026-10-30' };
+
+  it('sin categorías no agrega el bloque', () => {
+    expect(buildCategoriesBlock()).toBeNull();
+    expect(buildCategoriesBlock(['  ', ''])).toBeNull();
+    expect(buildSellerSystemPrompt(base)).not.toContain('# Categorías de tu catálogo');
+  });
+
+  it('lista las categorías y pide buscar por la categoría cuando preguntan por una línea u origen', () => {
+    const block = buildCategoriesBlock(['Especias', 'Productos Venezolanos']) ?? '';
+    expect(block).toContain('estas categorías: Especias, Productos Venezolanos.');
+    expect(block).toMatch(/venden productos\s+venezolanos/);
+    expect(block).toMatch(/search_products usando su palabra clave/);
+  });
+
+  it('quita duplicados y respeta el tope', () => {
+    const many = Array.from({ length: MAX_PROMPT_CATEGORIES + 5 }, (_, i) => `Cat ${i}`);
+    const block = buildCategoriesBlock(['Lácteos', 'Lácteos', ...many]) ?? '';
+    expect(block.match(/Lácteos/g)).toHaveLength(1);
+    expect(block).not.toContain(`Cat ${MAX_PROMPT_CATEGORIES}`);
+  });
+
+  it('el prompt incluye el bloque cuando hay categorías', () => {
+    const prompt = buildSellerSystemPrompt({
+      ...base,
+      catalogCategories: ['Productos Venezolanos'],
+    });
+    expect(prompt).toContain('# Categorías de tu catálogo');
+    expect(prompt).toContain('Productos Venezolanos');
+  });
+
+  it('regla de oro: nunca dice que no vende algo sin buscarlo (nombre y categoría)', () => {
+    const prompt = buildSellerSystemPrompt(base);
+    expect(prompt).toMatch(/NUNCA respondas que no venden algo sin haberlo buscado/);
+    expect(prompt).toMatch(/por la categoría/);
   });
 });

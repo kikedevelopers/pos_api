@@ -1,8 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
+  Max,
+  Min,
   IsString,
   MaxLength,
 } from 'class-validator';
@@ -12,7 +18,15 @@ import {
   type SalesBotPersonality,
 } from '../entities/sales-bot-config.entity';
 import {
+  MAX_SALES_BOT_OFF_TOPIC_LIMIT,
+  MAX_SALES_BOT_PICKUP_ADDRESS_LEN,
+  SALES_BOT_DELIVERY_MODE_VALUES,
+  type SalesBotDeliveryMode,
+  MAX_SALES_BOT_PAYMENT_INSTRUCTIONS_LEN,
+  MAX_SALES_BOT_STYLE_LEN,
+  SALES_BOT_PAYMENT_METHOD_VALUES,
   SALES_BOT_STOCK_POLICY_VALUES,
+  type SalesBotPaymentMethod,
   type SalesBotStockPolicy,
 } from '../entities/sales-bot-settings.entity';
 
@@ -48,6 +62,91 @@ export class UpdateSalesBotSettingsDto {
   @IsOptional()
   @IsIn(SALES_BOT_STOCK_POLICY_VALUES as unknown as string[])
   stock_policy?: SalesBotStockPolicy;
+
+  @ApiPropertyOptional({
+    example: 'Saluda con "¡Hola, vecino!" y pregunta qué receta va a preparar.',
+    description: 'Cómo quiere el dueño que salude. Máx. 500. Vacío = el tono del preset.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SALES_BOT_STYLE_LEN)
+  greeting_style?: string;
+
+  @ApiPropertyOptional({
+    example: 'Recomienda primero los productos de la casa y explica cómo se usan.',
+    description: 'Cómo quiere el dueño que asesore y aborde la venta. Máx. 500.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SALES_BOT_STYLE_LEN)
+  selling_style?: string;
+
+  @ApiPropertyOptional({
+    example: 'Al cerrar, recuerda que el domicilio es gratis desde $ 50.000.',
+    description: 'Cómo quiere el dueño que cierre la venta. Máx. 500.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SALES_BOT_STYLE_LEN)
+  closing_style?: string;
+
+  @ApiPropertyOptional({
+    enum: SALES_BOT_PAYMENT_METHOD_VALUES,
+    isArray: true,
+    example: ['cash', 'bank_transfer'],
+    description: 'Formas de pago que acepta el negocio (al menos una).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(SALES_BOT_PAYMENT_METHOD_VALUES.length)
+  @IsIn(SALES_BOT_PAYMENT_METHOD_VALUES as unknown as string[], { each: true })
+  payment_methods?: SalesBotPaymentMethod[];
+
+  @ApiPropertyOptional({
+    example: 'Transferencias a Nequi 300 123 4567. Datáfono solo en domicilios.',
+    description: 'Indicaciones de pago que el agente comparte. Máx. 300.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SALES_BOT_PAYMENT_INSTRUCTIONS_LEN)
+  payment_instructions?: string;
+
+  @ApiPropertyOptional({
+    enum: SALES_BOT_DELIVERY_MODE_VALUES,
+    isArray: true,
+    example: ['pickup'],
+    description:
+      'Entregas que ofrece el negocio: pickup (recogen en el negocio) y/o delivery (domicilio). Al menos una.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(SALES_BOT_DELIVERY_MODE_VALUES.length)
+  @IsIn(SALES_BOT_DELIVERY_MODE_VALUES as unknown as string[], { each: true })
+  delivery_modes?: SalesBotDeliveryMode[];
+
+  @ApiPropertyOptional({
+    example: 'Calle 10 # 5-20, local 3, Centro',
+    description: 'Dónde se recoge. Vacío = la dirección del negocio. Máx. 250.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_SALES_BOT_PICKUP_ADDRESS_LEN)
+  pickup_address?: string;
+
+  @ApiPropertyOptional({
+    example: 3,
+    minimum: 0,
+    maximum: MAX_SALES_BOT_OFF_TOPIC_LIMIT,
+    description:
+      'Mensajes fuera de tema (molestar, preguntas sin sentido) antes de que el agente se despida y deje de responder hasta que sea algo del negocio. 0 = filtro apagado.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_SALES_BOT_OFF_TOPIC_LIMIT)
+  off_topic_limit?: number;
 }
 
 /** Payload de `PUT /sales-bot/config` — configura el bot de Telegram del negocio. */

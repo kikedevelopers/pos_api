@@ -23,6 +23,7 @@ const order: ClosedOrder = {
 };
 
 interface Harness {
+  isMuted: jest.Mock;
   relay: WhatsappWebRelayService;
   accessEnabled: jest.Mock;
   assertEnabled: jest.Mock;
@@ -45,7 +46,14 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   const greeting = jest.fn().mockResolvedValue(GREETING);
   const isReady = jest.fn().mockReturnValue(true);
   const transcribeAudio = jest.fn().mockResolvedValue('¿tienes uva pasa?');
-  const agent = { isReady, handleMessage, greeting, transcribeAudio } as unknown as SalesAgentService;
+  const isMuted = jest.fn().mockResolvedValue(false);
+  const agent = {
+    isReady,
+    handleMessage,
+    greeting,
+    transcribeAudio,
+    isMuted,
+  } as unknown as SalesAgentService;
 
   const reset = jest.fn();
   const markDay = jest.fn().mockReturnValue(true);
@@ -72,6 +80,7 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   const relay = new WhatsappWebRelayService(agent, sessions, botConfig, takeovers, access);
   return {
     relay,
+    isMuted,
     accessEnabled,
     assertEnabled,
     transcribeAudio,
@@ -87,12 +96,13 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   };
 };
 
-const enabled = (overrides: Partial<SalesBotConfigEntity> = {}) => ({
-  channel: 'whatsapp',
-  enabled: true,
-  owner_chat_id: null,
-  ...overrides,
-}) as Partial<SalesBotConfigEntity>;
+const enabled = (overrides: Partial<SalesBotConfigEntity> = {}) =>
+  ({
+    channel: 'whatsapp',
+    enabled: true,
+    owner_chat_id: null,
+    ...overrides,
+  }) as Partial<SalesBotConfigEntity>;
 
 describe('WhatsappWebRelayService.reply', () => {
   it('responde con el texto del vendedor y usa el negocio del token', async () => {
@@ -108,6 +118,30 @@ describe('WhatsappWebRelayService.reply', () => {
       chatId: '573001112233@s.whatsapp.net',
       chatDisplayName: 'María',
     });
+  });
+
+  it('chat @lid: pasa el número del cliente y el del negocio que resolvió el escritorio', async () => {
+    const h = makeRelay(enabled());
+    await h.relay.reply(
+      7,
+      incoming({
+        chat_id: '16660832456755@lid',
+        customer_phone: '+57 316 138 4577',
+        business_phone: '573110000000',
+      }),
+    );
+    const [ctx] = h.handleMessage.mock.calls[0];
+    expect(ctx).toMatchObject({
+      chatId: '16660832456755@lid',
+      chatPhone: '573161384577',
+      channelAccount: '573110000000',
+    });
+  });
+
+  it('sin número del cliente, no inventa uno', async () => {
+    const h = makeRelay(enabled());
+    await h.relay.reply(7, incoming({ chat_id: '1@lid' }));
+    expect(h.handleMessage.mock.calls[0][0].chatPhone).toBeUndefined();
   });
 
   it('no responde si el asistente de WhatsApp está apagado', async () => {
@@ -257,7 +291,12 @@ describe('WhatsappWebRelayService — toma de control humana', () => {
 
 describe('WhatsappWebRelayService — notas de voz', () => {
   const voice = (overrides: Record<string, string> = {}) =>
-    incoming({ text: '', audio_base64: 'T2dnUw==', audio_mime_type: 'audio/ogg; codecs=opus', ...overrides });
+    incoming({
+      text: '',
+      audio_base64: 'T2dnUw==',
+      audio_mime_type: 'audio/ogg; codecs=opus',
+      ...overrides,
+    });
 
   it('transcribe la nota de voz y la atiende como texto', async () => {
     const h = makeRelay(enabled());
@@ -326,7 +365,61 @@ describe('WhatsappWebRelayService — agente inhabilitado desde el panel', () =>
   it('la toma de control también queda bloqueada (403)', async () => {
     const h = makeRelay(enabled());
     h.assertEnabled.mockRejectedValue(new Error('SALES_AGENT_NOT_ENABLED'));
-    await expect(h.relay.takeover(7, 'chat@s.whatsapp.net')).rejects.toThrow('SALES_AGENT_NOT_ENABLED');
+    await expect(h.relay.takeover(7, 'chat@s.whatsapp.net')).rejects.toThrow(
+      'SALES_AGENT_NOT_ENABLED',
+    );
     expect(h.pause).not.toHaveBeenCalled();
+  });
+
+  it('envía al número de avisos los avisos del negocio (cancelaciones, solicitudes)', async () => {
+    const h = makeRelay(enabled({ owner_chat_id: '+57 300 111 2233' }));
+    h.handleMessage.mockResolvedValue({
+      reply: 'Listo, cancelado.',
+      orders: [],
+      notices: ['❌ EL CLIENTE CANCELÓ EL PEDIDO P-1'],
+    });
+    const result = await h.relay.reply(7, incoming({ message_id: 'N1' }));
+    expect(result.notifications).toEqual([
+      { to: '573001112233', text: '❌ EL CLIENTE CANCELÓ EL PEDIDO P-1' },
+    ]);
+  });
+});
+
+describe('WhatsappWebRelayService · filtro de mensajes fuera de tema', () => {
+  it('conversación en silencio: el agente decide (silent) y no se responde ni se guarda', async () => {
+    const h = makeRelay(enabled());
+    h.handleMessage.mockResolvedValue({ reply: '', orders: [], silent: true });
+    await expect(h.relay.reply(7, incoming({ message_id: 'S1' }))).resolves.toEqual({
+      reply: null,
+      notifications: [],
+    });
+  });
+
+  it('en silencio NO transcribe notas de voz (no gasta) ni atiende "/reiniciar"', async () => {
+    const h = makeRelay(enabled());
+    h.isMuted.mockResolvedValue(true);
+    await expect(
+      h.relay.reply(7, {
+        chat_id: '573001112233@s.whatsapp.net',
+        message_id: 'V1',
+        audio_base64: 'T2dn',
+      }),
+    ).resolves.toEqual({ reply: null, notifications: [] });
+    await expect(
+      h.relay.reply(7, incoming({ text: '/reiniciar', message_id: 'R9' })),
+    ).resolves.toEqual({
+      reply: null,
+      notifications: [],
+    });
+    expect(h.transcribeAudio).not.toHaveBeenCalled();
+    expect(h.reset).not.toHaveBeenCalled();
+    expect(h.handleMessage).not.toHaveBeenCalled();
+  });
+
+  it('en silencio, un texto normal sí llega al agente (él lo clasifica)', async () => {
+    const h = makeRelay(enabled());
+    h.isMuted.mockResolvedValue(true);
+    await h.relay.reply(7, incoming({ text: '¿tienes canela?', message_id: 'T1' }));
+    expect(h.handleMessage).toHaveBeenCalled();
   });
 });

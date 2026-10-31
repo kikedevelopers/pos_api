@@ -1,34 +1,32 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { AppAlert } from '../entities/app-alert.entity';
-import { findAlertInCompany } from '../internal/alert-lookups';
+import { scopeWhere, type AlertScope } from '../internal/alert-scope';
 
 /**
- * Marca una alerta como leída. Endpoint `PUT /app-alerts/:id/read`.
- *
- * Espejo PlacePos:
- *   - Idempotente: si la alerta ya está leída, no hace nada (NO sobrescribe
- *     timestamps). En esta fase no llevamos `read_at`/`read_by_id` porque
- *     la entidad simplificada no los expone, pero la idempotencia se
- *     mantiene como contrato de comportamiento.
- *   - 404 si la alerta no existe o pertenece a otra company.
- *
- * Devuelve void (el controller envía 200 con payload null).
+ * Marca UNA alerta como leída. La alerta tiene que estar en el alcance del
+ * usuario (su negocio activo o, si es dueño, un pedido del agente de otra de
+ * sus sucursales); si no, 404. Idempotente.
  */
 @Injectable()
 export class MarkAlertReadAction {
   constructor(private readonly dataSource: DataSource) {}
 
-  async execute(id: number, companyId: number): Promise<void> {
+  async execute(id: number, scope: AlertScope): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      const alert = await findAlertInCompany(manager, id, companyId);
+      const alert = await manager.findOne(AppAlert, {
+        where: scopeWhere(scope, { id: String(id) }),
+      });
+      if (!alert) {
+        throw new NotFoundException('Alerta no encontrada');
+      }
       if (alert.is_read === true) {
         return;
       }
       await manager.update(
         AppAlert,
-        { id: alert.id, company_id: String(companyId) },
+        { id: alert.id, company_id: alert.company_id },
         { is_read: true },
       );
     });

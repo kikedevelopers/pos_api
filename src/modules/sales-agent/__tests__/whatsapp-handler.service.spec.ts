@@ -52,11 +52,16 @@ const makeHandler = (tenantRow: SalesBotConfigEntity | null): Harness => {
     getOrThrow: jest.fn().mockReturnValue(waConfig),
   } as unknown as ConfigService;
 
-  const handleMessage = jest.fn().mockResolvedValue({ reply: 'Claro, ¿cuánto llevas?', orders: [] });
+  const handleMessage = jest
+    .fn()
+    .mockResolvedValue({ reply: 'Claro, ¿cuánto llevas?', orders: [] });
   const agent = {
     isReady: jest.fn().mockReturnValue(true),
+    isMuted: jest.fn().mockResolvedValue(false),
     handleMessage,
-    greeting: jest.fn().mockResolvedValue('Buenos días, soy Diana de Granero La 21. ¿Qué necesitas?'),
+    greeting: jest
+      .fn()
+      .mockResolvedValue('Buenos días, soy Diana de Granero La 21. ¿Qué necesitas?'),
   } as unknown as SalesAgentService;
 
   const sessionReset = jest.fn();
@@ -122,9 +127,7 @@ describe('WhatsappHandlerService.process', () => {
   it('usa el token propio del negocio si lo tiene', async () => {
     const h = makeHandler(tenant({ whatsapp_access_token: 'propio-token' }));
     await h.handler.process([message()]);
-    expect(h.sendText).toHaveBeenCalledWith(
-      expect.objectContaining({ token: 'propio-token' }),
-    );
+    expect(h.sendText).toHaveBeenCalledWith(expect.objectContaining({ token: 'propio-token' }));
   });
 
   it('no reprocesa una reentrega con el mismo messageId', async () => {
@@ -171,11 +174,22 @@ describe('WhatsappHandlerService.process', () => {
     const sendText = jest.spyOn(WhatsappClient.prototype, 'sendText').mockResolvedValue(true);
     jest.spyOn(WhatsappClient.prototype, 'markRead').mockResolvedValue(undefined);
 
-    const access = { isEnabled: jest.fn().mockResolvedValue(true) } as unknown as SalesAgentAccessService;
+    const access = {
+      isEnabled: jest.fn().mockResolvedValue(true),
+    } as unknown as SalesAgentAccessService;
     const handler = new WhatsappHandlerService(configService, agent, sessions, botConfig, access);
     await handler.process([message()]);
 
     expect(handleMessage).not.toHaveBeenCalled();
     expect(sendText).not.toHaveBeenCalled();
+  });
+});
+
+describe('WhatsappHandlerService · filtro de mensajes fuera de tema', () => {
+  it('silent: no envía nada', async () => {
+    const h = makeHandler(tenant());
+    h.handleMessage.mockResolvedValue({ reply: '', orders: [], silent: true });
+    await h.handler.process([message({ messageId: 'wamid.silent' })]);
+    expect(h.sendText).not.toHaveBeenCalled();
   });
 });

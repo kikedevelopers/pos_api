@@ -18,6 +18,8 @@ import {
 } from '@nestjs/swagger';
 
 import { CurrentCompany } from '@/common/decorators/current-company.decorator';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import type { AuthUser } from '@/common/types/jwt-payload.type';
 import { Roles } from '@/common/decorators/roles.decorator';
 
 import { AppAlertsService } from './app-alerts.service';
@@ -28,6 +30,7 @@ import {
   toAppAlertResponseDto,
 } from './dto/app-alert-response.dto';
 import { ListAlertsQueryDto } from './dto/list-alerts-query.dto';
+import { ResolveAlertScopeAction } from './internal/resolve-alert-scope';
 
 /**
  * Endpoints `/app-alerts`. Espejo PlacePos `app-alerts.routes.ts`.
@@ -44,7 +47,10 @@ import { ListAlertsQueryDto } from './dto/list-alerts-query.dto';
 @ApiBearerAuth('bearer')
 @Controller('app-alerts')
 export class AppAlertsController {
-  constructor(private readonly appAlertsService: AppAlertsService) {}
+  constructor(
+    private readonly appAlertsService: AppAlertsService,
+    private readonly resolveScope: ResolveAlertScopeAction,
+  ) {}
 
   @Get()
   @Roles('owner', 'manager', 'employee')
@@ -56,6 +62,7 @@ export class AppAlertsController {
   async findAll(
     @Query() query: ListAlertsQueryDto,
     @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
   ): Promise<ListAlertsResponseDto> {
     // Defaults se aplican aquí porque los query params pueden llegar
     // undefined incluso con `@IsOptional()`.
@@ -63,7 +70,8 @@ export class AppAlertsController {
       unreadOnly: query.unread_only ?? false,
       limit: query.limit ?? 50,
     };
-    const result = await this.appAlertsService.findAll(companyId, params);
+    const scope = await this.resolveScope.execute(user, companyId);
+    const result = await this.appAlertsService.findAll(scope, params);
     return {
       alerts: result.alerts.map(toAppAlertResponseDto),
       unread_count: result.unread_count,
@@ -75,8 +83,13 @@ export class AppAlertsController {
   @ApiOperation({ summary: 'Devuelve el contador de alertas no leídas (badge UI)' })
   @ApiResponse({ status: HttpStatus.OK, type: UnreadCountResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  async unreadCount(@CurrentCompany() companyId: number): Promise<UnreadCountResponseDto> {
-    const count = await this.appAlertsService.countUnread(companyId);
+  async unreadCount(
+    @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
+  ): Promise<UnreadCountResponseDto> {
+    const count = await this.appAlertsService.countUnread(
+      await this.resolveScope.execute(user, companyId),
+    );
     return { count };
   }
 
@@ -92,8 +105,11 @@ export class AppAlertsController {
   })
   @ApiResponse({ status: HttpStatus.OK, type: MarkAllReadResponseDto })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Token ausente o inválido' })
-  async markAllRead(@CurrentCompany() companyId: number): Promise<MarkAllReadResponseDto> {
-    return this.appAlertsService.markAllRead(companyId);
+  async markAllRead(
+    @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
+  ): Promise<MarkAllReadResponseDto> {
+    return this.appAlertsService.markAllRead(await this.resolveScope.execute(user, companyId));
   }
 
   @Put(':id/read')
@@ -111,8 +127,9 @@ export class AppAlertsController {
   async markRead(
     @Param('id', ParseIntPipe) id: number,
     @CurrentCompany() companyId: number,
+    @CurrentUser() user: AuthUser,
   ): Promise<null> {
-    await this.appAlertsService.markRead(id, companyId);
+    await this.appAlertsService.markRead(id, await this.resolveScope.execute(user, companyId));
     return null;
   }
 }

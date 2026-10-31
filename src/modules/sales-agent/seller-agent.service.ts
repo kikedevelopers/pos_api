@@ -11,11 +11,24 @@ import { todayUtcDate } from '@/modules/reports/internal/range';
 import { nowBogota } from '@/common/utils/dayjs';
 
 import { buildSellerGreeting, timeOfDayFromHour } from './internal/greeting';
-import { buildSellerSystemPrompt, SELLER_ASSISTANT_NAME } from './internal/seller-prompt';
+import {
+  buildSellerSystemPrompt,
+  MAX_PROMPT_CATEGORIES,
+  SELLER_ASSISTANT_NAME,
+} from './internal/seller-prompt';
 import { SELLER_TOOLS } from './internal/seller-tools';
-import { SellerToolRunner, type SellerToolContext } from './internal/seller-tool-runner';
+import {
+  SELLABLE_SQL,
+  SellerToolRunner,
+  type SellerToolContext,
+} from './internal/seller-tool-runner';
+import { accessibleProductsPredicate } from '@/modules/products/internal/accessible-products.helper';
 import type { ClosedOrder, SellerReply } from './internal/types';
+import { DEFAULT_SALES_BOT_DELIVERY_MODES } from './entities/sales-bot-settings.entity';
 import { SalesBotSettingsService } from './sales-bot-settings.service';
+import { ConversationGuardService } from './conversation-guard.service';
+import type { SessionKey } from './internal/session-store';
+import { buildOffTopicClassifierPrompt, parseOffTopicVerdict } from './internal/off-topic';
 import { SellerCartService } from './seller-cart.service';
 import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
 import { addUsage, EMPTY_USAGE } from '@/modules/ai/internal/ai-usage';
@@ -32,6 +45,8 @@ interface BusinessProfile {
   name: string;
   address: string | null;
   phone: string | null;
+  /** Categorías con productos vendibles (para responder "¿venden X?"). */
+  categories: string[];
 }
 
 /** Vigencia de la caché de datos del negocio (5 min). */
@@ -58,6 +73,14 @@ const TRANSCRIBE_INSTRUCTION =
   'Transcribe literalmente lo que dice esta nota de voz (español de Colombia). Devuelve SOLO el texto dicho, sin comillas, etiquetas ni comentarios. Si no hay voz o no se entiende nada, responde exactamente: [inaudible]';
 
 /** Último recurso cuando el servidor no tiene IA o algo falla feo. */
+/**
+ * Se agotaron las rondas sin respuesta del modelo. NUNCA promete volver ("dame
+ * un momento"): el agente no puede escribir por su cuenta; le pide al cliente
+ * que lo repita para seguir.
+ */
+export const ROUNDS_EXHAUSTED_REPLY =
+  'Quiero asegurarme de anotarlo bien: ¿me confirmas de nuevo lo último que necesitas, por favor? 🙏';
+
 const FALLBACK_REPLY =
   'Disculpa, en este momento no puedo atenderte por aquí. Por favor intenta de nuevo en unos minutos. 🙏';
 
@@ -80,6 +103,7 @@ export class SalesAgentService {
     private readonly botSettings: SalesBotSettingsService,
     private readonly cart: SellerCartService,
     private readonly access: SalesAgentAccessService,
+    private readonly guard: ConversationGuardService,
   ) {}
 
   private get config(): SalesBotConfig {
@@ -106,7 +130,26 @@ export class SalesAgentService {
     }
 
     try {
-      return await this.run(context, turns, options);
+      // Filtro anti-troll: una conversación EN SILENCIO no pasa por el agente
+      // (miles de tokens); un clasificador mínimo decide si volvió a ser algo
+      // del negocio. Si no, no se responde nada.
+      if (context.conversation) {
+        const state = await this.guard.get(context.conversation);
+        if (state.muted) {
+          if (!(await this.isAboutBusiness(context.companyId, lastUserText(turns)))) {
+            return { reply: '', orders: [], silent: true };
+          }
+          await this.guard.unmute(context.conversation);
+        }
+      }
+
+      const turn = { offTopic: false };
+      const result = await this.run(context, turns, options, turn);
+      // Un mensaje del negocio reinicia el conteo de fuera de tema.
+      if (context.conversation && !turn.offTopic) {
+        await this.guard.resetStrikes(context.conversation);
+      }
+      return result;
     } catch (error) {
       this.logger.error(
         { err: error, companyId: context.companyId, channel: context.channel },
@@ -183,16 +226,80 @@ export class SalesAgentService {
     });
   }
 
+  /** ¿La conversación está en silencio por mensajes fuera de tema? */
+  async isMuted(conversation: SessionKey): Promise<boolean> {
+    return (await this.guard.get(conversation)).muted;
+  }
+
+  /**
+   * Clasificador mínimo (unas decenas de tokens): ¿el mensaje es para el
+   * negocio? Solo un "SI" claro cuenta; ante un fallo, NO (sigue en silencio).
+   */
+  private async isAboutBusiness(companyId: number, message: string): Promise<boolean> {
+    if (!message.trim()) {
+      return false;
+    }
+    const business = await this.businessProfile(companyId);
+    const budget = this.config.thinkingBudget;
+    const body = {
+      contents: [
+        {
+          role: 'user' as const,
+          parts: [
+            {
+              text: buildOffTopicClassifierPrompt({
+                businessName: business.name,
+                categories: business.categories,
+                message,
+              }),
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        topP: 1,
+        maxOutputTokens: budget + 16,
+        thinkingConfig: { thinkingBudget: budget },
+      },
+    };
+    const model = this.gemini.resolveModel(this.config.model);
+    try {
+      const result = await this.streamRoundWithRetry(body, model);
+      await this.access.recordUsage({
+        companyId,
+        kind: 'sales_agent',
+        model,
+        usage: result.usage,
+        rounds: 1,
+      });
+      return !result.error && parseOffTopicVerdict(result.text);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, companyId },
+        'No pude clasificar el mensaje (sigue en silencio).',
+      );
+      return false;
+    }
+  }
+
   private async run(
     context: SellerToolContext,
     turns: ChatTurn[],
     options: SellerMessageOptions,
+    turn: { offTopic: boolean } = { offTopic: false },
   ): Promise<SellerReply> {
     const config = this.config;
     const business = await this.businessProfile(context.companyId);
     const settings = await this.botSettings.get(context.companyId);
-    // Sin dirección no hay punto físico: todo pedido es a domicilio.
-    const pickupAvailable = Boolean(business.address);
+    // Entregas: las decide el dueño en "Ajustes del agente", nunca se deducen.
+    const deliveryModes = settings.delivery_modes ?? DEFAULT_SALES_BOT_DELIVERY_MODES;
+    const deliveryOptions = {
+      pickupAvailable: deliveryModes.includes('pickup'),
+      deliveryAvailable: deliveryModes.includes('delivery'),
+    };
+    // Dónde se recoge: la del ajuste o, si no la puso, la del negocio.
+    const pickupAddress = settings.pickup_address?.trim() || business.address;
     const cart = context.conversation ? await this.cart.get(context.conversation) : null;
     const model = this.gemini.resolveModel(config.model);
 
@@ -200,6 +307,7 @@ export class SalesAgentService {
       businessName: business.name,
       businessAddress: business.address,
       businessPhone: business.phone,
+      delivery: { ...deliveryOptions, pickupAddress },
       channel: context.channel,
       today: todayUtcDate(),
       customerName: context.chatDisplayName,
@@ -208,16 +316,23 @@ export class SalesAgentService {
       firstMessageOfDay: options.firstMessageOfDay,
       timeOfDay: timeOfDayFromHour(nowBogota().hour()),
       stockPolicy: settings.stock_policy,
-      cartBlock: context.conversation
-        ? describeCartForPrompt(cart, { pickupAvailable })
-        : undefined,
+      ownerStyle: {
+        greeting: settings.greeting_style,
+        selling: settings.selling_style,
+        closing: settings.closing_style,
+      },
+      paymentMethods: settings.payment_methods,
+      paymentInstructions: settings.payment_instructions,
+      catalogCategories: business.categories,
+      cartBlock: context.conversation ? describeCartForPrompt(cart, deliveryOptions) : undefined,
     });
     // Las herramientas también obedecen la política de stock (ocultan el stock
     // al modelo cuando el negocio pide ofrecer siempre).
     const toolContext: SellerToolContext = {
       ...context,
       stockPolicy: settings.stock_policy,
-      pickupAvailable,
+      offTopicLimit: settings.off_topic_limit,
+      ...deliveryOptions,
     };
 
     const body = buildGeminiRequest({
@@ -241,6 +356,8 @@ export class SalesAgentService {
     }
 
     const orders: ClosedOrder[] = [];
+    // Avisos de texto para el negocio (cancelación, solicitud sobre un pedido tomado).
+    const notices: string[] = [];
     const roundTexts: string[] = [];
     // Consumo del mensaje: SUMA de todas sus rondas; suma a la IA de la cuenta.
     let usage = EMPTY_USAGE;
@@ -249,7 +366,13 @@ export class SalesAgentService {
     try {
       for (let round = 0; round <= config.maxToolRounds; round += 1) {
         const isLastRound = round === config.maxToolRounds;
-        const roundBody = isLastRound ? { ...body, tools: undefined } : body;
+        // Última ronda: las herramientas siguen declaradas (el historial las
+        // usa) pero con `NONE` el modelo TIENE que responder con texto. Antes se
+        // quitaban y a veces igual devolvía otra llamada, y el cliente recibía
+        // un "dame un momento" que nunca tenía seguimiento.
+        const roundBody: typeof body = isLastRound
+          ? { ...body, toolConfig: { functionCallingConfig: { mode: 'NONE' } } }
+          : body;
 
         const result = await this.streamRoundWithRetry(roundBody, model);
         usage = addUsage(usage, result.usage);
@@ -257,7 +380,7 @@ export class SalesAgentService {
 
         if (result.error) {
           const partial = joinTexts(roundTexts);
-          return { reply: partial || FALLBACK_REPLY, orders };
+          return { reply: partial || FALLBACK_REPLY, orders, notices };
         }
 
         if (result.text.trim().length > 0) {
@@ -267,7 +390,7 @@ export class SalesAgentService {
         // Sin llamadas a herramientas → el vendedor ya respondió.
         if (result.functionCalls.length === 0) {
           const reply = joinTexts(roundTexts);
-          return { reply: reply || '¿Te puedo ayudar con algo más? 😊', orders };
+          return { reply: reply || '¿Te puedo ayudar con algo más? 😊', orders, notices };
         }
 
         // Ronda de herramientas: se reenvían las partes del modelo tal cual
@@ -284,6 +407,12 @@ export class SalesAgentService {
           if (execution.order) {
             orders.push(execution.order);
           }
+          if (execution.notice) {
+            notices.push(execution.notice);
+          }
+          if (execution.offTopic) {
+            turn.offTopic = true;
+          }
           responseParts.push({
             functionResponse: { name: call.name, response: execution.response },
           });
@@ -294,8 +423,11 @@ export class SalesAgentService {
       // Se agotaron las rondas: devuelve lo que haya dicho, o un cierre cordial.
       const reply = joinTexts(roundTexts);
       return {
-        reply: reply || 'Dame un momento para confirmarte y seguimos. 🙏',
+        // Sin promesas de "ya te confirmo": el agente solo habla cuando el
+        // cliente escribe, así que se le pide a él que confirme.
+        reply: reply || ROUNDS_EXHAUSTED_REPLY,
         orders,
+        notices,
       };
     } finally {
       await this.access.recordUsage({
@@ -348,9 +480,34 @@ export class SalesAgentService {
       name: row?.name?.trim() || 'nuestro negocio',
       address: row?.address?.trim() || null,
       phone: row?.phone_number?.trim() || null,
+      categories: await this.catalogCategories(companyId),
     };
     this.profileCache.set(companyId, { profile, at: Date.now() });
     return profile;
+  }
+
+  /**
+   * Categorías que tienen al menos un producto vendible del negocio (propios o
+   * compartidos por otra sucursal). Si falla, el agente sigue sin la lista.
+   */
+  private async catalogCategories(companyId: number): Promise<string[]> {
+    try {
+      const access = accessibleProductsPredicate('p', companyId, 1);
+      const rows = await this.dataSource.query<Array<{ name: string | null }>>(
+        `SELECT DISTINCT cat.name
+           FROM products p
+           JOIN categories cat ON cat.id = p.category_id
+          WHERE ${access.sql}
+            AND ${SELLABLE_SQL}
+          ORDER BY cat.name ASC
+          LIMIT $${access.params.length + 1}`,
+        [...access.params, MAX_PROMPT_CATEGORIES],
+      );
+      return rows.map((r) => r.name?.trim() ?? '').filter((name) => name.length > 0);
+    } catch (error) {
+      this.logger.warn({ err: error }, 'No se pudieron leer las categorías del catálogo');
+      return [];
+    }
   }
 }
 
@@ -361,3 +518,13 @@ const joinTexts = (texts: string[]): string =>
     .filter((text) => text.length > 0)
     .join('\n\n')
     .trim();
+
+/** Texto del último mensaje del cliente. */
+const lastUserText = (turns: readonly ChatTurn[]): string => {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (turns[index].role === 'user') {
+      return turns[index].content ?? '';
+    }
+  }
+  return '';
+};

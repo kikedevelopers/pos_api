@@ -11,9 +11,11 @@ import {
   MarkAllAlertsReadAction,
   type MarkAllAlertsReadResult,
 } from './actions/mark-all-alerts-read.action';
+import type { AlertScope } from './internal/alert-scope';
 
 /**
- * Facade delgado del módulo `app-alerts`. ZERO lógica — delega a actions.
+ * Fachada de las alertas. Todo opera sobre un `AlertScope` (negocio activo +,
+ * para el dueño, los pedidos del agente de sus otras sucursales).
  */
 @Injectable()
 export class AppAlertsService {
@@ -24,19 +26,19 @@ export class AppAlertsService {
     private readonly markAllReadAction: MarkAllAlertsReadAction,
   ) {}
 
-  findAll(companyId: number, params: FindAllAlertsParams): Promise<FindAllAlertsResult> {
-    return this.findAllAction.execute(companyId, params);
+  findAll(scope: AlertScope, params: FindAllAlertsParams): Promise<FindAllAlertsResult> {
+    return this.findAllAction.execute(scope, params);
   }
 
-  countUnread(companyId: number): Promise<number> {
-    return this.countUnreadAction.execute(companyId);
+  countUnread(scope: AlertScope): Promise<number> {
+    return this.countUnreadAction.execute(scope);
   }
 
-  markRead(id: number, companyId: number): Promise<void> {
-    return this.markReadAction.execute(id, companyId);
+  markRead(id: number, scope: AlertScope): Promise<void> {
+    return this.markReadAction.execute(id, scope);
   }
 
-  markAllRead(companyId: number): Promise<MarkAllAlertsReadResult> {
-    return this.markAllReadAction.execute(companyId);
+  markAllRead(scope: AlertScope): Promise<MarkAllAlertsReadResult> {
+    return this.markAllReadAction.execute(scope);
   }
 }

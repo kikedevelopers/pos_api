@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 
 import { AppAlert } from '../entities/app-alert.entity';
+import { scopeWhere, type AlertScope } from '../internal/alert-scope';
 
 /**
  * Endpoint `GET /app-alerts/unread-count`. Espejo PlacePos.
@@ -19,9 +20,7 @@ export class CountUnreadAlertsAction {
     private readonly repo: Repository<AppAlert>,
   ) {}
 
-  async execute(companyId: number): Promise<number> {
-    return this.repo.count({
-      where: { company_id: String(companyId), is_read: false },
-    });
+  async execute(scope: AlertScope): Promise<number> {
+    return this.repo.count({ where: scopeWhere(scope, { is_read: false }) });
   }
 }

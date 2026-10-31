@@ -18,6 +18,8 @@ export interface TelegramBotWorkerParams {
   token: string;
   /** Chat del dueño al que avisar pedidos cerrados; null = solo log. */
   ownerChatId: string | null;
+  /** Usuario del bot (sin @), para identificar el canal en el pedido. */
+  botUsername?: string | null;
   pollIntervalMs: number;
   longPollTimeoutSec: number;
   agent: SalesAgentService;
@@ -127,6 +129,11 @@ export class TelegramBotWorker {
 
     // Nota de voz → se transcribe y se atiende como si la hubiera escrito.
     if (update.text.length === 0 && update.voice) {
+      // En silencio (fuera de tema) no se gasta en transcribir.
+      const sessionKey = SellerSessionStore.key(companyId, CHANNEL, conversationId);
+      if (await this.params.agent.isMuted(sessionKey)) {
+        return;
+      }
       const text = await this.transcribe(update.voice);
       if (!text) {
         await this.client.sendMessage(
@@ -167,6 +174,10 @@ export class TelegramBotWorker {
     // Comandos de control: reinician la conversación con un saludo que presenta
     // al bot (nombre, negocio y tono de su personalidad).
     if (RESET_COMMANDS.has(update.text.toLowerCase())) {
+      // En silencio por fuera de tema, reiniciar no sirve para saltarse el filtro.
+      if (await agent.isMuted(sessionKey)) {
+        return;
+      }
       await sessions.reset(sessionKey);
       const greeting = await agent.greeting(companyId);
       await sessions.markDay(sessionKey, today);
@@ -185,6 +196,7 @@ export class TelegramBotWorker {
         channel: CHANNEL,
         chatId: update.chatId,
         chatDisplayName: update.senderName,
+        channelAccount: this.params.botUsername ? `@${this.params.botUsername}` : undefined,
         conversation: sessionKey,
       },
       turns,
@@ -193,6 +205,11 @@ export class TelegramBotWorker {
 
     // Mientras la IA pensaba, una persona pudo tomar el chat: no la pisamos.
     if (await takeovers.isPaused(companyId, CHANNEL, conversationId)) {
+      return;
+    }
+
+    // En silencio y el mensaje tampoco era del negocio: no se responde nada.
+    if (result.silent) {
       return;
     }
 
@@ -214,6 +231,14 @@ export class TelegramBotWorker {
           { companyId, total: order.total, lines: order.items.length },
           'Pedido cerrado; el negocio no configuró chat del dueño (solo log).',
         );
+      }
+    }
+    // Avisos para el negocio (cancelación, solicitud sobre un pedido tomado).
+    for (const notice of result.notices ?? []) {
+      if (ownerChatId) {
+        await this.client.sendMessage(ownerChatId, notice);
+      } else {
+        this.logger.log({ companyId, notice }, 'Aviso al negocio sin chat del dueño (solo log).');
       }
     }
   }
