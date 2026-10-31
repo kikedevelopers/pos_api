@@ -7,6 +7,7 @@ import emailAlertsConfig, { type EmailAlertsConfig } from './email-alerts.config
 import feConfig, { type FeConfig } from './fe.config';
 import mailConfig, { type MailConfig } from './mail.config';
 import productImagesConfig, { type ProductImagesConfig } from './product-images.config';
+import pushConfig, { type PushConfig } from './push.config';
 import salesBotConfig, { type SalesBotConfig } from './sales-bot.config';
 import whatsappConfig, { type WhatsappConfig } from './whatsapp.config';
 
@@ -26,6 +27,7 @@ export const configurationLoaders = [
   billingConfig,
   salesBotConfig,
   whatsappConfig,
+  pushConfig,
 ];
 
 export type AppConfiguration = {
@@ -40,6 +42,7 @@ export type AppConfiguration = {
   billing: BillingConfig;
   salesBot: SalesBotConfig;
   whatsapp: WhatsappConfig;
+  push: PushConfig;
 };
 
 export {
@@ -54,6 +57,7 @@ export {
   billingConfig,
   salesBotConfig,
   whatsappConfig,
+  pushConfig,
 };
 export type {
   AppConfig,
@@ -67,4 +71,5 @@ export type {
   BillingConfig,
   SalesBotConfig,
   WhatsappConfig,
+  PushConfig,
 };

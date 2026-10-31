@@ -27,6 +27,7 @@ import {
   type AgentOrderEventKind,
 } from './internal/agent-alerts';
 import { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
+import { PushNotificationsService } from '@/modules/push-notifications/push-notifications.service';
 
 /** Filtro de estado del listado (`all` = todos). */
 export type AgentOrderStatusFilter = SalesAgentOrderStatus | 'all';
@@ -149,6 +150,7 @@ export class SalesAgentOrdersService {
     private readonly realtime: RealtimeGateway,
     @InjectRepository(AppAlert)
     private readonly alerts: Repository<AppAlert>,
+    private readonly push: PushNotificationsService,
   ) {}
 
   /**
@@ -593,7 +595,19 @@ export class SalesAgentOrdersService {
         alertType: alert.type,
         severity: alert.severity,
       });
-      await this.notifyOwners(companyId, kind, data, alert);
+      const companyName = await this.notifyOwners(companyId, kind, data, alert);
+      // Push a los celulares/tabletas (PWA). No se espera: no frena al agente.
+      this.push
+        .notifyAgentOrder({
+          company_id: companyId,
+          company_name: companyName ?? '',
+          order_id: Number(data.order_id),
+          title: alert.title,
+          body: alert.message,
+        })
+        .catch((error: unknown) =>
+          this.logger.warn({ err: error, companyId }, 'No pude enviar el push del pedido.'),
+        );
     } catch (error) {
       this.logger.warn(
         { err: error, companyId, kind },
@@ -613,7 +627,7 @@ export class SalesAgentOrdersService {
     kind: AgentOrderEventKind,
     data: AgentOrderAlertData,
     alert: { type: string; severity: string },
-  ): Promise<void> {
+  ): Promise<string | null> {
     const owners = await this.repo.query<Array<{ user_id: string; company_name: string }>>(
       `SELECT cm.user_id, c.name AS company_name
          FROM company_members cm
@@ -625,7 +639,7 @@ export class SalesAgentOrdersService {
       .map((owner) => Number(owner.user_id))
       .filter((id) => Number.isSafeInteger(id) && id > 0);
     if (userIds.length === 0) {
-      return;
+      return owners[0]?.company_name ?? null;
     }
     this.realtime.emitToUsers(userIds, ALERT_CREATED_EVENT, {
       companyId,
@@ -643,6 +657,7 @@ export class SalesAgentOrdersService {
       total: data.total,
       items_count: data.items_count,
     });
+    return owners[0].company_name;
   }
 
   /** Señal de tiempo real; un fallo de socket nunca rompe la operación. */

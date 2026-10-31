@@ -5,6 +5,7 @@ import { GeminiClient } from '@/modules/ai/internal/gemini-client';
 import { AdminLevelGuard } from '@/common/guards/admin-level.guard';
 import { CatalogKnowledgeModule } from '@/modules/catalog-knowledge/catalog-knowledge.module';
 import { SalesAgentAccessModule } from '@/modules/sales-agent-access/sales-agent-access.module';
+import { PushNotificationsModule } from '@/modules/push-notifications/push-notifications.module';
 import { RealtimeModule } from '@/modules/realtime/realtime.module';
 import { RolesModule } from '@/modules/roles/roles.module';
 
@@ -62,6 +63,7 @@ import { SalesAgentService } from './seller-agent.service';
     ]),
     RolesModule,
     RealtimeModule,
+    PushNotificationsModule,
     CatalogKnowledgeModule,
     SalesAgentAccessModule,
   ],

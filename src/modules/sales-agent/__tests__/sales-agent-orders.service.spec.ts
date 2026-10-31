@@ -1,3 +1,4 @@
+import type { PushNotificationsService } from '@/modules/push-notifications/push-notifications.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 
@@ -127,12 +128,14 @@ const makeService = (
     create: jest.fn((partial: Record<string, unknown>) => ({ ...partial })),
     save: jest.fn((entity: Record<string, unknown>) => Promise.resolve({ id: '500', ...entity })),
   };
+  const push = { notifyAgentOrder: jest.fn(() => Promise.resolve()) };
   const service = new SalesAgentOrdersService(
     repo as unknown as Repository<SalesAgentOrderEntity>,
     realtime as unknown as RealtimeGateway,
     alerts as unknown as Repository<AppAlert>,
+    push as unknown as PushNotificationsService,
   );
-  return { service, repo, realtime, alerts, qb, calls };
+  return { service, repo, realtime, alerts, push, qb, calls };
 };
 
 describe('SalesAgentOrdersService.record', () => {
@@ -761,6 +764,28 @@ describe('SalesAgentOrdersService · aviso a los dueños (sucursales)', () => {
       'agent-orders:changed',
       expect.objectContaining({ reason: 'cancelled' }),
     );
+  });
+
+  it('cada evento sale también por push a los dispositivos, con la sucursal', async () => {
+    const h = makeService({ qbResult: { entities: [], raw: [], insertRaw: [{ id: '10' }] } });
+    h.repo.query.mockResolvedValueOnce([{ user_id: '1', company_name: 'Esencia & Grano - la 28' }]);
+
+    await h.service.record(20, record);
+
+    expect(h.push.notifyAgentOrder).toHaveBeenCalledWith({
+      company_id: 20,
+      company_name: 'Esencia & Grano - la 28',
+      order_id: 10,
+      title: 'Nuevo pedido del agente',
+      body: expect.stringContaining('P-7B0F3C1E'),
+    });
+  });
+
+  it('si el push falla, el pedido sigue (no se espera ni rompe)', async () => {
+    const h = makeService({ qbResult: { entities: [], raw: [], insertRaw: [{ id: '10' }] } });
+    h.repo.query.mockResolvedValueOnce([]);
+    h.push.notifyAgentOrder.mockRejectedValueOnce(new Error('push'));
+    await expect(h.service.record(20, record)).resolves.toEqual({ id: '10', inserted: true });
   });
 
   it('sin dueños (o ids raros): no emite', async () => {

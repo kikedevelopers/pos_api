@@ -147,13 +147,19 @@ export const validationSchema = Joi.object({
   SALES_BOT_MODEL: Joi.string().allow('').default(''),
   SALES_BOT_TEMPERATURE: Joi.number().min(0).max(2).default(0.8),
   SALES_BOT_MAX_OUTPUT_TOKENS: Joi.number().integer().min(256).max(32768).default(2048),
-  SALES_BOT_MAX_TOOL_ROUNDS: Joi.number().integer().min(0).max(10).default(4),
+  SALES_BOT_MAX_TOOL_ROUNDS: Joi.number().integer().min(0).max(10).default(6),
   // Razonamiento BAJO del vendedor. Con tools el modelo rechaza 0 → mínimo 1.
   SALES_BOT_THINKING_BUDGET: Joi.number().integer().min(0).max(24576).default(128),
   SALES_BOT_TELEGRAM_TOKEN: Joi.string().allow('').default(''),
   SALES_BOT_TELEGRAM_POLL_INTERVAL_MS: Joi.number().integer().min(300).max(60000).default(1500),
   SALES_BOT_TELEGRAM_LONG_POLL_TIMEOUT_SEC: Joi.number().integer().min(0).max(50).default(30),
   SALES_BOT_TELEGRAM_OWNER_CHAT_ID: Joi.string().allow('').default(''),
+
+  // Notificaciones push de la PWA (Web Push). Sin las dos llaves, el envío
+  // queda apagado y la PWA no ofrece activarlas.
+  VAPID_PUBLIC_KEY: Joi.string().allow('').default(''),
+  VAPID_PRIVATE_KEY: Joi.string().allow('').default(''),
+  VAPID_SUBJECT: Joi.string().allow('').default('mailto:soporte@kikedevs.com'),
 
   // ---------------------------------------------------------------------------
   // Correo saliente (módulo `mail`)
