@@ -37,9 +37,19 @@ export interface CustomerSalesChartResponse {
  * (no devolvemos sale_invoice_line raw — devolvemos el shape que espera el
  * frontend).
  */
+/** bigint de Postgres (llega como string) → entero positivo, o null si no lo es. */
+export const toPositiveIntOrNull = (value: number | string | null | undefined): number | null => {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+};
+
 export interface CustomerProductHistoryResponse {
   customer_id: number;
   lines: Array<{
+    // Producto vendido (base o presentación). El POS lo usa para reabrir ESE
+    // producto en el configurador desde el historial. null si la fila trae un
+    // id inválido (no debería pasar: la columna es NOT NULL).
+    productId: number | null;
     productName: string;
     quantity: number;
     price: number;
@@ -225,6 +235,7 @@ export class GetCustomerChartsAction {
 
     const rows: Array<{
       ticket_number: string;
+      product_id: number | string | null;
       product_name: string;
       quantity: string;
       unit_price: string;
@@ -247,6 +258,7 @@ export class GetCustomerChartsAction {
          LIMIT 20
       )
       SELECT COALESCE(li.sale_number, li.ticket_number) AS ticket_number,
+             l.product_id         AS product_id,
              l.description        AS product_name,
              l.quantity           AS quantity,
              l.unit_price         AS unit_price,
@@ -270,6 +282,7 @@ export class GetCustomerChartsAction {
     return {
       customer_id: id,
       lines: rows.map((r) => ({
+        productId: toPositiveIntOrNull(r.product_id),
         productName: r.product_name,
         quantity: Number(r.quantity),
         price: Number(r.unit_price),

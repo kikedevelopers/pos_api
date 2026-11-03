@@ -3,7 +3,7 @@ import type { Repository } from 'typeorm';
 import type { GetIncludeOrdersInReportsAction } from '@/modules/app-settings/actions/get-include-orders-in-reports.action';
 import type { Customer } from '@/modules/customers/entities/customer.entity';
 
-import { GetCustomerChartsAction } from '../actions/get-customer-charts.action';
+import { GetCustomerChartsAction, toPositiveIntOrNull } from '../actions/get-customer-charts.action';
 
 /**
  * La gráfica de ventas de un cliente tiene que contar lo mismo que el resto de
@@ -165,6 +165,54 @@ describe('GetCustomerChartsAction · gráfica consolidada', () => {
       const productSql = String(querySpy.mock.calls[0][0]);
       expect(productSql).toContain("ticket_type::text <> 'LOAN'");
       expect(productSql).toContain('is_deleted = false');
+    });
+  });
+
+  describe('historial de productos: id del producto', () => {
+    const row = (patch: Record<string, unknown> = {}): Record<string, unknown> => ({
+      ticket_number: 'VTA-1',
+      product_id: '15',
+      product_name: 'LINAZA X LIBRA',
+      quantity: '2.0000',
+      unit_price: '4500.00',
+      profit: '1000',
+      margin: '22.2',
+      invoice_id: '9',
+      created_at: '2026-06-07T16:03:00.000Z',
+      ticket_type: 'SALE',
+      ...patch,
+    });
+
+    it('selecciona el product_id de la línea y lo devuelve como número', async () => {
+      buildAction([row()]);
+      const res = await action.getProductHistory(7, 42);
+
+      expect(String(querySpy.mock.calls[0][0])).toContain('l.product_id');
+      expect(res.lines[0]).toMatchObject({
+        productId: 15,
+        productName: 'LINAZA X LIBRA',
+        quantity: 2,
+        price: 4500,
+        invoiceId: 9,
+      });
+    });
+
+    it('un id inválido llega como null (el POS cae al nombre), no como NaN', async () => {
+      buildAction([row({ product_id: null }), row({ product_id: 'abc' })]);
+      const res = await action.getProductHistory(7, 42);
+
+      expect(res.lines.map((l) => l.productId)).toEqual([null, null]);
+    });
+  });
+
+  describe('toPositiveIntOrNull', () => {
+    it('acepta enteros positivos (también como string de bigint)', () => {
+      expect(toPositiveIntOrNull('15')).toBe(15);
+      expect(toPositiveIntOrNull(3)).toBe(3);
+    });
+
+    it.each([null, undefined, '', '0', '-4', '1.5', 'x', '9007199254740993'])('rechaza %p', (value) => {
+      expect(toPositiveIntOrNull(value as string | null | undefined)).toBeNull();
     });
   });
 
