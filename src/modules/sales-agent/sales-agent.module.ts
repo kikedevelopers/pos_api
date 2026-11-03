@@ -16,6 +16,9 @@ import { WhatsappWebRelayController } from './channels/whatsapp-web/whatsapp-web
 import { WhatsappWebRelayService } from './channels/whatsapp-web/whatsapp-web-relay.service';
 import { SalesBotConfigEntity } from './entities/sales-bot-config.entity';
 import { SalesAgentOrderEntity } from './entities/sales-agent-order.entity';
+import { SalesAgentFollowUpEntity } from './entities/sales-agent-follow-up.entity';
+import { FollowUpController } from './follow-up.controller';
+import { FollowUpService } from './follow-up.service';
 import { AppAlert } from '@/modules/app-alerts/entities/app-alert.entity';
 import { SalesBotConversationEntity } from './entities/sales-bot-conversation.entity';
 import { SalesBotSettingsEntity } from './entities/sales-bot-settings.entity';
@@ -59,6 +62,7 @@ import { SalesAgentService } from './seller-agent.service';
       SalesBotTakeoverEntity,
       SalesBotConversationEntity,
       SalesAgentOrderEntity,
+      SalesAgentFollowUpEntity,
       AppAlert,
     ]),
     RolesModule,
@@ -71,6 +75,7 @@ import { SalesAgentService } from './seller-agent.service';
     SalesBotController,
     SalesAgentAccessController,
     SalesAgentOrdersController,
+    FollowUpController,
     WhatsappWebhookController,
     WhatsappWebRelayController,
   ],
@@ -84,6 +89,7 @@ import { SalesAgentService } from './seller-agent.service';
     SellerCartService,
     ConversationGuardService,
     SalesAgentOrdersService,
+    FollowUpService,
     TelegramBotManager,
     WhatsappHandlerService,
     WhatsappWebRelayService,

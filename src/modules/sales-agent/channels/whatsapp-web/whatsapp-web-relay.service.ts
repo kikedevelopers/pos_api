@@ -9,6 +9,7 @@ import { AUDIO_NOT_UNDERSTOOD_REPLY, SalesAgentService } from '../../seller-agen
 import { SalesBotConfigService } from '../../sales-bot-config.service';
 import { SalesBotTakeoverService } from '../../sales-bot-takeover.service';
 import { SalesAgentAccessService } from '@/modules/sales-agent-access/sales-agent-access.service';
+import { FollowUpService } from '../../follow-up.service';
 
 const CHANNEL = 'whatsapp';
 
@@ -71,6 +72,7 @@ export class WhatsappWebRelayService {
     private readonly botConfig: SalesBotConfigService,
     private readonly takeovers: SalesBotTakeoverService,
     private readonly access: SalesAgentAccessService,
+    private readonly followUps: FollowUpService,
   ) {}
 
   /**
@@ -143,6 +145,13 @@ export class WhatsappWebRelayService {
       await this.sessions.markDay(sessionKey, today);
       return { reply: greeting, notifications: [] };
     }
+
+    // ¿Responde a un seguimiento que le enviamos? El agente lo recibe como su
+    // propio mensaje (y no se vuelve a presentar si fue hoy).
+    await this.followUps.attachPendingContext(sessionKey, {
+      chatId,
+      phone: input.customer_phone,
+    });
 
     const firstMessageOfDay = await this.sessions.markDay(sessionKey, today);
     const turns = await this.sessions.append(sessionKey, { role: 'user', content: text });

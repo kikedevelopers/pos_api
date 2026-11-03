@@ -6,6 +6,7 @@ import type { SalesAgentAccessService } from '@/modules/sales-agent-access/sales
 import type { SellerSessionStore } from '../internal/session-store';
 import type { SalesBotConfigEntity } from '../entities/sales-bot-config.entity';
 import type { ClosedOrder } from '../internal/types';
+import type { FollowUpService } from '../follow-up.service';
 
 const incoming = (overrides: Record<string, string> = {}) => ({
   chat_id: '573001112233@s.whatsapp.net',
@@ -37,6 +38,7 @@ interface Harness {
   rememberOrder: jest.Mock;
   isPaused: jest.Mock;
   pause: jest.Mock;
+  attachPendingContext: jest.Mock;
 }
 
 const GREETING = '¡Buenos días! 😊 Soy Diana, de Granero La 21. ¿En qué te puedo ayudar hoy?';
@@ -77,8 +79,19 @@ const makeRelay = (config: Partial<SalesBotConfigEntity> | null): Harness => {
   const assertEnabled = jest.fn().mockResolvedValue(undefined);
   const access = { isEnabled: accessEnabled, assertEnabled } as unknown as SalesAgentAccessService;
 
-  const relay = new WhatsappWebRelayService(agent, sessions, botConfig, takeovers, access);
+  const attachPendingContext = jest.fn().mockResolvedValue(false);
+  const followUps = { attachPendingContext } as unknown as FollowUpService;
+
+  const relay = new WhatsappWebRelayService(
+    agent,
+    sessions,
+    botConfig,
+    takeovers,
+    access,
+    followUps,
+  );
   return {
+    attachPendingContext,
     relay,
     isMuted,
     accessEnabled,
@@ -136,6 +149,28 @@ describe('WhatsappWebRelayService.reply', () => {
       chatPhone: '573161384577',
       channelAccount: '573110000000',
     });
+  });
+
+  it('adjunta el seguimiento pendiente (por chat y número) ANTES de marcar el día y atender', async () => {
+    const h = makeRelay(enabled());
+    h.attachPendingContext.mockResolvedValue(true);
+    await h.relay.reply(
+      7,
+      incoming({ chat_id: '16660832456755@lid', customer_phone: '573161384577' }),
+    );
+    expect(h.attachPendingContext).toHaveBeenCalledWith(
+      { companyId: 7, channel: 'whatsapp-web', chatId: '16660832456755@lid' },
+      { chatId: '16660832456755@lid', phone: '573161384577' },
+    );
+    const attachOrder = h.attachPendingContext.mock.invocationCallOrder[0];
+    expect(attachOrder).toBeLessThan(h.markDay.mock.invocationCallOrder[0]);
+    expect(attachOrder).toBeLessThan(h.handleMessage.mock.invocationCallOrder[0]);
+  });
+
+  it('no busca seguimientos si el agente no va a responder (apagado)', async () => {
+    const h = makeRelay(enabled({ enabled: false }));
+    await h.relay.reply(7, incoming());
+    expect(h.attachPendingContext).not.toHaveBeenCalled();
   });
 
   it('sin número del cliente, no inventa uno', async () => {
