@@ -65,7 +65,11 @@ describe('buildAllowedOrigins', () => {
 });
 
 describe('isOriginAllowed (producción)', () => {
-  const base = { corsOrigins: ['https://erp.kikedevs.com'], activationBaseUrl: 'https://placepos.kikedevs.com', ...PROD };
+  const base = {
+    corsOrigins: ['https://erp.kikedevs.com'],
+    activationBaseUrl: 'https://placepos.kikedevs.com',
+    ...PROD,
+  };
 
   it('acepta un request sin header Origin (curl / app nativa / same-origin)', () => {
     expect(isOriginAllowed(undefined, base)).toBe(true);
@@ -76,7 +80,11 @@ describe('isOriginAllowed (producción)', () => {
   });
 
   it('acepta la LANDING aunque NO esté en CORS_ORIGINS (el bug reportado)', () => {
-    const sinLanding = { corsOrigins: ['https://erp.kikedevs.com'], activationBaseUrl: 'https://placepos.kikedevs.com', ...PROD };
+    const sinLanding = {
+      corsOrigins: ['https://erp.kikedevs.com'],
+      activationBaseUrl: 'https://placepos.kikedevs.com',
+      ...PROD,
+    };
     expect(isOriginAllowed('https://placepos.kikedevs.com', sinLanding)).toBe(true);
   });
 
